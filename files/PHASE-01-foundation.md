@@ -1,0 +1,268 @@
+# Phase 1 — Foundation: Block Schema + Renderer + First Live Multi-Tenant Site
+
+> **Goal of this phase:** By the end, a request to `muldoon.preview.anchorcorps.dev` returns a real React-rendered page whose entire content tree comes from `pages.blocks` JSONB in Postgres, using a Zod-validated block registry. The existing auth/blog/events flows still work. Three real block types render (Hero, RichText, CTA). The admin can switch between two seeded sites via Host header. **No editor UI yet** — that's Phase 5. This phase proves the data model and rendering pipeline.
+
+> **Estimated duration:** 4–6 routine work blocks (~2–3 days at steady cadence)
+
+> **Pre-flight check:** Before starting, verify the existing app still boots, auth works, and blog renders. If anything is broken, fix it first and log to `BLOCKERS.md` if it's non-trivial. The existing functionality is the safety net for everything in this phase.
+
+---
+
+## Task 1.1 — Pre-flight: snapshot existing functionality
+
+- [ ] Run existing app locally, confirm auth login + blog index + one blog post all render
+- [ ] Run existing test suite (if any), capture passing baseline in `.routine/baseline-tests.log`
+- [ ] If no tests exist, create `tests/smoke/existing-flows.test.ts` with at minimum:
+  - [ ] Auth login → dashboard renders
+  - [ ] `GET /blog` returns 200 with at least one post
+  - [ ] `GET /events` returns 200
+- [ ] Commit baseline tests as the first commit of this routine: `chore: baseline smoke tests before builder work`
+- [ ] **Email trigger:** "Phase 1 started — baseline captured" with passing test count
+
+**Why this matters:** Every subsequent task should keep these tests green. If a change breaks them, stop and either fix or escalate to `BLOCKERS.md`. Do not proceed with broken baselines.
+
+---
+
+## Task 1.2 — Postgres schema for sites, pages, revisions
+
+- [ ] Create migration `add_sites_pages_revisions.sql` with:
+  - [ ] `sites` table (id UUID PK, slug TEXT UNIQUE, display_name, status, default_brand_tokens JSONB, created_at)
+  - [ ] `site_domains` table (id, site_id FK, hostname UNIQUE, is_primary, verification_status, ssl_status, created_at) — *populated by Phase 10, schema now*
+  - [ ] `pages` table (id UUID PK, site_id FK, slug, title, blocks JSONB DEFAULT `'[]'`, seo JSONB DEFAULT `'{}'`, status TEXT DEFAULT 'draft', published_at, updated_at, UNIQUE(site_id, slug))
+  - [ ] `page_revisions` table (id UUID PK, page_id FK ON DELETE CASCADE, blocks JSONB, seo JSONB, author_id, source TEXT, created_at)
+  - [ ] Index on `pages(site_id, slug)` and `pages(site_id, status)`
+  - [ ] GIN index on `pages.blocks` for future structural queries
+- [ ] Apply migration in dev
+- [ ] Write rollback migration
+- [ ] Seed two sites: `muldoon-dental` and `demo-site` with placeholder display names
+- [ ] Seed one home page per site with an empty `blocks: []` for now
+- [ ] Document the schema in `docs/data-model.md`
+- [ ] Append to `DECISIONS.md`: "Page storage is JSONB blocks array, not normalized block rows. Rationale: ..."
+
+**Tests:**
+- [ ] Migration runs cleanly forward and backward
+- [ ] Seed script is idempotent (re-running doesn't duplicate)
+
+---
+
+## Task 1.3 — Block registry pattern (the core abstraction)
+
+This is the keystone of the whole builder. Get it right or everything else is harder.
+
+- [ ] Create `src/blocks/` directory
+- [ ] Create `src/blocks/types.ts` with the base `Block` type:
+  ```ts
+  type Block = {
+    id: string;            // nanoid
+    type: string;          // registry key
+    props: Record<string, unknown>;
+    children?: Block[];
+  };
+  ```
+- [ ] Create `src/blocks/registry.ts` exporting a `blockRegistry` map of `type → { schema, component, label, description, aiHints, category }`
+- [ ] Add Zod dependency, set up `zod-to-json-schema` for later AI use
+- [ ] Create three block types in their own folders:
+  - [ ] `src/blocks/hero/` — schema.ts, component.tsx, index.ts
+  - [ ] `src/blocks/rich-text/` — schema.ts, component.tsx, index.ts (uses dangerouslySetInnerHTML for now; Tiptap comes in Phase 5)
+  - [ ] `src/blocks/cta/` — schema.ts, component.tsx, index.ts
+- [ ] Each block component must:
+  - [ ] Use `ac-` class prefix exclusively
+  - [ ] Use CSS custom properties for colors (`var(--theme-main)`, `var(--theme-accent)`)
+  - [ ] Not declare `font-family` in its CSS
+  - [ ] Be a pure function of props (no internal state)
+- [ ] Each schema must include sensible defaults via Zod's `.default()` so partial props still validate
+- [ ] Export the registry from `src/blocks/index.ts`
+
+**Tests:**
+- [ ] Each block schema validates a valid props object and rejects an invalid one
+- [ ] Registry lookup by type returns the expected entry
+- [ ] All three components render without crashing given valid props
+
+---
+
+## Task 1.4 — BlockRenderer component
+
+- [ ] Create `src/components/BlockRenderer.tsx`:
+  ```tsx
+  type Props = { blocks: Block[]; editable?: boolean };
+  ```
+- [ ] For each block:
+  - [ ] Look up registry entry, render `<UnknownBlock>` placeholder if type not found
+  - [ ] Validate `props` with the registry schema
+  - [ ] On validation failure, render `<BlockError>` showing the error in dev, silent placeholder in prod
+  - [ ] On success, render the component with parsed props
+  - [ ] Pass `block.id` as React key
+- [ ] Create `<UnknownBlock>` and `<BlockError>` fallback components
+- [ ] Add `data-block-id` and `data-block-type` attributes on each rendered block's root element (needed for editor in Phase 5, set up now)
+- [ ] Create a Storybook-style harness route at `/__blocks/preview` that lets you POST a blocks array and see it render — gated to admin in dev only
+
+**Tests:**
+- [ ] Renderer handles empty array
+- [ ] Renderer handles unknown block type without crashing
+- [ ] Renderer handles invalid props without crashing
+- [ ] Renderer renders three known blocks in order with correct keys
+
+**Demo milestone:** Once `/__blocks/preview` works, you can POST a JSON blocks array and see it render. **Email trigger:** "Block renderer is live — try posting to /__blocks/preview" with example curl.
+
+---
+
+## Task 1.5 — Multi-tenant request resolution
+
+- [ ] Create middleware `src/middleware/resolveSite.ts`:
+  - [ ] Read `Host` header
+  - [ ] Strip port if present
+  - [ ] Look up `site_domains` for matching hostname → `site_id`
+  - [ ] Fallback: parse subdomain from `*.preview.anchorcorps.dev` or `*.anchorcorps.dev` → match `sites.slug`
+  - [ ] Attach `req.site` to the request
+  - [ ] Return 404 site-not-found page if no match
+- [ ] Cache the host→site lookup in-memory with a 60s TTL (per-process Map is fine for now; Redis later)
+- [ ] Mount middleware on all routes *except* the existing admin/auth/blog routes (those stay tenant-less for now — they'll be tenant-aware in Phase 8)
+- [ ] Update local dev: add `/etc/hosts` instructions to `docs/local-dev.md` for `muldoon.localhost` and `demo.localhost`
+
+**Tests:**
+- [ ] Request with `Host: muldoon.preview.anchorcorps.dev` resolves to muldoon site
+- [ ] Request with `Host: demo.preview.anchorcorps.dev` resolves to demo site
+- [ ] Request with unknown host returns 404
+- [ ] Existing auth route still works (not tenant-scoped yet)
+
+---
+
+## Task 1.6 — Page rendering route
+
+- [ ] Create route `GET /:slug*` (catch-all, registered *after* all existing routes) that:
+  - [ ] Uses `req.site` from middleware
+  - [ ] Looks up `pages WHERE site_id = ? AND slug = ? AND status = 'published'`
+  - [ ] Falls back to slug `'home'` for empty path `/`
+  - [ ] Returns 404 page (which is itself a block-rendered page if seeded, otherwise hardcoded fallback) if not found
+  - [ ] Server-renders the page using `<BlockRenderer>`
+  - [ ] Injects per-site brand tokens as CSS custom properties in `<head>`
+- [ ] Wrap the rendered page in the existing app shell (header, footer from your template) — but with site-aware branding
+- [ ] Add `<meta>` tags from `pages.seo` (basic: title, description for now; full SEO in Phase 9)
+- [ ] Seed `muldoon-dental` home page with a real blocks array: hero + rich-text + cta
+- [ ] Seed `demo-site` home page with a different blocks array
+
+**Tests:**
+- [ ] `GET muldoon.preview.anchorcorps.dev/` returns 200 with hero text from seed
+- [ ] `GET demo.preview.anchorcorps.dev/` returns 200 with different content
+- [ ] `GET muldoon.preview.anchorcorps.dev/nonexistent` returns 404
+- [ ] Brand tokens differ between the two sites' rendered CSS
+
+**Demo milestone:** Two live URLs serving different content from block JSON. **Email trigger:** "🎉 First multi-tenant page is live — visit https://muldoon.preview.anchorcorps.dev and https://demo.preview.anchorcorps.dev. Same renderer, different content, all from blocks JSON."
+
+---
+
+## Task 1.7 — Revision tracking on save
+
+Even though there's no editor yet, build the save endpoint and revision tracking now so Phase 5 just plugs in.
+
+- [ ] Create `POST /api/sites/:siteId/pages/:pageId` (admin-only):
+  - [ ] Validates entire blocks array against registry schemas
+  - [ ] Updates `pages.blocks` and `pages.seo`
+  - [ ] Inserts a `page_revisions` row in the same transaction
+  - [ ] Returns the saved page + new revision ID
+- [ ] Create `GET /api/sites/:siteId/pages/:pageId/revisions` returning ordered revision list
+- [ ] Create `POST /api/sites/:siteId/pages/:pageId/revisions/:revisionId/restore` that re-saves an old revision as the current state (which itself creates a new revision row — never destructive)
+- [ ] Add basic rate limiting on saves (10/min/user is fine)
+
+**Tests:**
+- [ ] Saving a valid blocks array creates a revision
+- [ ] Saving an invalid blocks array rejects with 400 and clear error
+- [ ] Restoring an old revision creates a new revision (doesn't overwrite)
+- [ ] Revisions are returned in reverse chronological order
+
+---
+
+## Task 1.8 — Deploy to Cloud Run with wildcard subdomain
+
+- [ ] Add `Dockerfile` (or update existing) for the renderer
+- [ ] Add `cloudbuild.yaml` or update existing CI to deploy to Cloud Run on main branch push
+- [ ] Configure Cloud Run service to allow unauthenticated requests on rendering routes
+- [ ] Map wildcard domain `*.preview.anchorcorps.dev` to the Cloud Run service
+  - [ ] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites
+- [ ] Verify SSL provisions
+- [ ] Confirm both seed sites resolve in production
+- [ ] Document deploy process in `docs/deploy.md`
+
+**Tests:**
+- [ ] CI deploys successfully on push to main
+- [ ] Production URLs serve the same content as local
+
+**Demo milestone:** Real production URLs working. **Email trigger:** "Phase 1 sites are live in production — https://muldoon.preview.anchorcorps.dev. SSL active, multi-tenant routing working."
+
+---
+
+## Task 1.9 — Routine state files + email infra
+
+- [ ] Create `.routine/STATE.json` schema and initial file (current phase, current task, last email sent timestamp, last commit hash, test pass/fail)
+- [ ] Create `.routine/EMAIL-TRIGGERS.md` (see template at end of this file)
+- [ ] Wire up email sending — use the existing app's email service for consistency
+- [ ] Create email templates in `.routine/templates/`:
+  - [ ] `phase-started.md`
+  - [ ] `phase-completed.md`
+  - [ ] `demo-milestone.md`
+  - [ ] `blocker.md`
+  - [ ] `daily-digest.md`
+- [ ] Test each email type by triggering manually once
+- [ ] Confirm receipt in inbox
+
+**Tests:**
+- [ ] Each email template renders without missing variables
+- [ ] State file updates atomically (no partial writes)
+
+---
+
+## Task 1.10 — Documentation pass + handoff prep for Phase 2
+
+- [ ] Update `README.md` with the new architecture overview (paste from PLAN.md anchors)
+- [ ] Write `docs/blocks.md` explaining how to add a new block type (the routine itself will use this in Phase 2)
+- [ ] Write `docs/data-model.md` finalized
+- [ ] Write `docs/local-dev.md` finalized
+- [ ] Write `docs/deploy.md` finalized
+- [ ] Append final entry to phase log
+- [ ] Update `PLAN.md` — check off Phase 1 box
+- [ ] **Email trigger:** Phase 1 complete summary email with:
+  - Demo URLs
+  - What changed in the codebase (high-level)
+  - Test coverage stats
+  - What Phase 2 will do
+  - Explicit ask: "Reply 'go' to start Phase 2, or reply with changes/concerns."
+
+---
+
+## Completion log
+
+> Append entries as work proceeds. Each entry: timestamp, task IDs touched, what was done, what's next, any new blockers.
+
+<!-- Routine appends here -->
+
+---
+
+## Phase 1 definition of done
+
+Every box above checked, AND:
+
+- All baseline smoke tests still pass
+- New tests written for each new feature, all green
+- `muldoon.preview.anchorcorps.dev` and `demo.preview.anchorcorps.dev` both load real content from JSONB blocks in production
+- Save endpoint works (verified via curl, even without UI)
+- Revision history populates on save
+- Existing auth/blog/events flows still functional
+- All five state files exist and are populated
+- Email infrastructure has fired at least three different email types successfully
+- Phase 2 is greenlit by human before any Phase 2 work begins
+
+---
+
+## Appendix — Email triggers reference for this phase
+
+Send email when:
+
+| Trigger | When | Subject prefix |
+|---|---|---|
+| Phase started | Task 1.1 completes | `[Builder] Phase 1 started:` |
+| First renderer demo | Task 1.4 completes | `[Builder] Demo ready:` |
+| First multi-tenant site live | Task 1.6 completes | `[Builder] 🎉 First sites live:` |
+| Production deploy live | Task 1.8 completes | `[Builder] Production live:` |
+| Blocker raised | Any time | `[Builder] ⚠ Blocker:` |
+| Phase 1 complete | Task 1.10 completes | `[Builder] ✓ Phase 1 complete — ready for Phase 2?` |
+| Daily digest | No other email fired in 24h | `[Builder] Daily digest —` |

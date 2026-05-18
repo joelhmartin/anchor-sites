@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    overflow-x: hidden;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-surface-100 text-navy font-sans;
+  }
+
+  ::selection {
+    @apply bg-brand-500/20 text-navy;
+  }
+}
+
+@layer components {
+  /* Noise texture overlay — SVG feTurbulence at 0.05 opacity */
+  .noise-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.05;
+  }
+
+  /* Magnetic button base */
+  .btn-magnetic {
+    @apply relative overflow-hidden inline-flex items-center justify-center font-semibold tracking-tight transition-transform;
+    transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+
+  .btn-magnetic:hover {
+    transform: scale(1.03);
+  }
+
+  .btn-magnetic .btn-bg {
+    @apply absolute inset-0 transition-transform duration-500;
+    transform: translateY(100%);
+  }
+
+  .btn-magnetic:hover .btn-bg {
+    transform: translateY(0);
+  }
+
+  /* Interactive lift on hover */
+  .hover-lift {
+    @apply transition-transform duration-300;
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-1px);
+  }
+
+  /* Frosted glass */
+  .glass {
+    @apply bg-white/60 backdrop-blur-xl border border-white/20;
+  }
+
+  .glass-dark {
+    @apply bg-navy/60 backdrop-blur-xl border border-white/10;
+  }
+
+  /* Section padding */
+  .section-pad {
+    @apply px-5 md:px-8 lg:px-16 xl:px-24;
+  }
+
+  /* Card radius system */
+  .card-radius {
+    @apply rounded-[2rem];
+  }
+
+  .card-radius-lg {
+    @apply rounded-[3rem];
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Gradient masks for sliders */
+  .mask-fade-x {
+    mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+  }
+
+  /* Infinite ticker / marquee — place two identical children inside */
+  .ticker-track {
+    display: flex;
+    width: max-content;
+    animation: ticker-scroll 18s linear infinite;
+  }
+
+  @keyframes ticker-scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+}
