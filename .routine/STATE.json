@@ -1,6 +1,6 @@
 {
   "_comment": "Routine state. Update atomically. Never edit by hand once routine is running.",
-  "notify_email": "REPLACE_WITH_YOUR_EMAIL@anchorcorps.com",
+  "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 1,
   "current_phase_file": "PHASE-01-foundation.md",
   "current_task": null,

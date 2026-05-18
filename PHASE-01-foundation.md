@@ -4,19 +4,48 @@
 
 > **Estimated duration:** 4–6 routine work blocks (~2–3 days at steady cadence)
 
-> **Pre-flight check:** Before starting, verify the existing app still boots, auth works, and blog renders. If anything is broken, fix it first and log to `BLOCKERS.md` if it's non-trivial. The existing functionality is the safety net for everything in this phase.
+> **Pre-flight check:** Before starting, verify the existing app still boots. **Note (D-011):** the starting repo is a Vite + React SPA with no Express server, no Postgres, and no auth/blog/events. Task 1.0 (added) stands up that backend before Task 1.1 captures the baseline. The "existing functionality" safety net referenced throughout this phase is established by Task 1.0 + 1.1, not pre-existing.
+
+---
+
+## Task 1.0 — Backend scaffold (added per D-011)
+
+> **Why this exists:** The starting repo has no backend. PLAN.md and the rest of Phase 1 assume an Express + Postgres app exists. Task 1.0 closes that gap.
+
+> **Expansion required:** This task is a stub. On the first run, expand it into a detailed sub-task list, email the user a summary, and wait for `.routine/TASK-1.0-APPROVED` before writing code. Do not guess the shape of the backend without confirmation.
+
+**Stub sub-tasks (to be expanded and confirmed):**
+
+- [ ] Add Express server (`src/server/index.ts`) alongside Vite — Vite for SPA in dev, Express for API + SSR in prod
+- [ ] Add `pg` dependency and Postgres connection pool (`src/server/db.ts`)
+- [ ] Add `node-pg-migrate` with `db/migrations/` directory and `npm run migrate:up` / `migrate:down` scripts
+- [ ] Add `/healthz` route returning `{ ok: true, db: <bool> }`
+- [ ] Add `src/server/email/send.ts` stub using Resend (Task 1.9 wires the actual templates; Task 1.0 only sets up the function signature and Secret Manager reference)
+- [ ] Add `Dockerfile` skeleton (full Cloud Run config lands in Task 1.8)
+- [ ] Update `package.json` scripts: `dev:server`, `build:server`, `start`, `migrate:up`, `migrate:down`
+- [ ] Decide and document: local Postgres (Docker compose) vs. Cloud SQL proxy — append `DECISIONS.md` D-013
+- [ ] Append `DECISIONS.md` D-014 documenting the Express + Vite integration choice (custom server vs. Vite middleware mode vs. separate processes)
+
+**Tests:**
+- [ ] `GET /healthz` returns 200 with `{ ok: true }`
+- [ ] DB connection test passes when Postgres is reachable
+- [ ] Migration up + down runs cleanly on an empty database
+
+**Email trigger:** "Task 1.0 sub-task list ready for review" with the expanded list — wait for `.routine/TASK-1.0-APPROVED` before executing.
 
 ---
 
 ## Task 1.1 — Pre-flight: snapshot existing functionality
 
-- [ ] Run existing app locally, confirm auth login + blog index + one blog post all render
-- [ ] Run existing test suite (if any), capture passing baseline in `.routine/baseline-tests.log`
-- [ ] If no tests exist, create `tests/smoke/existing-flows.test.ts` with at minimum:
-  - [ ] Auth login → dashboard renders
-  - [ ] `GET /blog` returns 200 with at least one post
-  - [ ] `GET /events` returns 200
-- [ ] Commit baseline tests as the first commit of this routine: `chore: baseline smoke tests before builder work`
+> **Updated per D-011:** Original wording referenced auth/blog/events which do not exist in this repo. Baseline now covers what Task 1.0 produced.
+
+- [ ] Run the app locally (Express + Vite), confirm `/healthz` returns 200 and the SPA index loads
+- [ ] Run the test suite, capture passing baseline in `.routine/baseline-tests.log`
+- [ ] Create `tests/smoke/baseline.test.ts` with at minimum:
+  - [ ] `GET /healthz` returns 200
+  - [ ] SPA index returns 200 with non-empty HTML
+  - [ ] DB pool connects successfully
+- [ ] Commit baseline tests: `chore(P1-T1.1): baseline smoke tests before builder work`
 - [ ] **Email trigger:** "Phase 1 started — baseline captured" with passing test count
 
 **Why this matters:** Every subsequent task should keep these tests green. If a change breaks them, stop and either fix or escalate to `BLOCKERS.md`. Do not proceed with broken baselines.

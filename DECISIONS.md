@@ -62,6 +62,30 @@
 **Decision:** CTM script in renderer's HTML shell head (before bundle). `<PhoneNumber>` block component wrapped in `memo` with `() => true` comparator — never re-renders after mount. Route changes call `__ctm.main.runNow()` via a layout-level hook.
 **Rationale:** Standard CTM React integration pattern. Verified against CTM docs 2026-05-18.
 
+### D-010: Deploy target is Cloud Run, not Vercel
+
+**Context:** This repo currently ships as a Vite SPA with `vercel.json` and was deployable to Vercel. The builder requires server-rendered multi-tenant routing (Host header → site_id), Postgres, and wildcard subdomain mapping with managed SSL.
+**Decision:** All builder deployment goes to **Google Cloud Run**. The existing `vercel.json` is legacy and will be removed during Phase 1 Task 1.8 in favor of `Dockerfile` + `cloudbuild.yaml`. Wildcard domain `*.preview.anchorcorps.dev` maps to the Cloud Run service.
+**Rationale:** Cloud Run gives long-running Node server runtime, wildcard domain mapping, and managed SSL without per-deploy fan-out. Vercel's serverless model fights the multi-tenant Host-header pattern and isn't aligned with the rest of AnchorCorps infra (GCP Artifact Registry for `@anchorcorps/components`, Cloud SQL Postgres).
+**Alternatives considered:** Vercel (rejected — see above); GKE (rejected — too much ops surface for v1); per-site Cloud Run services (rejected — see D-003).
+
+### D-011: Starting repo has frontend only — backend will be scaffolded in Phase 1
+
+**Context:** PLAN.md and PHASE-01-foundation.md were drafted assuming a working Node/Express + Postgres template with auth, blog, and events as the safety net. The actual starting repo is a Vite + React SPA with no Express server, no Postgres connection, no auth, no blog, and no events.
+**Decision:** Phase 1 inserts a **Task 1.0 — Backend scaffold** before Task 1.1. Task 1.0 stands up an Express server alongside the existing Vite build, wires Postgres via `pg`, sets up `node-pg-migrate`, and adds a minimal `/healthz`. Task 1.1's baseline smoke tests then cover whatever exists after 1.0 — `/healthz` and the SPA serving — rather than auth/blog/events. The auth/blog/events flows referenced throughout the plan become Phase 8 work (per the original plan), not pre-existing baseline.
+**Rationale:** Greenfielding the backend inside Phase 1 keeps the routine bounded (single phase, no separate "Phase 0"), and the architectural anchors (block JSON, Zod schemas, multi-tenant by Host) still apply on day one. Pretending an auth flow exists would cause the routine to fail Task 1.1 immediately.
+**How to apply:** The routine expands Task 1.0 on its first run and asks for human confirmation of the detailed sub-task list before executing, per the daily prompt's phase-expansion rule.
+
+### D-012: Operational pointers for the routine
+
+**Context:** The daily prompt expects to know where email sending lives, how to run tests, and how to run migrations. None of these exist yet in the starting repo, so they need to be pre-declared rather than discovered.
+**Decision:**
+- **Email service:** Not yet wired. The routine creates it in Phase 1 Task 1.9 using **Resend** (HTTP API, no SMTP setup, works from Cloud Run). API key goes in GCP Secret Manager as `RESEND_API_KEY`. Sending helper lives at `src/server/email/send.ts` once Phase 1 Task 1.0/1.9 land.
+- **Test command:** `npm test` (Vitest, already configured in `package.json`).
+- **Migration tool:** `node-pg-migrate`. Migrations live in `db/migrations/`. Commands: `npm run migrate:up`, `npm run migrate:down`. Added in Task 1.0.
+- **Deploy command:** `gcloud run deploy` driven by `cloudbuild.yaml` on push to `main`. Wired in Task 1.8.
+**How to apply:** When the daily prompt references "the email sending mechanism" / "run tests" / "run migrations", use these. If any turns out wrong on first run, the routine appends a corrective decision rather than guessing.
+
 ---
 
 <!-- Routine appends future decisions below this line -->
