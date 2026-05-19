@@ -61,6 +61,58 @@ describe("ac-hero-slider", () => {
     expect(screen.queryByRole("button", { name: "Previous slide" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Next slide" })).toBeNull();
   });
+
+  // ---- P3-T3.13 — image_asset_id resolution + legacy `image` URL fallback ----
+  it("renders a slide with legacy `image: <url>` as a background-image (no asset_id required)", async () => {
+    const { heroSliderSchema: schema } = await import("../hero-slider/schema.js");
+    const props = schema.parse({
+      slides: [{ title: "Legacy", image: "https://example.com/old.jpg" }],
+    });
+    const { container } = render(<HeroSlider {...props} />);
+    const slide = container.querySelector(".ac-hero-slider__slide") as HTMLElement;
+    expect(slide.style.backgroundImage).toContain("https://example.com/old.jpg");
+    // Overlay rendered for legibility.
+    expect(slide.querySelector(".bg-theme-main.opacity-50")).not.toBeNull();
+  });
+
+  it("resolves image_asset_id via MediaContext to the widest webp variant; uses focal_point for backgroundPosition", async () => {
+    const { MediaProvider } = await import("../../media-context.js");
+    const { heroSliderSchema: schema } = await import("../hero-slider/schema.js");
+    const props = schema.parse({
+      slides: [{ title: "Modern", image_asset_id: "asset-99" }],
+    });
+    const asset = {
+      id: "asset-99",
+      alt: "Modern alt",
+      focal_point: { x: 0.2, y: 0.8 },
+      variants: [
+        { name: "sm" as const, format: "webp" as const, width: 480, height: 270, url: "https://x/sm.webp" },
+        { name: "lg" as const, format: "webp" as const, width: 1280, height: 720, url: "https://x/lg.webp" },
+        { name: "lg" as const, format: "jpg" as const, width: 1280, height: 720, url: "https://x/lg.jpg" },
+      ],
+    };
+    const { container } = render(
+      <MediaProvider assets={[asset]}>
+        <HeroSlider {...props} />
+      </MediaProvider>,
+    );
+    const slide = container.querySelector(".ac-hero-slider__slide") as HTMLElement;
+    expect(slide.style.backgroundImage).toContain("https://x/lg.webp");
+    // jsdom normalizes "20.00%" → "20%". Either is acceptable.
+    expect(slide.style.backgroundPosition.replace(/\s+/g, " ")).toMatch(/^20(?:\.00)?% 80(?:\.00)?%$/);
+  });
+
+  it("falls back to legacy `image` when image_asset_id is set but the asset isn't in context", async () => {
+    const { heroSliderSchema: schema } = await import("../hero-slider/schema.js");
+    const props = schema.parse({
+      slides: [
+        { title: "Hybrid", image_asset_id: "missing", image: "https://example.com/fallback.jpg" },
+      ],
+    });
+    const { container } = render(<HeroSlider {...props} />);
+    const slide = container.querySelector(".ac-hero-slider__slide") as HTMLElement;
+    expect(slide.style.backgroundImage).toContain("https://example.com/fallback.jpg");
+  });
 });
 
 describe("ac-cta", () => {

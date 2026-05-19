@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 3,
   "current_phase_file": "PHASE-03-multi-tenant-renderer.md",
-  "current_task": "3.13",
+  "current_task": "3.14",
   "phase_started_at": "2026-05-19T13:30:00Z",
   "last_commit_sha": "eddfd48",
   "last_email_sent_at": null,
@@ -27,13 +27,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 217,
+    "current_pass": 220,
     "current_fail": 0,
     "current_skipped": 0,
     "current_pass_root": 161,
-    "current_pass_package_components": 56,
-    "last_run_at": "2026-05-19T14:11:00Z",
-    "notes": "Phase 3 Task 3.12: +10 Image-block tests in package. Package 56, root 161, total 217 across 33 files. @anchorcorps/components 0.2.0 published to AR."
+    "current_pass_package_components": 59,
+    "last_run_at": "2026-05-19T14:15:00Z",
+    "notes": "Phase 3 Task 3.13: +3 hero-slider image_asset_id tests in package. Package 59, root 161, total 220 across 33 files. @anchorcorps/components 0.3.0 published to AR."
   },
   "phase_2_approved": true,
   "phase_3_approved": true
