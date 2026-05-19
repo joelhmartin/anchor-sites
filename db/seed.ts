@@ -5,6 +5,7 @@ type SiteSeed = {
   slug: string;
   display_name: string;
   default_brand_tokens: Record<string, unknown>;
+  domains: string[];
 };
 
 const SITES: SiteSeed[] = [
@@ -15,6 +16,7 @@ const SITES: SiteSeed[] = [
       "--theme-main": "#0a3d62",
       "--theme-accent": "#f6b93b",
     },
+    domains: ["muldoon.preview.anchorcorps.dev", "muldoon.localhost"],
   },
   {
     slug: "demo-site",
@@ -23,14 +25,18 @@ const SITES: SiteSeed[] = [
       "--theme-main": "#1f1f1f",
       "--theme-accent": "#22c55e",
     },
+    domains: ["demo.preview.anchorcorps.dev", "demo.localhost"],
   },
 ];
 
-export async function seed(pool: Pool = defaultPool): Promise<{ sites: number; pages: number }> {
+export async function seed(
+  pool: Pool = defaultPool,
+): Promise<{ sites: number; pages: number; domains: number }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
+    let domainCount = 0;
     for (const site of SITES) {
       const siteRes = await client.query<{ id: string }>(
         `INSERT INTO sites (slug, display_name, default_brand_tokens)
@@ -47,10 +53,22 @@ export async function seed(pool: Pool = defaultPool): Promise<{ sites: number; p
          ON CONFLICT (site_id, slug) DO NOTHING`,
         [siteId, `${site.display_name} — Home`],
       );
+
+      for (let i = 0; i < site.domains.length; i++) {
+        const hostname = site.domains[i];
+        const isPrimary = i === 0;
+        await client.query(
+          `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
+           VALUES ($1, $2, $3, 'verified', 'active')
+           ON CONFLICT (hostname) DO NOTHING`,
+          [siteId, hostname, isPrimary],
+        );
+        domainCount++;
+      }
     }
 
     await client.query("COMMIT");
-    return { sites: SITES.length, pages: SITES.length };
+    return { sites: SITES.length, pages: SITES.length, domains: domainCount };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -64,7 +82,9 @@ const invokedAsScript = import.meta.url === `file://${process.argv[1]}`;
 if (invokedAsScript) {
   seed()
     .then((r) => {
-      console.log(`[seed] ok — ${r.sites} sites, ${r.pages} pages seeded/upserted`);
+      console.log(
+        `[seed] ok — ${r.sites} sites, ${r.pages} pages, ${r.domains} domains seeded/upserted`,
+      );
       return defaultPool.end();
     })
     .catch((err) => {

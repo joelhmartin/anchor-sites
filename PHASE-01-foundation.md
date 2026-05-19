@@ -111,7 +111,7 @@ This is the keystone of the whole builder. Get it right or everything else is ha
 
 ## Task 1.4 — BlockRenderer component
 
-- [ ] Create `src/components/BlockRenderer.tsx`:
+- [x] Create `src/components/BlockRenderer.tsx`:
   ```tsx
   type Props = { blocks: Block[]; editable?: boolean };
   ```
@@ -140,22 +140,23 @@ This is the keystone of the whole builder. Get it right or everything else is ha
 
 ## Task 1.5 — Multi-tenant request resolution
 
-- [ ] Create middleware `src/middleware/resolveSite.ts`:
-  - [ ] Read `Host` header
-  - [ ] Strip port if present
-  - [ ] Look up `site_domains` for matching hostname → `site_id`
-  - [ ] Fallback: parse subdomain from `*.preview.anchorcorps.dev` or `*.anchorcorps.dev` → match `sites.slug`
-  - [ ] Attach `req.site` to the request — type includes `plugins: PluginInstance[]` (empty array in Phase 1; field reserved per D-016 so Phase 7.5 doesn't have to retrofit)
-  - [ ] Return 404 site-not-found page if no match
-- [ ] Cache the host→site lookup in-memory with a 60s TTL (per-process Map is fine for now; Redis later)
-- [ ] Mount middleware on all routes *except* the existing admin/auth/blog routes (those stay tenant-less for now — they'll be tenant-aware in Phase 8)
-- [ ] Update local dev: add `/etc/hosts` instructions to `docs/local-dev.md` for `muldoon.localhost` and `demo.localhost`
+- [x] Create middleware `src/middleware/resolveSite.ts`:
+  - [x] Read `Host` header
+  - [x] Strip port if present
+  - [x] Look up `site_domains` for matching hostname → `site_id`
+  - [x] Fallback: parse subdomain from `*.preview.anchorcorps.dev` or `*.anchorcorps.dev` → match `sites.slug`
+  - [x] Attach `req.site` to the request — type includes `plugins: PluginInstance[]` (empty array in Phase 1; field reserved per D-016 so Phase 7.5 doesn't have to retrofit)
+  - [x] Return 404 site-not-found page if no match
+- [x] Cache the host→site lookup in-memory with a 60s TTL (per-process Map is fine for now; Redis later)
+- [x] Mount middleware on all routes *except* the existing admin/auth/blog routes (those stay tenant-less for now — they'll be tenant-aware in Phase 8) — *Phase 1 wires it onto the dev-only `/__site` probe; Task 1.6 mounts it on the catch-all page route*
+- [x] Update local dev: add `/etc/hosts` instructions to `docs/local-dev.md` for `muldoon.localhost` and `demo.localhost`
 
 **Tests:**
-- [ ] Request with `Host: muldoon.preview.anchorcorps.dev` resolves to muldoon site
-- [ ] Request with `Host: demo.preview.anchorcorps.dev` resolves to demo site
-- [ ] Request with unknown host returns 404
-- [ ] Existing auth route still works (not tenant-scoped yet)
+- [x] Request with `Host: muldoon.preview.anchorcorps.dev` resolves to muldoon site
+- [x] Request with `Host: demo.preview.anchorcorps.dev` resolves to demo site
+- [x] Request with unknown host returns 404
+- [x] Existing auth route still works (not tenant-scoped yet) *(verified via `/healthz` mounted before the middleware in `buildApp` integration harness; `tests/smoke/baseline.test.ts` still green)*
+- [x] Bonus: port stripping, subdomain fallback to `sites.slug`, positive cache hit, negative cache hit
 
 ---
 
@@ -308,6 +309,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-18 23:10 UTC — Task 1.5 (resolveSite middleware + cache)
+**Commit:** <pending>
+**Done:** Built `src/middleware/resolveSite.ts` — Express middleware factory that reads `Host`, strips port + lowercases, looks up `site_domains` first, then falls back to subdomain parse against `sites.slug` for `*.preview.anchorcorps.dev` and `*.anchorcorps.dev`. Attaches `req.site` with `{id, slug, display_name, default_brand_tokens, matched_via, plugins: []}`. The `plugins` field is reserved per D-016 — empty array until Phase 7.5 fills it from `site_plugins`. Per-process 60s TTL `Map` cache memoizes both positive and negative lookups. Express `Request` augmented via `declare module "express-serve-static-core"`. Updated `db/seed.ts` to seed `site_domains` rows for both seeded sites (`muldoon.preview.anchorcorps.dev`, `muldoon.localhost`, `demo.preview.anchorcorps.dev`, `demo.localhost`). Wired a dev-only `GET /__site` probe in `app.ts` so the middleware is exercisable end-to-end before Task 1.6's catch-all lands. Wrote `docs/local-dev.md` covering setup, the four seeded hostnames, `/etc/hosts` notes, and reset commands.
+**Tests added:** 8 (`tests/integration/resolveSite.test.ts`) — domain match for muldoon + demo, 404 on unknown host, `/healthz` mounted before middleware still works, port stripping, subdomain → `sites.slug` fallback (with an ad-hoc inserted site), positive cache hit (spy pool, query count stays 1), negative cache hit. Total suite now **47 passing, 0 skipped**, `tsc --noEmit` clean.
+**Next:** Task 1.6 — catch-all `GET /:slug*` page rendering route that consumes `req.site`, looks up `pages WHERE site_id = ? AND slug = ?`, injects brand tokens into `<head>`, and SSR-renders blocks via `<BlockRenderer>`.
+**Notes:**
+- Mounting decision: did NOT register `resolveSite()` globally on `createApp`. `/healthz`, the SPA index served by Vite middleware, and `/__blocks/preview` must stay tenant-less. Task 1.6 will mount it on its catch-all router. For Phase 1 the middleware is wired only on `/__site` (dev-only) — enough to prove the lookup pipeline end-to-end without breaking the existing dev workflow.
+- Subdomain fallback regex deliberately excludes `*.localhost` — localhost dev relies on the explicit `site_domains` seed rows. Keeps the regex narrow and prod-shaped.
+- The cache is per-process and currently has no invalidation. Phase 10 (domain provisioning) is the natural place to add invalidation broadcasts; until then, 60s TTL is the recovery window.
+- Vite's esbuild "request is outdated" noise on test teardown is unchanged from prior runs (noted in 1.1 log). No suite signal impact.
 
 ### 2026-05-18 21:32 UTC — Task 1.1 (Pre-flight baseline)
 **Commit:** 3a9fd8c

@@ -4,6 +4,7 @@ import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
+import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
   const app = express();
@@ -22,6 +23,12 @@ export function createApp(): Express {
   // Phase 4 will add real admin auth + a properly mounted admin UI.
   if (process.env.NODE_ENV !== "production") {
     app.use(blocksPreviewRouter);
+
+    // Tenant resolution probe — confirms Host → site lookup wiring before the
+    // catch-all page renderer lands in Task 1.6.
+    app.get("/__site", resolveSite(), (req: Request, res: Response) => {
+      res.json({ site: req.site });
+    });
   }
 
   return app;
