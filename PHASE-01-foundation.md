@@ -209,20 +209,25 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 
 ## Task 1.8 — Deploy to Cloud Run with wildcard subdomain
 
-- [ ] Add `Dockerfile` (or update existing) for the renderer
-- [ ] Add `cloudbuild.yaml` or update existing CI to deploy to Cloud Run on main branch push
-- [ ] Configure Cloud Run service to allow unauthenticated requests on rendering routes
+> **Status:** repo-side artifacts landed; production execution is on hold pending B-001 (needs human GCP credentials). Tasks 1.9 + 1.10 proceed in parallel; this section reopens when `.routine/TASK-1.8-APPROVED` lands.
+
+- [x] Add `Dockerfile` (or update existing) for the renderer *(multi-stage, prod-only npm ci in the run stage, `PORT=8080` for Cloud Run; `tsx` moved to `dependencies`)*
+- [x] Add `cloudbuild.yaml` or update existing CI to deploy to Cloud Run on main branch push *(authored; trigger creation is in `docs/deploy.md` step 6)*
+- [ ] Configure Cloud Run service to allow unauthenticated requests on rendering routes *(set via `--allow-unauthenticated` in `cloudbuild.yaml`; runs when the human executes `docs/deploy.md` step 7)*
 - [ ] Map wildcard domain `*.preview.anchorcorps.dev` to the Cloud Run service
-  - [ ] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites
+  - [ ] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites *(fallback documented in `docs/deploy.md` step 9; will fire if the wildcard mapping is rejected)*
 - [ ] Verify SSL provisions
 - [ ] Confirm both seed sites resolve in production
-- [ ] Document deploy process in `docs/deploy.md`
+- [x] Document deploy process in `docs/deploy.md` *(full step-by-step from API enablement through wildcard domain mapping + rollback)*
+- [x] Remove `vercel.json` (D-010) *(no longer present)*
 
 **Tests:**
 - [ ] CI deploys successfully on push to main
 - [ ] Production URLs serve the same content as local
 
-**Demo milestone:** Real production URLs working. **Email trigger:** "Phase 1 sites are live in production — https://muldoon.preview.anchorcorps.dev. SSL active, multi-tenant routing working."
+**Demo milestone:** Real production URLs working. **Email trigger:** Deferred — Resend wires in Task 1.9. Surfaces in chat when production URLs are confirmed.
+
+**Blocker:** B-001 — Phase 1 production deploy needs human GCP access. See `BLOCKERS.md`.
 
 ---
 
@@ -311,6 +316,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-18 23:30 UTC — Task 1.8 (Cloud Run artifacts; deploy blocked on B-001)
+**Commit:** <pending>
+**Done:** All repo-side artifacts for the Cloud Run deploy. `Dockerfile` rewritten — multi-stage, runtime stage uses `npm ci --omit=dev`, `PORT=8080` (Cloud Run default), `tsx` moved from `devDependencies` to `dependencies` so `npm start` resolves inside the prod image. `cloudbuild.yaml` defines build → push → migrate job → `gcloud run deploy` with `--allow-unauthenticated`, Cloud SQL socket attachment, and `--set-secrets` for `DATABASE_URL` / `ADMIN_API_TOKEN` / `RESEND_API_KEY`. `vercel.json` deleted (D-010). `docs/deploy.md` walks the human operator from API enablement through Cloud SQL provisioning, Secret Manager, the migration + seed Cloud Run Jobs, the Cloud Build trigger, and wildcard domain mapping (with per-subdomain fallback documented).
+**Tests added:** 0 — no new code paths to test on the routine side. The "CI deploys on push to main" + "Production URLs serve same content as local" tests are post-deploy checks that fire after B-001 resolves.
+**Next:** Raise B-001 (done), then proceed to Task 1.9 (Resend wiring + email templates) and Task 1.10 (docs pass) — neither needs production access. Task 1.8 reopens once `.routine/TASK-1.8-APPROVED` lands.
+**Notes:**
+- `tsx` is now a runtime dep because the server entry is `tsx src/server/index.ts` (no compile step). Phase 12 may swap to a precompiled JS bundle to drop the dep.
+- Build pipeline pre-deploys a migration via a Cloud Run **Job** (`anchor-sites-migrate`) so a schema change can't ship to the service before the DB is ready for it. Same approach for the one-off seed (`anchor-sites-seed`).
+- `cloudbuild.yaml` substitutions include `_SQL_INSTANCE` with a placeholder; the human sets the real value via the Cloud Build trigger or `--substitutions=` on the first manual `gcloud builds submit`.
+- Wildcard domain mapping (`gcloud beta run domain-mappings create --domain='*.preview.anchorcorps.dev'`) is documented; the doc explicitly handles the "not supported in region" case by falling back to per-subdomain mappings for the two seed hostnames.
 
 ### 2026-05-18 23:25 UTC — Task 1.7 (admin save + revisions + restore)
 **Commit:** 8f273e3 (preceded by 2b0c74a, 6d970ec)
