@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 17:35 UTC — Task 3.15 (Phase 3 docs + plan tick) — PHASE 3 COMPLETE
-**Commit:** (pending — same commit as this log entry)
+**Commit:** 8dc4efb
 **Done:**
 - **`PLAN.md`** — Phase 3 row ticked `[x]` with the same one-line summary pattern Phases 1 + 2 used. References the inflection points: `resolveSite` eviction + debug endpoint, brand-token Zod schema + per-page override merge, the full D-022 media pipeline (bucket, lifecycle, pg-boss, signed-URL upload, sharp variant job emitting 5×2 variants, `<Image>` block + hero-slider migration in `@anchorcorps/components@0.3.0`, end-to-end renderer hydration), Cloud CDN deferred to Phase 12.
 - **`.routine/baseline-tests.log`** — appended Phase 3 baseline entry. Suite went 156 → **227** (+71) across 32 → 34 files. Includes per-suite breakdown (root 110 → 168 = +58; package 46 → 59 = +13).
