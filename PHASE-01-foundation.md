@@ -283,7 +283,7 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - 10 npm-audit vulnerabilities reported on install (6 moderate, 4 high). Mostly transitive; raising a low-priority blocker would be premature this early. Will reassess after Task 1.2.
 
 ### 2026-05-18 22:41 UTC — Task 1.2 (Postgres schema for sites, pages, revisions)
-**Commit:** *(filled below)*
+**Commit:** fc6f593
 **Done:** Schema migration creates four core tables (`sites`, `site_domains`, `pages`, `page_revisions`) with proper FKs/cascades, CHECK constraints on status fields, GIN index on `pages.blocks` for future structural queries, UNIQUE(site_id, slug) on pages, and a shared `touch_updated_at()` trigger function. Wrote idempotent `db/seed.ts` (UPSERT pattern) seeding `muldoon-dental` and `demo-site` with home pages. Documented schema in `docs/data-model.md`. Refactored seed into an exported `seed(pool)` function so it's callable from tests.
 **Tests added:** 8 (`tests/integration/schema.test.ts` ×6, `tests/integration/seed.test.ts` ×2). Total suite now **13 passing, 0 skipped**. Tests gated on `TEST_DATABASE_URL` so they auto-skip when no DB env is provided.
 **Next:** Task 1.3 — block registry pattern with `registerBlock()` runtime API (per D-016), three block types (Hero, RichText, CTA), Zod schemas.
