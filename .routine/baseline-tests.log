@@ -1,6 +1,6 @@
-2026-05-18 — baseline captured (Tasks 1.0 through 1.5)
+2026-05-18 — baseline captured (Tasks 1.0 through 1.6)
 Suite: vitest run (with DATABASE_URL + TEST_DATABASE_URL set)
-Result: 47 passed, 0 skipped, 0 failed
+Result: 54 passed, 0 skipped, 0 failed
 
 Tests:
   ✓ tests/smoke/baseline.test.ts (3)
@@ -13,10 +13,13 @@ Tests:
       tables, indexes, FK cascade, updated_at trigger, CHECK, up/down
   ✓ tests/integration/seed.test.ts (2)
       idempotency, expected slugs
-  ✓ tests/integration/resolveSite.test.ts (8)
+  ✓ tests/integration/resolveSite.test.ts (9)
       muldoon/demo domain match, unknown 404, /healthz still works,
       port stripping, subdomain → sites.slug fallback,
-      positive cache hit, negative cache hit
+      positive cache hit, negative cache hit, passThroughOnMiss
+  ✓ tests/integration/page-render.test.ts (6)
+      muldoon/demo home, 404 in site shell, unknown host passthrough,
+      brand tokens differ, draft-not-served
   ✓ src/blocks/registry.test.ts (4)
       register, get, dup detection, listBlocks
   ✓ src/blocks/blocks.test.tsx (13)
@@ -31,13 +34,13 @@ Manual checks:
   ✓ curl -X POST :3000/__blocks/preview → SSR HTML with ac-* classes + data-block-* wrappers
   ✓ tsc --noEmit clean
 
-Env required for the full 47-test baseline:
+Env required for the full 54-test baseline:
   DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev
   TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test
   (Docker container: anchor-sites-postgres-1, host port 5434)
 
 If TEST_DATABASE_URL is unset the integration tests skip cleanly and the
-suite drops to 31 passing. The routine should keep both env vars set.
+suite drops to 31 passing (smoke + unit only). The routine should keep both env vars set.
 
 Boot Postgres at the start of any run that touches the DB:
   docker compose up -d postgres

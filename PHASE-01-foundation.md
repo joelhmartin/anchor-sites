@@ -162,25 +162,26 @@ This is the keystone of the whole builder. Get it right or everything else is ha
 
 ## Task 1.6 — Page rendering route
 
-- [ ] Create route `GET /:slug*` (catch-all, registered *after* all existing routes) that:
-  - [ ] Uses `req.site` from middleware
-  - [ ] Looks up `pages WHERE site_id = ? AND slug = ? AND status = 'published'`
-  - [ ] Falls back to slug `'home'` for empty path `/`
-  - [ ] Returns 404 page (which is itself a block-rendered page if seeded, otherwise hardcoded fallback) if not found
-  - [ ] Server-renders the page using `<BlockRenderer>`
-  - [ ] Injects per-site brand tokens as CSS custom properties in `<head>`
-- [ ] Wrap the rendered page in the existing app shell (header, footer from your template) — but with site-aware branding
-- [ ] Add `<meta>` tags from `pages.seo` (basic: title, description for now; full SEO in Phase 9)
-- [ ] Seed `muldoon-dental` home page with a real blocks array: hero + rich-text + cta
-- [ ] Seed `demo-site` home page with a different blocks array
+- [x] Create route `GET /:slug*` (catch-all, registered *after* all existing routes) that:
+  - [x] Uses `req.site` from middleware
+  - [x] Looks up `pages WHERE site_id = ? AND slug = ? AND status = 'published'`
+  - [x] Falls back to slug `'home'` for empty path `/`
+  - [x] Returns 404 page (which is itself a block-rendered page if seeded, otherwise hardcoded fallback) if not found *(404 wears the site shell + brand tokens)*
+  - [x] Server-renders the page using `<BlockRenderer>`
+  - [x] Injects per-site brand tokens as CSS custom properties in `<head>`
+- [x] Wrap the rendered page in the existing app shell (header, footer from your template) — but with site-aware branding *(Phase 1 ships a minimal SSR shell. The existing `src/components/marketing/{Navbar,Footer}.jsx` are JSX and require the full Vite SSR pipeline per D-014; Phase 5 will fold them in when Puck + SSR plumbing land.)*
+- [x] Add `<meta>` tags from `pages.seo` (basic: title, description for now; full SEO in Phase 9)
+- [x] Seed `muldoon-dental` home page with a real blocks array: hero + rich-text + cta
+- [x] Seed `demo-site` home page with a different blocks array
 
 **Tests:**
-- [ ] `GET muldoon.preview.anchorcorps.dev/` returns 200 with hero text from seed
-- [ ] `GET demo.preview.anchorcorps.dev/` returns 200 with different content
-- [ ] `GET muldoon.preview.anchorcorps.dev/nonexistent` returns 404
-- [ ] Brand tokens differ between the two sites' rendered CSS
+- [x] `GET muldoon.preview.anchorcorps.dev/` returns 200 with hero text from seed
+- [x] `GET demo.preview.anchorcorps.dev/` returns 200 with different content
+- [x] `GET muldoon.preview.anchorcorps.dev/nonexistent` returns 404
+- [x] Brand tokens differ between the two sites' rendered CSS
+- [x] Bonus: unknown host passes through to downstream (Vite/SPA fallback); draft pages are not served
 
-**Demo milestone:** Two live URLs serving different content from block JSON. **Email trigger:** "🎉 First multi-tenant page is live — visit https://muldoon.preview.anchorcorps.dev and https://demo.preview.anchorcorps.dev. Same renderer, different content, all from blocks JSON."
+**Demo milestone:** Two live URLs serving different content from block JSON. **Email trigger:** Deferred — Resend not wired until Task 1.9; surfaced in chat instead. Demo milestone id: `first-multi-tenant-page-local`.
 
 ---
 
@@ -309,6 +310,16 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-18 23:20 UTC — Task 1.6 (catch-all page renderer + seeded content)
+**Commit:** 1737b62 (preceded by 7689098, cfd2b98, 8fccf5f)
+**Done:** First-class multi-tenant rendering. Catch-all `GET /*` router (`src/server/routes/page.ts`) uses `resolveSite({ passThroughOnMiss: true })` so known hosts render and unknown hosts (e.g. `127.0.0.1` in dev) fall through to the Vite/SPA layer mounted in `src/server/index.ts`. SSR helper (`src/server/render-page.tsx`) wraps `<BlockRenderer>` in an `ac-site-header` / `ac-site-main` / `ac-site-footer` shell, injects per-site `default_brand_tokens` as `:root` CSS custom properties, sets `<title>` + optional `<meta name="description">` from `pages.seo`, and provides a 404 page rendered in the same site shell. Both seeded sites now have published home pages with hero + rich-text + cta blocks (muldoon: dental copy + #0a3d62 brand; demo: builder pitch + #1f1f1f brand). Added `passThroughOnMiss` option to `resolveSite` so the catch-all coexists with the SPA dev experience on `localhost:3000`.
+**Tests added:** 7 (6 page-render + 1 resolveSite passthrough). `tests/integration/page-render.test.ts` covers muldoon home, demo home, 404 in shell, unknown-host passthrough, brand-token diff, and draft-not-served. Plus a `passThroughOnMiss` test in `resolveSite.test.ts`. Total suite now **54 passing, 0 skipped**, tsc clean.
+**Next:** Task 1.7 — `POST /api/sites/:siteId/pages/:pageId` save endpoint with `page_revisions` insert in the same transaction, GET revisions list, and revision restore (non-destructive — creates a new revision row).
+**Notes:**
+- **Caught a real bug via the integration test.** First seed pass used `max_width: "md"/"lg"` and `cta.title`/`variant: "secondary"` — the Zod schemas reject all three. The page-render test surfaced the validation failure (`<BlockError>` markup leaking into the HTML). Fixed seed to match the schemas — proof that Task 1.3's "schema is the contract" anchor works.
+- Existing JSX app shell (`src/components/marketing/Navbar.jsx`, `Footer.jsx`) is **not** SSR-imported. Doing so would require the full Vite `ssrLoadModule` pipeline described in D-014; that's Phase 5's job alongside Puck. Phase 1 ships a minimal but real shell so the demo milestone is testable end-to-end now.
+- Catch-all is registered LAST in `createApp` so `/healthz`, `/__blocks/preview`, and `/__site` keep matching first. Vite middleware mounts AFTER `createApp` in `src/server/index.ts`, so unknown-host requests reach Vite after the catch-all calls `next()`.
 
 ### 2026-05-18 23:10 UTC — Task 1.5 (resolveSite middleware + cache)
 **Commit:** 575f04b
