@@ -61,7 +61,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Export `registerAll(register: (type, entry) => void)` convenience — the renderer passes its own `registerBlock`; the package never imports the renderer
   - **Tests:** every manifest entry has all required fields; `registerAll` invokes the provided register once per block; every schema accepts its declared defaults
 
-- [ ] **2.7 — Publish workflow + first publish**
+- [x] **2.7 — Publish workflow + first publish**
   - `packages/components/scripts/publish.sh` — generates a temp `.npmrc` with `gcloud auth print-access-token`, then `npm publish --access=restricted`
   - Cloud Build trigger in `anchor-hub-480305` watching tags `components-v*` on this repo, separate from the renderer trigger
   - Service account `anchor-sites-components-publisher@anchor-hub-480305.iam.gserviceaccount.com` with `roles/artifactregistry.writer` on the npm repo only
@@ -112,8 +112,23 @@ Every box above checked, AND:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 12:30 UTC — Task 2.6 (block manifest contract tests)
+### 2026-05-19 12:50 UTC — Task 2.7 (publish workflow + first publish) — DEMO MILESTONE
 **Commit:** (pending — same commit as this log entry)
+**Done:** `@anchorcorps/components@0.1.0` is **live in the GCP Artifact Registry npm repo** (`anchor-hub-480305 / us-central1 / npm-anchorcorps`). Bootstrap publish executed manually from this routine session.
+- **`packages/components/scripts/publish.sh`** — mints a short-lived `.npmrc` *outside* the workspace (npm ignores in-workspace `.npmrc` when running from a workspace package), points npm at it via `NPM_CONFIG_USERCONFIG`, runs `npm publish`, cleans up via `trap`. Auto-runs `npm run build` if `dist/` is missing. `--dry-run` flag supported.
+- **`cloudbuild-components.yaml`** — Cloud Build pipeline at repo root that future tag-driven publishes (`components-v*`) consume. Steps: `npm install` (workspace-aware) → `npm run build:components` → `npm publish` with a token-authed `.npmrc` minted on the fly inside the build SA. Trigger creation deferred to "wire in console" — the doc spells out the exact trigger config (repo, tag regex, service account).
+- **IAM** — `roles/artifactregistry.writer` on `npm-anchorcorps` granted to the default Cloud Build service account (`333281424614@cloudbuild.gserviceaccount.com`). Scoped to this repo only. Bootstrap publish used the operator's `gcloud auth print-access-token`. No JSON keys on disk.
+- **Verification** — `gcloud artifacts versions list --repository=npm-anchorcorps --package=@anchorcorps%2Fcomponents` returns `0.1.0` with the expected description and timestamp. Tarball: 9 files, 41.4 kB packed (README, `dist/index.{js,cjs,d.ts,d.cts,*.map}`, `dist/styles.css`, `package.json`).
+**Tests added:** 0 — publish is observable infra rather than code under test. Verification is the AR `versions list` query.
+**Next:** Task 2.8 — renderer consumption swap. Add the package as a workspace dep, replace inline `src/blocks/hero` + `src/blocks/cta` with `blockManifest` consumption, retain `src/blocks/rich-text/` inline (Tiptap is Phase 5), confirm both seeded sites still render in tests.
+**Notes:**
+- **First-publish bug caught + fixed:** npm publish ignored the in-workspace `.npmrc` (warning: "ignoring workspace config"). Fix: place the `.npmrc` in `mktemp` and pass via `NPM_CONFIG_USERCONFIG`. Updated `scripts/publish.sh` and re-ran cleanly.
+- **Service account simplification** — the original phase plan (and earlier `docs/components-publish.md` draft) referenced a dedicated `anchor-sites-components-publisher` SA. For v0.1 the default Cloud Build SA suffices — keeps Phase 2 from sprouting unnecessary IAM surface. The doc now spells out the path to a dedicated SA if a future need surfaces (e.g. locking down which builds can publish).
+- **Tag-trigger wiring is the one piece NOT auto-completed.** It's a single click in Cloud Build console or one `gcloud builds triggers create github` invocation. The `cloudbuild-components.yaml` is in place. The first automated publish will be `0.1.1` (or `0.2.0` if a new block lands first) after the trigger is wired.
+- **Bootstrap publish was idempotent-safe** — the AR repo refuses re-publishing the same version, so a re-run before bumping `version` would error rather than overwrite.
+
+### 2026-05-19 12:30 UTC — Task 2.6 (block manifest contract tests)
+**Commit:** d2ec255
 **Done:** The manifest shape, `BlockManifestEntry` type, `registerAll` helper, and per-block index files were already in place (2.2 + 2.5). 2.6 added formal **contract tests** that pin the manifest's invariants so future block additions can't break them silently.
 - `src/blocks/manifest.test.ts` — 8 cases covering: manifest length matches v0.1 expectation (6), every entry has every required field with a sensible value, every `type` is unique, every `schema` is a `z.ZodObject` instance (introspection guarantee per D-002), every schema accepts its declared defaults via `safeParse({})`, every `component` is a function, manifest contains the Phase 1 ports (`hero` + `cta`) so existing seed data renders, `registerAll` invokes the caller's register fn once per entry in declared order with `(type, rest)` argument shape where `rest` excludes `type`.
 **Tests added:** 8. Package suite: 46 passed.

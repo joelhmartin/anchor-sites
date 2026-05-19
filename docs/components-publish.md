@@ -44,17 +44,17 @@ Tokens expire after ~1 hour. The companion alias in `docs/local-dev.md` re-expor
 
 ## CI auth
 
-The Cloud Build trigger for the renderer (and the trigger for the components publish, see below) writes a short-lived `.npmrc` from a service account access token before running `npm ci` / `npm publish`. The service account uses Workload Identity Federation (no JSON key on disk).
+The Cloud Build trigger for the components publish writes a short-lived `.npmrc` from a service account access token before running `npm publish`. v0.1 uses the **default Cloud Build service account** (no dedicated publisher SA yet — keeps Phase 2 from sprouting unnecessary IAM surface).
 
-Required IAM on `roles/artifactregistry.writer` against `projects/anchor-hub-480305/locations/us-central1/repositories/npm-anchorcorps`:
+IAM scoped to **this repo only**, granted in Task 2.7:
 
-- `anchor-sites-components-publisher@anchor-hub-480305.iam.gserviceaccount.com` (created in Task 2.7)
+- `333281424614@cloudbuild.gserviceaccount.com` → `roles/artifactregistry.writer` on `projects/anchor-hub-480305/locations/us-central1/repositories/npm-anchorcorps`
 
-Required IAM on `roles/artifactregistry.reader` for the renderer build:
+The renderer's Cloud Build trigger (existing) needs `roles/artifactregistry.reader` on the same repo so `npm install` can resolve `@anchorcorps/components`. This binding is added when Task 2.9 wires the renderer deploy.
 
-- The default Cloud Build service account already used by the renderer's existing trigger.
+No JSON keys on disk. No project-level `roles/artifactregistry.*` bindings.
 
-Both bindings are scoped to **this repo only** — no `roles/artifactregistry.*` at project level.
+If a future need surfaces for a dedicated publisher SA (e.g. to lock down which builds can publish), create `anchor-sites-components-publisher@anchor-hub-480305.iam.gserviceaccount.com`, grant it the same role, and set the Cloud Build trigger's service account to it. The `cloudbuild-components.yaml` doesn't need to change — only the trigger configuration.
 
 ## Versioning policy
 
@@ -66,20 +66,36 @@ Semver per the standard:
 
 Phase 2 ships `0.1.0` as the first labelled release. `0.x` lives in pre-1.0 territory until the manifest stabilizes; manifest shape changes during `0.x` ride minor bumps with explicit migration notes in the changelog.
 
-## Publish flow (added in Task 2.7)
+## Publish flow
+
+### Manual (developer machine)
+
+Used for the bootstrap `0.1.0` and any developer-driven release until the trigger is wired:
+
+```bash
+cd packages/components
+./scripts/publish.sh             # build + publish
+./scripts/publish.sh --dry-run   # validate without uploading
+```
+
+The script auto-runs `npm run build` if `dist/` is missing, mints a short-lived `.npmrc` outside the workspace (npm ignores in-workspace `.npmrc`), points npm at it via `NPM_CONFIG_USERCONFIG`, and cleans up on exit.
+
+### Automated (Cloud Build trigger — to be wired)
 
 1. From the repo root, bump the package version: `npm -w @anchorcorps/components version patch` (or `minor` / `major`).
 2. Commit and tag: `git commit -am "release(components): vX.Y.Z" && git tag components-vX.Y.Z`.
 3. Push: `git push --follow-tags`.
-4. The Cloud Build trigger fires on the `components-v*` tag, builds the package, and publishes to the AR repo.
+4. The Cloud Build trigger fires on the `components-v*` tag, builds the package via `cloudbuild-components.yaml`, and publishes to the AR repo.
 
-Manual publish from a developer machine (used for the first `0.1.0`):
+The trigger configuration (created in Cloud Build console or via `gcloud builds triggers create github`):
+- Repo: `joelhmartin/anchor-sites`
+- Event: Push to tag, regex `^components-v.+$`
+- Build configuration: `cloudbuild-components.yaml`
+- Service account: default Cloud Build (`333281424614@cloudbuild.gserviceaccount.com`) — already holds `roles/artifactregistry.writer` on `npm-anchorcorps`.
 
-```bash
-cd packages/components
-gcloud auth print-access-token > /tmp/ar-token  # for the temp .npmrc
-./scripts/publish.sh
-```
+### Bootstrap log
+
+- **2026-05-19** — `0.1.0` published manually from `jmartin@anchorcorps.com`'s gcloud session. Verified in AR via `gcloud artifacts versions list --repository=npm-anchorcorps --package=@anchorcorps%2Fcomponents`.
 
 ## Troubleshooting
 

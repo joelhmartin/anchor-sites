@@ -3,9 +3,9 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 2,
   "current_phase_file": "PHASE-02-component-library.md",
-  "current_task": "2.7",
+  "current_task": "2.8",
   "phase_started_at": "2026-05-19T11:15:00Z",
-  "last_commit_sha": "65627e0",
+  "last_commit_sha": "d2ec255",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
@@ -14,7 +14,10 @@
     "phase1-cloud-run-deployed",
     "phase1-domain-mappings-created",
     "phase1-dns-live",
-    "phase1-provisioning-automated"
+    "phase1-provisioning-automated",
+    "phase2-started",
+    "phase2-package-built-locally",
+    "phase2-package-published-0.1.0"
   ],
   "blockers_open": 0,
   "tests": {

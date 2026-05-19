@@ -1,0 +1,45 @@
+# Cloud Build pipeline — @anchorcorps/components publish
+#
+# Triggered on git tags matching ^components-v.+$ via a Cloud Build
+# trigger in anchor-hub-480305. The trigger's build SA is the default
+# Cloud Build service account (333281424614@cloudbuild.gserviceaccount.com)
+# which holds roles/artifactregistry.writer on the npm-anchorcorps repo.
+#
+# Steps:
+#   1. npm install at repo root (workspaces hoist into one node_modules)
+#   2. npm run build:components — emits dist/ inside packages/components
+#   3. Mint a short-lived .npmrc with the build SA's access token
+#   4. npm publish (registry pinned via package.json publishConfig)
+
+steps:
+  - id: install
+    name: node:20-alpine
+    entrypoint: npm
+    args: ["install", "--no-audit", "--no-fund"]
+
+  - id: build
+    name: node:20-alpine
+    entrypoint: npm
+    args: ["run", "build:components"]
+
+  - id: publish
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd packages/components
+        TOKEN="$(gcloud auth print-access-token)"
+        NPMRC=$(mktemp)
+        cat > "$NPMRC" <<EOF
+        @anchorcorps:registry=https://us-central1-npm.pkg.dev/anchor-hub-480305/npm-anchorcorps/
+        //us-central1-npm.pkg.dev/anchor-hub-480305/npm-anchorcorps/:always-auth=true
+        //us-central1-npm.pkg.dev/anchor-hub-480305/npm-anchorcorps/:_authToken=$TOKEN
+        EOF
+        # Cloud SDK images don't ship npm — install Node into a temp dir.
+        apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null
+        NPM_CONFIG_USERCONFIG="$NPMRC" npm publish
+
+options:
+  logging: CLOUD_LOGGING_ONLY
