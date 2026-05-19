@@ -113,7 +113,7 @@ Every box above checked, AND:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 12:50 UTC — Task 2.7 (publish workflow + first publish) — DEMO MILESTONE
-**Commit:** (pending — same commit as this log entry)
+**Commit:** 95080a8
 **Done:** `@anchorcorps/components@0.1.0` is **live in the GCP Artifact Registry npm repo** (`anchor-hub-480305 / us-central1 / npm-anchorcorps`). Bootstrap publish executed manually from this routine session.
 - **`packages/components/scripts/publish.sh`** — mints a short-lived `.npmrc` *outside* the workspace (npm ignores in-workspace `.npmrc` when running from a workspace package), points npm at it via `NPM_CONFIG_USERCONFIG`, runs `npm publish`, cleans up via `trap`. Auto-runs `npm run build` if `dist/` is missing. `--dry-run` flag supported.
 - **`cloudbuild-components.yaml`** — Cloud Build pipeline at repo root that future tag-driven publishes (`components-v*`) consume. Steps: `npm install` (workspace-aware) → `npm run build:components` → `npm publish` with a token-authed `.npmrc` minted on the fly inside the build SA. Trigger creation deferred to "wire in console" — the doc spells out the exact trigger config (repo, tag regex, service account).
