@@ -350,4 +350,70 @@
 - Using the apex `*.anchorcorps.com` with no layer-3 label — rejected; collides with future marketing site / mail / ops subdomains and forces the resolver to be careful about what it claims.
 - A different parent label (`preview.`, `apps.`, `builder.`) — `sites.` reads cleanest for the actual product surface (tenant sites). `preview.` was confusing because production tenant URLs aren't a "preview" of anything once a client is live.
 
+### D-026: Monorepo via npm workspaces (`packages/components/` in this repo)
+
+**Context:** Phase 2 builds `@anchorcorps/components`. The options were (a) npm workspaces inside this repo, (b) a separate `joelhmartin/anchorcorps-components` repo published to GCP Artifact Registry, (c) a git submodule. The operator was given the choice in chat on 2026-05-19 and picked option (a).
+
+**Decision:** The package lives at `packages/components/` inside this repo. Root `package.json` declares `"workspaces": ["packages/*"]`. The renderer consumes the package via the workspace symlink (`node_modules/@anchorcorps/components → packages/components`) in both dev and prod. The package still publishes to GCP Artifact Registry on tag-driven Cloud Build runs — the AR-published versions are the contract for future **cross-repo** consumers (Phase 8 provisioned-site templates), not for this renderer.
+
+**Rationale:**
+- **Atomic commits** across renderer + package during the 2.5→2.8 migration. A breaking package change can be paired with the renderer update in one commit.
+- **Single test command** at the root via `vitest.workspace.ts` (Task 2.9). 156 tests across 26 files run in one invocation.
+- **Single CI pipeline** for now — the existing renderer Cloud Build trigger builds and ships everything. AR-publish runs on tag pushes only.
+- **Cheap split-out** later: when a consumer outside this repo needs the package, the package directory moves to a sibling repo with no code change beyond updating the AR publish trigger.
+
+**Alternatives considered:**
+- Separate repo: cleaner long-term boundary but adds friction to the Phase 2 migration and forces a published-version round-trip for every package change during early iteration. Rejected for v0.1.
+- Git submodule: operational pain noted in D-005; same conclusion stands.
+
+**How to apply:**
+- New shared frontend code goes in `packages/components/` unless it's renderer-internal (registry, BlockRenderer, route handlers).
+- New shared backend code (e.g. a future `@anchorcorps/plugins-runtime` per D-016 Phase 7.5) follows the same `packages/<name>/` pattern.
+- Tag-driven publishes use `components-v*` tags; renderer Cloud Build uses `main` pushes. Same repo, separate triggers.
+
+### D-027: `tsup` as the package build pipeline
+
+**Context:** `@anchorcorps/components` ships ESM + CJS + `.d.ts` + a CSS bundle. Options were tsup (esbuild wrapper), raw `tsc` + custom esbuild, Rollup, Vite library mode.
+
+**Decision:** **`tsup`** (`packages/components/tsup.config.ts`). One command emits `dist/index.js` (ESM), `dist/index.cjs` (CJS), `dist/index.d.ts` (types), sourcemaps for both. Tailwind CLI runs separately (`tailwindcss -i src/styles.css -o dist/styles.css --minify`) and is chained after tsup in the package's `"build"` script — tsup's `clean: true` would otherwise wipe the CSS.
+
+**Externals:** `react`, `react-dom`, `react/jsx-runtime`, `zod` are marked external so they're not bundled into the package — consumers' versions win.
+
+**Rationale:**
+- One config, one invocation, esbuild speed (~50ms for the JS/CJS pass, ~1.2s for the dts pass).
+- No Rollup/Vite plugin tax for what's essentially a TypeScript-to-JS-plus-types transform.
+- Sourcemaps land for free.
+
+**Alternatives considered:**
+- Raw `tsc` + esbuild: more boilerplate; same output. Rejected for unnecessary friction.
+- Rollup: classic choice for libraries but heavier config. Rejected.
+- Vite library mode: viable; rejected because the package isn't a Vite consumer in any other way.
+
+**How to apply:** New packages under `packages/` adopt the same tsup setup unless they have an unusual build need.
+
+### D-028: Package emits a prebuilt CSS bundle; consumers don't install Tailwind
+
+**Context:** `@anchorcorps/components` blocks use Tailwind utility classes under the hood. The options were (a) ship Tailwind source files and require the consumer to run Tailwind during their own build, or (b) ship a prebuilt CSS bundle and let consumers `import "@anchorcorps/components/styles.css"`.
+
+**Decision:** Option **(b) — prebuilt CSS bundle**. The package's `tailwind.config.js` scopes content globs to `packages/components/src/**/*.{ts,tsx,css}` so Tailwind only scans the package's own source. The build emits one minified `dist/styles.css` (~12-14 KB). Consumers import it once; they don't need to install Tailwind, postcss, or any plugins.
+
+**Rationale:**
+- **Consumer ergonomics:** the renderer (and future provisioned-site templates) doesn't have to ship Tailwind or worry about content globs. One CSS import, done.
+- **Stable output:** the package's CSS bundle is deterministic per version. A consumer pinning `@anchorcorps/components@0.1.5` gets the exact same CSS they tested against.
+- **Bounded bundle size:** Tailwind's content globs only see the package's own usage. The CSS bundle won't bloat as consumer codebases grow.
+
+**Brand tokens** are wired in the package's tailwind config — `bg-theme-main`, `text-theme-on-surface`, etc. resolve to CSS custom properties consumers set at `:root` per-site. The renderer already sets these in `render-page.tsx`; provisioned sites will do the same in their HTML shell.
+
+**Block-specific CSS (keyframes etc.)** lives inlined inside `src/styles.css` under a labelled section. The Tailwind CLI does NOT run `postcss-import`, so per-block `@import` files were tried and abandoned in Task 2.5. If the bundle grows enough that this approach is messy, a follow-up can wire the full postcss pipeline.
+
+**Alternatives considered:**
+- Ship raw Tailwind sources: rejected — pushes setup burden onto every consumer.
+- CSS-in-JS (Emotion / styled-components): rejected — adds a runtime dep, breaks SSR-without-hydration story.
+- Per-block CSS files imported lazily: rejected — adds round-trips and Vite/bundler complications. The package is small; one bundle is fine.
+
+**How to apply:**
+- Add Tailwind classes inside `src/primitives/` and `src/blocks/<name>/component.tsx` freely.
+- For animations / keyframes / anything Tailwind can't express, add to the labelled section in `src/styles.css`.
+- The renderer's SSR layer inlines `dist/styles.css` into the `<style>` tag (`render-page.tsx`, see PACKAGE_BLOCK_CSS). No `<link>` to a bundle file; no client hydration needed for styles.
+
 <!-- Routine appends future decisions below this line -->

@@ -83,7 +83,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Update `cloudbuild.yaml` to write `.npmrc` from a Secret Manager secret before `npm ci`
   - **Tests:** `npm test` exits 0 from repo root; renderer Cloud Build step verifies `@anchorcorps/components` resolves to the published version, not a local symlink
 
-- [ ] **2.10 — Phase 2 docs + plan tick**
+- [x] **2.10 — Phase 2 docs + plan tick**
   - `packages/components/README.md` — install, auth, usage, contributing
   - `docs/components-publish.md` — versioning policy (patch = bug, minor = new block, major = manifest shape change), publish flow, troubleshooting
   - `docs/components-consumption.md` — how the renderer registers blocks
@@ -112,8 +112,23 @@ Every box above checked, AND:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 13:15 UTC — Task 2.9 (CI / local dev experience)
+### 2026-05-19 13:25 UTC — Task 2.10 (Phase 2 docs + plan tick) — PHASE COMPLETE
 **Commit:** (pending — same commit as this log entry)
+**Done:**
+- **`DECISIONS.md`** — appended **D-026** (monorepo via npm workspaces in this repo), **D-027** (tsup as the package build pipeline), **D-028** (prebuilt CSS bundle; consumers don't install Tailwind). Each entry covers context / decision / rationale / alternatives considered / how-to-apply, with explicit Phase-2 task back-references and the decision points that emerged during execution (build-order bug → fixed in 2.3; Tailwind CLI ignoring `postcss.config.js` → fixed in 2.5 by inlining keyframes; npm ignoring workspace `.npmrc` → fixed in 2.7 with `NPM_CONFIG_USERCONFIG`).
+- **`docs/components-consumption.md`** — new doc. Covers block registration pattern (renderer iterates `blockManifest` + calls own `registerBlock`), CSS inline-via-SSR mechanism, brand-token wiring, the Docker workspace-aware deploy, and when to break the workspace pattern (= when a second consumer exists outside this repo).
+- **`docs/components-publish.md`** — already covers the registry + auth + publish flow (2.1, 2.7).
+- **`packages/components/README.md`** — already covers install + consume + dev (2.2).
+- **`PLAN.md`** — Phase 2 row ticked `[x]` with the same one-line summary pattern Phase 1 used: tasks 2.1–2.10 complete, 0.1.0 in AR, renderer running on package blocks, inline rich-text retained pending Phase 5.
+**Tests added:** 0 — pure docs + plan tick.
+**Next:** **Phase 2 complete.** Wait for `.routine/NEXT-PHASE-APPROVED` before any Phase 3 work. Phase 3 (multi-tenant renderer — host resolution + brand tokens + media per D-022) is the natural sequel; the foundation laid by Phases 1–2 keeps shaping into it cleanly.
+**Notes:**
+- **All three demo milestones for Phase 2 fired in chat per the EMAIL-TRIGGERS convention:** phase started (2.1), first package build green (2.5/2.6), `0.1.0` published to AR (2.7), renderer running on package blocks (2.8), phase complete (this entry).
+- **Routine cadence retrospective:** 10 sub-tasks landed in roughly 2¼ hours of focused work, slightly under the daily-prompt's 2-4 hour window. The "commit per sub-checkbox" pattern produced 13 commits (one per task + backfill chores), which made the work easy to scan in `git log` and trivial to revert by task if anything had needed it.
+- **Carry-forward to Phase 3:** the package's manifest / register pattern is the same one Phase 7.5 plugins will use (D-016). Future plugin packages can ship a `blockManifest` export and the renderer's existing `for (const entry of blockManifest) registerBlock(...)` works unchanged.
+
+### 2026-05-19 13:15 UTC — Task 2.9 (CI / local dev experience)
+**Commit:** 23ca6dd
 **Done:**
 - **`vitest.workspace.ts`** — root `npm test` now runs both the renderer suite (110, node env) and the `@anchorcorps/components` suite (46, jsdom env) in a single invocation. 156 tests across 26 files, ~6s. Per-workspace config controls env + globs so they don't cross-pollute.
 - **Dockerfile updated** for workspace-aware multi-stage builds. `deps` stage copies both `package.json` files (root + `packages/components`) before `npm ci` so npm sees the workspace topology and creates the symlink at `node_modules/@anchorcorps/components`. `build` stage runs `npm run build:components` (tsup + tailwind) BEFORE `npm run build` (vite renderer) — the renderer's `render-page.tsx` reads `packages/components/dist/styles.css` at module-load, so the package must be built first. `run` stage copies `packages/components/{package.json,dist}` alongside the rest so `createRequire` can resolve `@anchorcorps/components/styles.css` in prod.
