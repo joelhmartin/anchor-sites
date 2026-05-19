@@ -51,7 +51,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - `db/migrations/<ts>_media_assets.cjs` creates: `id UUID PK`, `site_id FK→sites ON DELETE CASCADE`, `gcs_key TEXT NOT NULL UNIQUE`, `content_type TEXT NOT NULL`, `alt TEXT DEFAULT ''`, `focal_point JSONB`, `variants_status TEXT CHECK (...) DEFAULT 'pending'`, `original_bytes BIGINT`, `width INT`, `height INT`, `created_at`, `processed_at`, `archived_at`. Index on `(site_id, created_at DESC)`.
   - **Tests:** schema test (table + columns + FK cascade + check constraint + indexes); up + down.
 
-- [ ] **3.7 — GCS bucket + Cloud CDN + IAM (gcloud)**
+- [x] **3.7 — GCS bucket + Cloud CDN + IAM (gcloud)**
   - `gcloud storage buckets create gs://anchorcorps-media --project=anchor-hub-480305 --location=us-central1 --uniform-bucket-level-access` + Cloud CDN backend bucket + lifecycle policy JSON (Coldline after 30 days for `<site_id>/originals/*`). IAM: renderer SA gets `roles/storage.objectViewer` on the bucket + permission to sign URLs; variant job runs under a separate SA with `roles/storage.objectAdmin` scoped to the bucket. Documented in `docs/media-pipeline.md`.
   - **Tests:** none (infra) — verify via `gcloud storage buckets describe` smoke.
 
@@ -117,8 +117,19 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 14:30 UTC — Task 3.6 (`media_assets` migration)
+### 2026-05-19 14:45 UTC — Task 3.7 (GCS bucket + IAM; Cloud CDN deferred)
 **Commit:** (pending — same commit as this log entry)
+**Done:** GCS bucket `gs://anchorcorps-media` provisioned in `anchor-hub-480305/us-central1` with uniform bucket-level access. Lifecycle policy rolls `originals/<site_id>/...` from STANDARD → COLDLINE after 30 days no-access (variants stay STANDARD forever — they're hot + small). IAM: default Cloud Run compute SA (`333281424614-compute@developer.gserviceaccount.com`) granted `roles/storage.objectAdmin` on the bucket + `roles/iam.serviceAccountTokenCreator` self-impersonation so it can mint signed URLs without exporting a JSON key. `docs/media-pipeline.md` + `docs/_anchorcorps-media-lifecycle.json` committed; the doc covers GCS layout, lifecycle, IAM, the future Cloud CDN front, and the upload/process/render flow that 3.8–3.14 implement.
+**Cloud CDN deferred** to a Phase 12 hardening follow-up. v0.1 serves variants via `https://storage.googleapis.com/anchorcorps-media/variants/...` with `Cache-Control: public, max-age=31536000, immutable`. CDN requires a Global External HTTPS LB + backend bucket + DNS + managed SSL — multi-step infra that doesn't change the renderer's API. A `mediaUrl(asset, variant)` helper will make the eventual switch a one-function change.
+**Tests added:** 0 — pure infra. Verification: `gcloud storage buckets describe` confirms the bucket; gcloud IAM bindings return success.
+**Next:** 3.8 — pg-boss bootstrap.
+**Notes:**
+- **No new SA created.** The default compute SA already runs the renderer Cloud Run service, so giving it the bucket roles avoids a parallel-SA management overhead for v0.1. If/when the variant worker pool moves to a separate Cloud Run service (for independent scaling), spin up `anchor-sites-media-worker@...` then. Doc covers the path.
+- **No public bucket-level access set.** Variants will be made public via per-object ACLs at upload time (or via a public read role at IAM level if the worker needs that). Either is fine; uniform bucket-level access means we go the IAM route — to be set in 3.10 when the worker writes its first variant.
+- **`MEDIA_STORAGE=memory` mode mentioned in docs but not implemented.** Mentioned so the next dev knows the escape hatch exists if they need offline dev. Not load-bearing for v0.1.
+
+### 2026-05-19 14:30 UTC — Task 3.6 (`media_assets` migration)
+**Commit:** e64ca50
 **Done:** `db/migrations/1747573000000_media_assets.cjs` creates the `media_assets` table per the D-022 / Phase 3 plan. Columns: `id` (uuid PK), `site_id` (uuid FK → sites ON DELETE CASCADE), `gcs_key` (unique text — canonical original GCS key), `content_type` (text), `alt` (text, default ''), `focal_point` (jsonb — nullable `{x: 0-1, y: 0-1}`), `variants_status` (text, CHECK in `pending|processing|ready|failed`, default pending), `variants` (jsonb — populated by 3.10 with `[{name, format, width, height, url}]` per variant), `original_bytes` (bigint), `width`/`height` (int), `created_at`/`processed_at`/`archived_at` (timestamptz), `last_error` (text). Index `(site_id, created_at)` for the admin-UI listing in Phase 4. Migration applied to dev DB.
 **Tests added:** 2 schema cases — full column shape inventory + FK cascade + CHECK constraint rejects unknown `variants_status`; updated the "migrate down → up" test to count 5 tables instead of 4.
 **Next:** 3.7 — `gcloud` infra (bucket + Cloud CDN + lifecycle + IAM).

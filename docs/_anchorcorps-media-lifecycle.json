@@ -1,0 +1,14 @@
+{
+  "lifecycle": {
+    "rule": [
+      {
+        "action": { "type": "SetStorageClass", "storageClass": "COLDLINE" },
+        "condition": {
+          "age": 30,
+          "matchesPrefix": ["originals/"],
+          "matchesStorageClass": ["STANDARD"]
+        }
+      }
+    ]
+  }
+}
