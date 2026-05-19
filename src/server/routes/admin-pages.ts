@@ -5,6 +5,7 @@ import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { getBlock } from "../../blocks/registry.js";
+import { provisionSiteHostname } from "../provisioning/orchestrator.js";
 // Side-effect: register the three static block types so saves validate.
 import "../../blocks/index.js";
 
@@ -246,6 +247,27 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         next(err);
       } finally {
         client.release();
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/provision — add Kinsta CNAME + Cloud Run mapping
+  // -------------------------------------------------------------------------
+  // Long-running (cert wait can take 20+ min) → not behind the save limiter.
+  // Caller controls `wait` via the body.
+  router.post(
+    "/sites/:siteId/provision",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId } = req.params;
+      const wait = Boolean((req.body ?? {}).wait);
+      try {
+        const result = await provisionSiteHostname(siteId, { pool, wait });
+        const httpStatus = result.steps.some((s) => s.status === "error") ? 500 : 200;
+        res.status(httpStatus).json(result);
+      } catch (err) {
+        next(err);
       }
     },
   );

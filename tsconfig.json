@@ -21,6 +21,6 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "tests/**/*", "scripts/**/*", "db/**/*.ts"],
   "exclude": ["node_modules", "dist", "db/migrations"]
 }
