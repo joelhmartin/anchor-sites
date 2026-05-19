@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anchorcorps/components": "*",
+    "@google-cloud/storage": "^7.19.0",
     "@hookform/resolvers": "^3.9.0",
     "axios": "^1.7.0",
     "clsx": "^2.1.0",

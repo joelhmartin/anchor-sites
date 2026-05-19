@@ -59,7 +59,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - Install `pg-boss` as a runtime dep. `src/server/jobs/index.ts` exports `bootJobs(pool, opts)` which starts pg-boss against `DATABASE_URL`, registers every job handler, and returns a `stop()` for clean test teardown. `src/server/index.ts` calls `bootJobs(pool)` when `JOBS_ENABLED !== "false"` (default on). Append decision **D-030**.
   - **Tests:** boot + register + stop cycle; idempotent boot (calling twice doesn't double-register); a registered job can be enqueued + handled in-process.
 
-- [ ] **3.9 — Signed-URL upload endpoint**
+- [x] **3.9 — Signed-URL upload endpoint**
   - `POST /api/sites/:siteId/media/upload-url` (`requireAdmin` + `rateLimit`). Body: `{ content_type, alt?, focal_point? }`. Validates `content_type` matches `image/(jpeg|png|webp|avif|gif)`. Inserts a `media_assets` row (`variants_status='pending'`, `gcs_key=<site_id>/originals/<asset_id>.<ext>`). Returns `{ asset_id, upload_url, expires_at, headers }`. Signed via the GCS client SDK with a 15-minute window.
   - **Tests:** auth gate; rate-limit gate; bad content_type 400; valid request returns shape; row inserted; idempotency optional.
 
@@ -116,6 +116,20 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 15:30 UTC — Task 3.9 (signed-URL upload endpoint)
+**Commit:** (pending — same commit as this log entry)
+**Done:** Admin can mint a v4 signed PUT URL for a fresh original. Added `@google-cloud/storage` as a runtime dep. New module + router:
+- **`src/server/media/storage.ts`** — lazily-constructed `Storage` client (auto-discovers ADC in prod/dev, accepts `__setStorageForTests` injection). Exports `signUploadUrl({ gcsKey, contentType, expiresMs? })` (v4 signed PUT, 15min default) + `extForContentType(ct)` (whitelist of jpeg/png/webp/avif/gif) + `MEDIA_BUCKET` constant (`anchorcorps-media` by default, env-overridable). The dependency-injection hook on the route makes the tests use a stub signer — no real GCS calls needed for unit coverage.
+- **`src/server/routes/media.ts`** — `mediaRouter(opts)` exposing `POST /api/sites/:siteId/media/upload-url`. Validates `{ content_type, alt?, focal_point? }` via Zod (focal-point coords clamped 0-1). Verifies the site exists (404 on miss). Inserts `media_assets` row with `gcs_key='pending'`, gets the new uuid back, then `UPDATE`s `gcs_key` to `originals/<site_id>/<asset_id>.<ext>` so the row is self-consistent. Calls the injected signer + returns `{ asset_id, gcs_key, upload_url, expires_at, headers }`.
+- **`src/server/app.ts`** mounts `mediaRouter()` under `/api` after admin-pages.
+**Tests added:** 5 (`tests/integration/media-upload-url.test.ts`) — 401 without admin token, 400 on unsupported content_type, 404 when site doesn't exist, full happy-path (signer called with correct args + row persisted with metadata + correct gcs_key shape), 400 on out-of-range focal_point. Full suite **199/199 across 31 files**; typecheck clean.
+**Next:** 3.10 — sharp variant-generation job.
+**Notes:**
+- **Two-step INSERT/UPDATE for `gcs_key`** is the cleanest way to keep `gcs_key` `NOT NULL UNIQUE` while still embedding the post-insert UUID in the key. A `BEFORE INSERT` trigger could do it in one statement; not worth the surface area for v0.1. Both statements run inside the same request scope — no real race with another upload because the UUID is fresh.
+- **Storage client is a module-level singleton** to amortize ADC discovery + JWT setup across requests. Tests inject via `__setStorageForTests` (not used here yet — the router accepts a `signUpload` option directly, which is even cleaner for this surface).
+- **No real GCS hit in tests.** The router's `signUpload` is injected; tests pass a `vi.fn()` stub. Smoke-testing against the real bucket is a manual step for 3.10 / 3.14 once the worker + Image block land.
+- **Rate limit:** 20/min by default — generous for an admin/editor flow but caps abuse if the admin token leaks.
 
 ### 2026-05-19 15:00 UTC — Task 3.8 (pg-boss bootstrap + worker registration)
 **Commit:** a5b069f

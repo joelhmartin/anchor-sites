@@ -7,6 +7,7 @@ import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 import { pageRouter } from "./routes/page.js";
 import { adminPagesRouter } from "./routes/admin-pages.js";
 import { siteResolveRouter } from "./routes/site-resolve.js";
+import { mediaRouter } from "./routes/media.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
@@ -37,6 +38,9 @@ export function createApp(): Express {
   // the router (X-Admin-Token vs ADMIN_API_TOKEN env). Phase 8 replaces with
   // Better-auth sessions per D-020.
   app.use("/api", adminPagesRouter());
+
+  // P3-T3.9: media upload-url + complete callback under /api.
+  app.use("/api", mediaRouter());
 
   // Admin-only debug endpoint for tenant resolution. P3-T3.2.
   app.use(siteResolveRouter());
