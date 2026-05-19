@@ -106,6 +106,48 @@
 **Decision:** New server code, tests, and Phase 1 block schemas/components are written in **TypeScript**. Existing client files (`src/App.jsx`, `src/main.jsx`, `src/components/**/*.jsx`) stay `.jsx` and are only migrated piecemeal if a Phase 1 task touches them. No big-bang `.jsx → .tsx` rename.
 **Rationale:** Minimizes Task 1.0 surface area and risk of breaking the existing client during the foundation phase. Zod's inferred types (anchor #2) and AI prompt typing (Phase 6) require TS — but only on new code paths.
 
+### D-016: Plugin / integration framework (Phase 7.5)
+
+**Context:** D-005 covers UI components as versioned packages and Phase 11 covers the CRM as a special-cased integration with 5 endpoints, but nothing in the plan covers general-purpose backend integrations (e-commerce, calendar booking, custom forms with payment, third-party CRMs other than the AnchorCorps one). The first concrete example surfaced was Stripe: a site that needs e-commerce wants a UI block, server routes, webhook handlers, DB tables, and per-site API key config — only the UI surface is currently covered.
+
+**Decision:** Establish a **plugin framework** that treats integrations as versioned npm packages on GCP Artifact Registry, same channel as `@anchorcorps/components`. Each plugin ships a single manifest declaring everything it contributes; the renderer composes enabled plugins at startup.
+
+**Plugin shape:**
+
+```
+@anchorcorps/plugin-<name>
+├── manifest.ts         — declares: blocks, routes, migrations, config schema, required env vars
+├── blocks/             — block schemas/components registered into the global block registry
+├── server/             — Express routers mounted at /api/plugins/<name>/*
+├── migrations/         — node-pg-migrate files; tables prefixed (e.g. plg_stripe_orders) or in a per-plugin schema
+└── config-schema.ts    — Zod schema for per-site config; renderer validates before mounting
+```
+
+**Per-site enablement:** New table `site_plugins (site_id, plugin_name, version, config_encrypted JSONB, enabled BOOL, installed_at)`. The renderer reads this at boot (and via cache-invalidation broadcasts), mounts enabled plugins, registers their blocks, and verifies their migrations have run.
+
+**Config secrets:** Per-site config (e.g. Stripe API keys) stored as `config_encrypted` JSONB encrypted at rest with a KMS-managed key. Plugins receive decrypted config at request time, never log it.
+
+**Migration ordering:** Plugins own their tables. Migrations run in plugin-install order. A plugin's migration cannot reference core tables it didn't create. Core schema (sites/pages/page_revisions) is owned by Phase 1; plugins extend, never alter, core tables.
+
+**Block registry impact (retroactive to Phase 1, Task 1.3):** The block registry must support **runtime registration**, not only static imports from `src/blocks/`. The Phase 1 implementation will use a `registerBlock(entry)` function so plugins can call it during their load step. Static blocks in `src/blocks/` call `registerBlock` themselves at import time — same API.
+
+**Rationale:**
+- **Versioned packages over copy-in (per D-008):** Auth/blog/events are forkable per-client; plugins are shared infra where a bug fix must propagate. Different lifecycle → different distribution model.
+- **Single repo per plugin → independent ops:** Each plugin can be developed, versioned, and rolled out without touching the renderer or other plugins.
+- **Manifest over convention:** Explicit manifest makes the "what does this plugin do?" answer machine-readable (for the admin UI, for the renderer's startup checks, and for the AI editor when it suggests adding capabilities).
+- **Same Artifact Registry channel as components:** One distribution mechanism, one auth story, one upgrade story.
+
+**Alternatives considered:**
+- WordPress-style in-repo modules (rejected — couples all plugins to renderer release cadence; doesn't version cleanly per-site).
+- Microservices per plugin (rejected — operational overkill for v1; can be added later if a plugin needs isolated scaling).
+- Pure server-side integrations with no UI surface (rejected — most agency-grade integrations need both; framing as "UI only" or "server only" forces awkward splits).
+
+**How to apply:**
+- Phase 1, Task 1.3: build the block registry with a `registerBlock()` runtime API. Static blocks call it themselves at module load.
+- Phase 1, Task 1.5: `req.site` should expose `plugins: PluginInstance[]` (empty until Phase 7.5 lands; just reserve the field).
+- Phase 7.5: implement `manifest.ts` contract, `site_plugins` table, plugin loader, admin UI for enable/disable + config (with the editor from Phase 5).
+- Specific plugins (Stripe, PayPal, calendar booking, custom integrations) are post-7.5 phases or out-of-band package work, not in the master plan.
+
 ---
 
 <!-- Routine appends future decisions below this line -->

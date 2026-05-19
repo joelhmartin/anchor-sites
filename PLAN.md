@@ -36,6 +36,7 @@ The existing template's auth, blog, and events flows must **keep working at ever
 - [ ] Phase 5 — On-page editor (EditableWrapper, side panel, Tiptap, undo/redo)
 - [ ] Phase 6 — AI editing layer (Claude API, schema-validated edits)
 - [ ] Phase 7 — Template system (save-as-template, new-from-template)
+- [ ] Phase 7.5 — Plugin / integration framework *(see D-016: manifest contract, `site_plugins` table, plugin loader, admin enable/disable. Concrete plugins like Stripe / PayPal / booking are post-7.5 packages, not master-plan phases.)*
 - [ ] Phase 8 — Auth/blog/events copy-in pattern for provisioned sites
 - [ ] Phase 9 — SEO layer (meta, sitemap, JSON-LD, editor SEO panel)
 - [ ] Phase 10 — Domain provisioning (Cloud Run mapping, DNS, SSL)

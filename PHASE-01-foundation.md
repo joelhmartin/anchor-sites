@@ -92,7 +92,7 @@ This is the keystone of the whole builder. Get it right or everything else is ha
     children?: Block[];
   };
   ```
-- [ ] Create `src/blocks/registry.ts` exporting a `blockRegistry` map of `type → { schema, component, label, description, aiHints, category }`
+- [ ] Create `src/blocks/registry.ts` exporting both a `blockRegistry` map AND a `registerBlock(entry)` function. Static blocks in `src/blocks/<type>/` call `registerBlock` themselves at module load. **Per D-016**, this keeps the same API available to plugins later — they call `registerBlock` from their manifest's load step. Do not hardcode a static map.
 - [ ] Add Zod dependency, set up `zod-to-json-schema` for later AI use
 - [ ] Create three block types in their own folders:
   - [ ] `src/blocks/hero/` — schema.ts, component.tsx, index.ts
@@ -146,7 +146,7 @@ This is the keystone of the whole builder. Get it right or everything else is ha
   - [ ] Strip port if present
   - [ ] Look up `site_domains` for matching hostname → `site_id`
   - [ ] Fallback: parse subdomain from `*.preview.anchorcorps.dev` or `*.anchorcorps.dev` → match `sites.slug`
-  - [ ] Attach `req.site` to the request
+  - [ ] Attach `req.site` to the request — type includes `plugins: PluginInstance[]` (empty array in Phase 1; field reserved per D-016 so Phase 7.5 doesn't have to retrofit)
   - [ ] Return 404 site-not-found page if no match
 - [ ] Cache the host→site lookup in-memory with a 60s TTL (per-process Map is fine for now; Redis later)
 - [ ] Mount middleware on all routes *except* the existing admin/auth/blog routes (those stay tenant-less for now — they'll be tenant-aware in Phase 8)
