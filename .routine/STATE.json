@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 2,
   "current_phase_file": "PHASE-02-component-library.md",
-  "current_task": "2.9",
+  "current_task": "2.10",
   "phase_started_at": "2026-05-19T11:15:00Z",
   "last_commit_sha": "fd22302",
   "last_email_sent_at": null,
@@ -23,12 +23,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 110,
+    "current_pass": 156,
     "current_fail": 0,
     "current_skipped": 0,
+    "current_pass_root": 110,
     "current_pass_package_components": 46,
-    "last_run_at": "2026-05-19T11:52:00Z",
-    "notes": "Root suite went from 114 → 110 after Phase 2 Task 2.8 swap: four Phase-1 hero/cta-specific tests removed from src/blocks/blocks.test.tsx because the package now owns those blocks. Net coverage gained: the package suite (current_pass_package_components: 46) covers them plus 4 new blocks + primitives + manifest contract."
+    "last_run_at": "2026-05-19T11:56:43Z",
+    "notes": "Phase 2 Task 2.9 wires vitest.workspace.ts so root `npm test` runs both the renderer suite (110) and the @anchorcorps/components suite (46) in one command — total 156 across 26 test files. Root went 114 → 110 in Task 2.8 (four hero/cta-specific tests removed; package owns those blocks now). Net coverage up substantially vs Phase 1 finish."
   },
   "phase_2_approved": true
 }

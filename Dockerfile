@@ -1,22 +1,30 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- deps: all deps (dev + prod) for the build step -----------------------
+# npm workspaces (P2-T2.2): the @anchorcorps/components package is consumed
+# via the in-repo workspace symlink — no AR-resolved npm install needed.
+# Copy both package manifests so `npm ci` sees the workspace topology.
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY packages/components/package.json ./packages/components/package.json
 RUN npm ci --no-audit --no-fund
 
-# ---- build: produces dist/ via `vite build` --------------------------------
+# ---- build: produces dist/ via vite build + tsup --------------------------
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+# Build the components package first so render-page.tsx can resolve
+# @anchorcorps/components/styles.css at module-load time. Then build the
+# renderer's vite bundle.
+RUN npm run build:components && npm run build
 
 # ---- prod-deps: prod-only node_modules for the final image ----------------
 FROM node:20-alpine AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY packages/components/package.json ./packages/components/package.json
 RUN npm ci --omit=dev --no-audit --no-fund
 
 # ---- run: minimal runtime image -------------------------------------------
@@ -32,6 +40,10 @@ COPY --from=build /app/src ./src
 COPY --from=build /app/db ./db
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
+# Workspace package — its prebuilt dist/ is what render-page.tsx inlines.
+# package.json is needed for createRequire to resolve @anchorcorps/components.
+COPY --from=build /app/packages/components/package.json ./packages/components/package.json
+COPY --from=build /app/packages/components/dist ./packages/components/dist
 # Email module reads .routine/templates/*.md at runtime; .dockerignore
 # re-includes this path so it lands in the build context.
 COPY --from=build /app/.routine/templates ./.routine/templates

@@ -76,7 +76,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Renderer entry imports `@anchorcorps/components/styles.css` once
   - **Tests:** existing `tests/integration/page-render.test.ts` continues to pass against both seeded sites; `tests/integration/admin-pages.test.ts` continues to pass; full suite still 100+ passing
 
-- [ ] **2.9 — CI / local dev experience**
+- [x] **2.9 — CI / local dev experience**
   - `npm test` from repo root runs both renderer + package suites via workspaces
   - `npm run dev:components` watches the package, rebuilds on change; renderer picks up edits through the workspace symlink via Vite HMR
   - Cloud Build for the renderer (existing trigger) injects `.npmrc` with AR auth so the production deploy installs the published package version
@@ -111,6 +111,21 @@ Every box above checked, AND:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 13:15 UTC — Task 2.9 (CI / local dev experience)
+**Commit:** (pending — same commit as this log entry)
+**Done:**
+- **`vitest.workspace.ts`** — root `npm test` now runs both the renderer suite (110, node env) and the `@anchorcorps/components` suite (46, jsdom env) in a single invocation. 156 tests across 26 files, ~6s. Per-workspace config controls env + globs so they don't cross-pollute.
+- **Dockerfile updated** for workspace-aware multi-stage builds. `deps` stage copies both `package.json` files (root + `packages/components`) before `npm ci` so npm sees the workspace topology and creates the symlink at `node_modules/@anchorcorps/components`. `build` stage runs `npm run build:components` (tsup + tailwind) BEFORE `npm run build` (vite renderer) — the renderer's `render-page.tsx` reads `packages/components/dist/styles.css` at module-load, so the package must be built first. `run` stage copies `packages/components/{package.json,dist}` alongside the rest so `createRequire` can resolve `@anchorcorps/components/styles.css` in prod.
+- **Deploy strategy decision** — for v0.1, the prod renderer consumes the package via the **workspace symlink in the same image**, not via AR-resolved `npm install`. Reasons: same code path as dev (no second resolution mode to debug), no `.npmrc` auth plumbing on the Cloud Build trigger, the AR-published `0.1.0` becomes the consumable contract for future cross-repo consumers (Phase 8 provisioned-site templates) rather than for this renderer. The `docs/components-publish.md` will get this captured in 2.10.
+- **`.routine/baseline-tests.log`** appended with the Phase 2 baseline (156 across 26 files, breakdown by suite).
+- **`STATE.json.tests`** updated: `current_pass: 156`, plus `current_pass_root: 110`, `current_pass_package_components: 46` for visibility into the split.
+**Tests added:** 0 new — task is orchestration. `npm test` exit 0 with 156/156 is the verification.
+**Next:** Task 2.10 — Phase 2 documentation pass (README polish, publish doc, consumption doc) + log decisions D-026/D-027/D-028 + tick `PLAN.md` Phase 2 row.
+**Notes:**
+- **AR-resolution path is documented but not wired.** The `docs/components-publish.md` from 2.1 + 2.7 covers the auth + publish flow. If a future need arises to deploy a different `@anchorcorps/components` version than the workspace HEAD (e.g. rolling back the package without reverting the renderer), `cloudbuild.yaml` would gain a `.npmrc` writer step ahead of `npm ci` and the root `package.json` would pin to a specific `0.x.y`. That's one commit away.
+- **No `tsx` / package dev watcher work needed** — the existing `dev:components` script (added in 2.3) already runs `tsup --watch`. Vite picks up the rebuilt `dist/` via the workspace symlink for any HMR scenario.
+- **`npm audit`** still reports the same 10 pre-existing vulnerabilities in dev dependencies (esbuild / vite transitive chain). No new vulns introduced by Phase 2 deps. Will address in Phase 12 hardening pass.
 
 ### 2026-05-19 13:00 UTC — Task 2.8 (renderer consumption + swap) — DEMO MILESTONE
 **Commit:** fd22302

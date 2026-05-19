@@ -54,3 +54,21 @@ block tests still run, since they don't need a DB). The routine should keep both
 
 Boot Postgres at the start of any run that touches the DB:
   docker compose up -d postgres
+
+---
+
+2026-05-19 — Phase 2 baseline update (Task 2.9)
+Suite: vitest run with vitest.workspace.ts (root + packages/components)
+Result: 156 passed, 0 skipped, 0 failed across 26 test files
+
+Breakdown:
+  Root renderer suite: 110 (was 114; lost 4 hero/cta-specific tests
+    in src/blocks/blocks.test.tsx now covered by the package suite)
+  @anchorcorps/components suite: 46 (15 block renders + 8 manifest
+    contract + 23 primitives — Button, Card, Accordion, Carousel, +
+    cn helper + index entrypoint smoke + build artifacts)
+
+Single command runs both:
+  DATABASE_URL=... TEST_DATABASE_URL=... npm test
+
+Boot Postgres first as before.
