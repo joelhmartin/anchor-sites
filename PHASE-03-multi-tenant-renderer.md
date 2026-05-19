@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 15:00 UTC — Task 3.8 (pg-boss bootstrap + worker registration)
-**Commit:** (pending — same commit as this log entry)
+**Commit:** a5b069f
 **Done:** First phase to wire pg-boss (D-019 / D-030). Added `pg-boss@^12.18.2` as a runtime dep. `src/server/jobs/index.ts` exposes:
 - `bootJobs(pool, opts)` — idempotent start. Module-level singleton (`bossInstance` + `bootPromise`) so concurrent boot calls coalesce. Wires `boss.on("error")` to a non-crashing logger. `JOBS_ENABLED=false` env (or `opts.disable`) returns a no-op handle so tests/scripts don't accidentally touch pg-boss tables.
 - `getBoss()` — accessor for enqueuers. Throws if not booted.
