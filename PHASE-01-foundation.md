@@ -287,7 +287,7 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - `site_plugins` table NOT created here; deferred to Phase 7.5 per D-016. Phase 1 middleware will return `req.site.plugins = []` as a literal until then.
 
 ### 2026-05-18 22:49 UTC — Task 1.3 (Block registry + 3 block types)
-**Commit:** *(filled below)*
+**Commit:** b9b18df
 **Done:** Built the keystone of the builder. `src/blocks/types.ts` defines the canonical `Block` and `BlockRegistryEntry` types. `src/blocks/registry.ts` exports `registerBlock`/`getBlock`/`listBlocks`/`hasBlock` over a private `Map` — same API plugins will use in Phase 7.5 (D-016). Implemented three block types (`hero`, `rich-text`, `cta`), each with its own folder containing `schema.ts` (Zod with `.default()` on every field), `component.tsx` (pure function of props, `ac-` BEM classes, no font-family), `styles.css` (CSS custom properties for colors), and `index.ts` (registers via side-effect import). `src/blocks/index.ts` is the package entry — importing it registers all three.
 **Tests added:** 17 (registry behavior ×4, schema validation ×8 across the three blocks, SSR render assertions ×4, side-effect-registration check ×1). Total suite now **30 passing, 0 skipped**, tsc clean.
 **Next:** Task 1.4 — `BlockRenderer` component that validates each block's props with the registry schema and falls back to `<UnknownBlock>` / `<BlockError>` gracefully. Includes the `/__blocks/preview` admin-only harness.
