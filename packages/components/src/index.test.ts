@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { VERSION, blockManifest, registerAll } from "./index.js";
 
 describe("@anchorcorps/components entrypoint", () => {
-  it("exports a VERSION string matching the 0.1.x major", () => {
-    expect(VERSION).toMatch(/^0\.1\.\d+(-.*)?$/);
+  it("exports a VERSION string matching the 0.x series", () => {
+    expect(VERSION).toMatch(/^0\.\d+\.\d+(-.*)?$/);
   });
 
-  it("exports a blockManifest array (empty in the 0.1.0 skeleton)", () => {
+  it("exports a blockManifest array (populated in 0.2.0)", () => {
     expect(Array.isArray(blockManifest)).toBe(true);
+    expect(blockManifest.length).toBeGreaterThan(0);
   });
 
   it("registerAll invokes the passed register fn once per manifest entry", () => {

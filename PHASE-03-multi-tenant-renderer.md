@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 16:10 UTC — Task 3.11 (upload-complete callback)
-**Commit:** (pending — same commit as this log entry)
+**Commit:** dcaa5b2
 **Done:** `POST /api/sites/:siteId/media/:assetId/complete` lands. Behind `requireAdmin` + `rateLimit`. Cross-site/unknown asset → 404. `pending` rows enqueue `media.process-upload` and return 202 with `{ asset_id, variants_status: "pending", enqueued: true }`. `processing` or `ready` rows return 202 with `enqueued: false` (idempotent — repeated calls don't duplicate jobs). `failed` rows DO re-enqueue (retry vector for a stuck upload after the operator fixes whatever was wrong).
 - **`mediaRouter` gained an `enqueue` option** so tests pass a `vi.fn()` stub. The default lazily resolves the live pg-boss instance via `import("../jobs/index.js")` — the router can be constructed before `bootJobs` completes (matches Phase 2 + 3.10 timing).
 **Tests added:** 4 (`tests/integration/media-upload-url.test.ts` extended) — 401 without admin token, 404 when asset belongs to another site, happy path (enqueue called with correct args, `enqueued: true`), idempotency (`ready` and `processing` rows: `enqueued: false`, enqueue never called). Full suite **207/207 across 32 files**; typecheck clean.

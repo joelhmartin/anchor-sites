@@ -44,6 +44,7 @@ import { ctaEntry } from "./cta/index.js";
 import { testimonialCarouselEntry } from "./testimonial-carousel/index.js";
 import { logoReelEntry } from "./logo-reel/index.js";
 import { faqAccordionEntry } from "./faq-accordion/index.js";
+import { imageEntry } from "./image/index.js";
 
 /**
  * Block manifest — every opinionated block in v0.1. Order is the order
@@ -63,6 +64,8 @@ export const blockManifest: BlockManifestEntry[] = [
   logoReelEntry as BlockManifestEntry<any>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   faqAccordionEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  imageEntry as BlockManifestEntry<any>,
 ];
 
 /**

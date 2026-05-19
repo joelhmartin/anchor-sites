@@ -15,8 +15,12 @@ const REQUIRED_KEYS = [
 const VALID_CATEGORIES = new Set(["header", "content", "cta", "layout"]);
 
 describe("blockManifest contract", () => {
-  it("has at least one entry (six in v0.1)", () => {
-    expect(blockManifest.length).toBe(6);
+  it("has the expected count for the current minor (7 in v0.2)", () => {
+    expect(blockManifest.length).toBe(7);
+  });
+
+  it("contains the v0.2 Image block", () => {
+    expect(blockManifest.map((e) => e.type)).toContain("image");
   });
 
   it("each entry has every required field with a sensible value", () => {

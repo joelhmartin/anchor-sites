@@ -14,7 +14,17 @@
  * opinionated blocks consume them inside the package only.
  */
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 export { blockManifest, registerAll } from "./blocks/manifest.js";
 export type { BlockManifestEntry, RegisterBlockFn } from "./blocks/manifest.js";
+
+// Media hydration surface (P3-T3.12).
+export {
+  MediaContext,
+  MediaProvider,
+  useMediaContext,
+  type MediaAssetData,
+  type MediaContextValue,
+  type MediaVariant,
+} from "./media-context.js";
