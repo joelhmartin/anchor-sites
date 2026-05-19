@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { createApp } from "./app.js";
 import { mountViteDev } from "./vite-dev.js";
+import { pool } from "./db.js";
+import { bootJobs, stopJobs } from "./jobs/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -21,9 +23,25 @@ async function main() {
     await mountViteDev(app, ROOT);
   }
 
-  app.listen(PORT, () => {
+  // Boot pg-boss (D-030 / P3-T3.8). Skipped when JOBS_ENABLED=false.
+  try {
+    await bootJobs(pool);
+  } catch (err) {
+    console.error("[server] pg-boss failed to start; continuing without job runner", err);
+  }
+
+  const server = app.listen(PORT, () => {
     console.log(`[server] listening on http://localhost:${PORT} (${isProd ? "prod" : "dev"})`);
   });
+
+  // Clean shutdown — pg-boss flushes in-flight jobs.
+  const shutdown = async (signal: string) => {
+    console.log(`[server] ${signal} received, shutting down`);
+    await stopJobs().catch((err) => console.error("[server] stopJobs error", err));
+    server.close(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => {

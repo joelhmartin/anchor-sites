@@ -55,7 +55,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - `gcloud storage buckets create gs://anchorcorps-media --project=anchor-hub-480305 --location=us-central1 --uniform-bucket-level-access` + Cloud CDN backend bucket + lifecycle policy JSON (Coldline after 30 days for `<site_id>/originals/*`). IAM: renderer SA gets `roles/storage.objectViewer` on the bucket + permission to sign URLs; variant job runs under a separate SA with `roles/storage.objectAdmin` scoped to the bucket. Documented in `docs/media-pipeline.md`.
   - **Tests:** none (infra) — verify via `gcloud storage buckets describe` smoke.
 
-- [ ] **3.8 — pg-boss bootstrap + worker registration**
+- [x] **3.8 — pg-boss bootstrap + worker registration**
   - Install `pg-boss` as a runtime dep. `src/server/jobs/index.ts` exports `bootJobs(pool, opts)` which starts pg-boss against `DATABASE_URL`, registers every job handler, and returns a `stop()` for clean test teardown. `src/server/index.ts` calls `bootJobs(pool)` when `JOBS_ENABLED !== "false"` (default on). Append decision **D-030**.
   - **Tests:** boot + register + stop cycle; idempotent boot (calling twice doesn't double-register); a registered job can be enqueued + handled in-process.
 
@@ -116,6 +116,27 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 15:00 UTC — Task 3.8 (pg-boss bootstrap + worker registration)
+**Commit:** (pending — same commit as this log entry)
+**Done:** First phase to wire pg-boss (D-019 / D-030). Added `pg-boss@^12.18.2` as a runtime dep. `src/server/jobs/index.ts` exposes:
+- `bootJobs(pool, opts)` — idempotent start. Module-level singleton (`bossInstance` + `bootPromise`) so concurrent boot calls coalesce. Wires `boss.on("error")` to a non-crashing logger. `JOBS_ENABLED=false` env (or `opts.disable`) returns a no-op handle so tests/scripts don't accidentally touch pg-boss tables.
+- `getBoss()` — accessor for enqueuers. Throws if not booted.
+- `stopJobs()` — graceful shutdown, idempotent.
+- `registerHandlers(boss)` — central place to add `boss.work(...)` calls. Phase 3 has the empty list; Task 3.10 adds `media.process-upload`.
+- `__resetJobsForTests()` — test-only state reset.
+
+`src/server/index.ts` calls `bootJobs(pool)` after server boot and installs `SIGTERM`/`SIGINT` handlers that flush in-flight jobs via `stopJobs()`. Boot failure is logged but doesn't block the renderer (graceful degradation — pages still serve, async work falls behind).
+
+**Tests added:** 5 (`src/server/jobs/jobs.test.ts`). Bootstrap a queue + enqueue + handler runs + asserts data; idempotent boot returns the same instance; `getBoss` throws when not booted; `JOBS_ENABLED=false` returns no-op; `stopJobs` idempotent. Full suite **194/194 across 30 files**; typecheck clean.
+**Next:** 3.9 — signed-URL upload endpoint.
+**Notes:**
+- **Caught + fixed:** pg-boss v12 exports as a NAMED export (`import { PgBoss } from "pg-boss"`), not default. First attempt used the default import and tests failed with `TypeError: default is not a constructor`. Tracked down via `node -e "import('pg-boss').then(...)"`. Two-line fix.
+- **Also caught + fixed:** pg-boss v12's `stop()` options dropped `wait` in favor of `graceful` alone — TypeScript complained, dropped the field. No runtime impact.
+- **pg-boss owns its own connection pool** — we pass the connection string, not the existing `Pool`. Sharing the pool is supported but couples lifetimes; separate pool is the safer default.
+- pg-boss creates a `pgboss.*` schema in the same database. Migrations are handled internally by pg-boss; no manual migration files needed. The test DB picks this up on first `bootJobs` call.
+- Auto-discovery of handlers (file-system scan) was considered + rejected — explicit `registerHandlers` keeps the worker boot path one greppable list. Adding a new job adds one import + one line.
+- One full suite run on cold DB took ~5.5s; the pg-boss boot adds ~250ms when active. Acceptable.
 
 ### 2026-05-19 14:45 UTC — Task 3.7 (GCS bucket + IAM; Cloud CDN deferred)
 **Commit:** df61e6b
