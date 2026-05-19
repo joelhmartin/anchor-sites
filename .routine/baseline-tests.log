@@ -1,35 +1,27 @@
-2026-05-18 — baseline captured (Tasks 1.0, 1.1, 1.2)
+2026-05-18 — baseline captured (Tasks 1.0, 1.1, 1.2, 1.3)
 Suite: vitest run (with DATABASE_URL + TEST_DATABASE_URL set)
-Result: 13 passed, 0 skipped, 0 failed
+Result: 30 passed, 0 skipped, 0 failed
 
 Tests:
-  ✓ tests/smoke/baseline.test.ts
-      ✓ GET /healthz returns 200 with ok:true
-      ✓ unknown API route returns 404
-      ✓ DB pool connects when DATABASE_URL is set
-  ✓ tests/smoke/spa.test.ts
-      ✓ GET / returns 200 with the SPA root div (Vite middleware)
-      ✓ GET /healthz still works while Vite is mounted (route order)
-  ✓ tests/integration/schema.test.ts
-      ✓ creates the four core tables
-      ✓ pages has UNIQUE(site_id, slug) and a GIN index on blocks
-      ✓ page_revisions cascades from pages on delete
-      ✓ updated_at trigger touches the timestamp on UPDATE
-      ✓ CHECK constraints reject invalid status values
-      ✓ migrate down then up returns to clean schema
-  ✓ tests/integration/seed.test.ts
-      ✓ running seed twice does not duplicate rows
-      ✓ seeds the two expected slugs
+  ✓ tests/smoke/baseline.test.ts (3)
+  ✓ tests/smoke/spa.test.ts (2)
+  ✓ tests/integration/schema.test.ts (6)
+  ✓ tests/integration/seed.test.ts (2)
+  ✓ src/blocks/registry.test.ts (4)
+      registerBlock + getBlock + hasBlock, dup detection, listBlocks
+  ✓ src/blocks/blocks.test.tsx (13)
+      hero/rich-text/cta schema validation (valid + invalid)
+      SSR render of all three blocks
+      anchor #8 enforcement: no font-family in component output
+      side-effect registration via index.ts imports
 
 Manual checks:
   ✓ npm run dev → server on http://localhost:3000
-  ✓ curl :3000/healthz → 200 {"ok":true,"db":true}  (db:true once Postgres up + DATABASE_URL set)
-  ✓ curl :3000/ → 200 Vite-transformed index.html
+  ✓ tsc --noEmit clean
 
 DB env:
   DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev
   TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test
 
-If TEST_DATABASE_URL is unset, the integration tests cleanly skip and the
-suite still reports 5 passing (2 smoke files only). The routine must keep
-both env vars set so the full 13-test baseline runs.
+If TEST_DATABASE_URL is unset the integration tests skip cleanly and the
+suite drops to 22 passing. The routine should keep both env vars set.

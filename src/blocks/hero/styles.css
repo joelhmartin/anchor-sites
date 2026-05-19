@@ -1,0 +1,48 @@
+.ac-hero {
+  padding: 4rem 1.5rem;
+  background: var(--theme-main, #111);
+  color: var(--theme-on-main, #fff);
+}
+
+.ac-hero__inner {
+  max-width: 64rem;
+  margin: 0 auto;
+}
+
+.ac-hero--align-center .ac-hero__inner {
+  text-align: center;
+}
+
+.ac-hero--align-left .ac-hero__inner {
+  text-align: left;
+}
+
+.ac-hero__eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.875rem;
+  margin: 0 0 0.5rem;
+  opacity: 0.8;
+}
+
+.ac-hero__title {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  line-height: 1.1;
+  margin: 0 0 1rem;
+}
+
+.ac-hero__subtitle {
+  font-size: 1.125rem;
+  line-height: 1.5;
+  margin: 0 0 1.5rem;
+  opacity: 0.9;
+}
+
+.ac-hero__cta {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  background: var(--theme-accent, #f6b93b);
+  color: var(--theme-on-accent, #111);
+  text-decoration: none;
+}

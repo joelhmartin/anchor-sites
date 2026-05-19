@@ -85,34 +85,27 @@
 
 This is the keystone of the whole builder. Get it right or everything else is harder.
 
-- [ ] Create `src/blocks/` directory
-- [ ] Create `src/blocks/types.ts` with the base `Block` type:
-  ```ts
-  type Block = {
-    id: string;            // nanoid
-    type: string;          // registry key
-    props: Record<string, unknown>;
-    children?: Block[];
-  };
-  ```
-- [ ] Create `src/blocks/registry.ts` exporting both a `blockRegistry` map AND a `registerBlock(entry)` function. Static blocks in `src/blocks/<type>/` call `registerBlock` themselves at module load. **Per D-016**, this keeps the same API available to plugins later — they call `registerBlock` from their manifest's load step. Do not hardcode a static map.
-- [ ] Add Zod dependency, set up `zod-to-json-schema` for later AI use
-- [ ] Create three block types in their own folders:
-  - [ ] `src/blocks/hero/` — schema.ts, component.tsx, index.ts
-  - [ ] `src/blocks/rich-text/` — schema.ts, component.tsx, index.ts (uses dangerouslySetInnerHTML for now; Tiptap comes in Phase 5)
-  - [ ] `src/blocks/cta/` — schema.ts, component.tsx, index.ts
-- [ ] Each block component must:
-  - [ ] Use `ac-` class prefix exclusively
-  - [ ] Use CSS custom properties for colors (`var(--theme-main)`, `var(--theme-accent)`)
-  - [ ] Not declare `font-family` in its CSS
-  - [ ] Be a pure function of props (no internal state)
-- [ ] Each schema must include sensible defaults via Zod's `.default()` so partial props still validate
-- [ ] Export the registry from `src/blocks/index.ts`
+- [x] Create `src/blocks/` directory
+- [x] Create `src/blocks/types.ts` with the base `Block` type
+- [x] Create `src/blocks/registry.ts` exporting `registerBlock(type, entry)` plus `getBlock`, `listBlocks`, `hasBlock`, and `__resetRegistryForTests`. No static map — per D-016, plugins call the same `registerBlock` at manifest load time.
+- [x] Add `zod-to-json-schema` dependency (Zod already present). Phase 6 helper for AI-prompt generation will live next to `registry.ts` when AI editing lands.
+- [x] Create three block types in their own folders:
+  - [x] `src/blocks/hero/` — schema.ts, component.tsx, styles.css, index.ts
+  - [x] `src/blocks/rich-text/` — schema.ts, component.tsx, styles.css, index.ts (dangerouslySetInnerHTML now; Tiptap in Phase 5 per D-017)
+  - [x] `src/blocks/cta/` — schema.ts, component.tsx, styles.css, index.ts
+- [x] Each block component:
+  - [x] Uses `ac-` class prefix exclusively (root + BEM-style children: `ac-hero__title` etc.)
+  - [x] Uses CSS custom properties for colors (`var(--theme-main)`, `var(--theme-accent)`, etc.)
+  - [x] Does not declare `font-family` in its CSS (asserted by SSR-output test)
+  - [x] Is a pure function of props (no useState, no useEffect, no internal state)
+- [x] Every schema uses Zod `.default(...)` so empty-object input still validates
+- [x] `src/blocks/index.ts` imports each block's index (triggering self-registration) and re-exports the registry API
 
 **Tests:**
-- [ ] Each block schema validates a valid props object and rejects an invalid one
-- [ ] Registry lookup by type returns the expected entry
-- [ ] All three components render without crashing given valid props
+- [x] Each block schema validates valid props and rejects invalid (e.g. empty `title`, unknown `align`/`max_width`/`variant`)
+- [x] Registry lookup by type returns the expected entry; duplicates throw; unknown types return undefined
+- [x] All three components render via `renderToString` without crashing
+- [x] Bonus: SSR-output never contains `font-family:` (architectural anchor #8 enforced by test)
 
 ---
 
@@ -292,6 +285,16 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - Test isolation: created `anchor_test` database in the same container; `TEST_DATABASE_URL` points there. Schema test migrates fully down then up — destructive to that DB only. Vitest pinned to `pool: "forks"`, `singleFork: true` so the schema test finishes before the seed test runs.
 - `author_id` in `page_revisions` is intentionally nullable `uuid` with no FK yet — Phase 8 (Better-auth, D-020) will add the FK to `auth_users` without a type change.
 - `site_plugins` table NOT created here; deferred to Phase 7.5 per D-016. Phase 1 middleware will return `req.site.plugins = []` as a literal until then.
+
+### 2026-05-18 22:49 UTC — Task 1.3 (Block registry + 3 block types)
+**Commit:** *(filled below)*
+**Done:** Built the keystone of the builder. `src/blocks/types.ts` defines the canonical `Block` and `BlockRegistryEntry` types. `src/blocks/registry.ts` exports `registerBlock`/`getBlock`/`listBlocks`/`hasBlock` over a private `Map` — same API plugins will use in Phase 7.5 (D-016). Implemented three block types (`hero`, `rich-text`, `cta`), each with its own folder containing `schema.ts` (Zod with `.default()` on every field), `component.tsx` (pure function of props, `ac-` BEM classes, no font-family), `styles.css` (CSS custom properties for colors), and `index.ts` (registers via side-effect import). `src/blocks/index.ts` is the package entry — importing it registers all three.
+**Tests added:** 17 (registry behavior ×4, schema validation ×8 across the three blocks, SSR render assertions ×4, side-effect-registration check ×1). Total suite now **30 passing, 0 skipped**, tsc clean.
+**Next:** Task 1.4 — `BlockRenderer` component that validates each block's props with the registry schema and falls back to `<UnknownBlock>` / `<BlockError>` gracefully. Includes the `/__blocks/preview` admin-only harness.
+**Notes:**
+- Added deps: `nanoid` (for future ID generation in editor), `zod-to-json-schema` (for Phase 6 AI prompts), `@types/react@18` + `@types/react-dom@18` (pinned to match React 18 in deps).
+- Vitest config now includes `.test.tsx` files and sets `css: false` so block CSS imports are no-ops in tests.
+- CSS lives in plain `.css` files (not CSS Modules) so the `ac-` prefix survives unhashed — that's the public API consumers can target per architectural anchor #8.
 
 ### 2026-05-18 21:32 UTC — Task 1.1 (Pre-flight baseline)
 **Commit:** 3a9fd8c
