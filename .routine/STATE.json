@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 3,
   "current_phase_file": "PHASE-03-multi-tenant-renderer.md",
-  "current_task": "3.1",
+  "current_task": "3.2",
   "phase_started_at": "2026-05-19T13:30:00Z",
   "last_commit_sha": "fa02e78",
   "last_email_sent_at": null,
@@ -24,13 +24,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 156,
+    "current_pass": 161,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 110,
+    "current_pass_root": 115,
     "current_pass_package_components": 46,
-    "last_run_at": "2026-05-19T12:00:01Z",
-    "notes": "Phase 2 complete. Workspace-mode npm test runs both root + package suites in one command. Phase 3 starts here."
+    "last_run_at": "2026-05-19T13:18:22Z",
+    "notes": "Phase 3 Task 3.1: +5 resolveSite eviction tests in tests/integration/. Root 115, package 46, total 161 across 27 files."
   },
   "phase_2_approved": true,
   "phase_3_approved": true

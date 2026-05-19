@@ -35,6 +35,44 @@ export function __clearResolveSiteCacheForTests(): void {
   cache.clear();
 }
 
+/**
+ * Evict a single hostname's cached resolution. Call from any code path
+ * that mutates `sites` / `site_domains` so the next request sees fresh
+ * data without waiting out the 60s TTL. Same-process only; multi-instance
+ * Pub/Sub broadcast is deferred to Phase 12 hardening (D-022 / P3-T3.1).
+ *
+ * Idempotent: no-op when the hostname isn't cached.
+ */
+export function evictSiteCache(hostname: string): void {
+  cache.delete(stripPort(hostname));
+}
+
+/** Number of entries currently cached. Exposed for debug/admin endpoints. */
+export function resolveSiteCacheSize(): number {
+  return cache.size;
+}
+
+/**
+ * Internal lookup with cache awareness, decoupled from the middleware so
+ * debug endpoints (`/__site_resolve`) can reuse the path without
+ * mutating `req`. Returns the resolved site (or null) plus whether the
+ * cache served it.
+ */
+export async function lookupSiteForDebug(
+  pool: Pool,
+  hostname: string,
+): Promise<{ site: ResolvedSite | null; cache_hit: boolean }> {
+  const key = stripPort(hostname);
+  const now = Date.now();
+  const cached = cache.get(key);
+  if (cached && cached.expires > now) {
+    return { site: cached.site, cache_hit: true };
+  }
+  const site = await lookupSite(pool, key);
+  cache.set(key, { site, expires: now + TTL_MS });
+  return { site, cache_hit: false };
+}
+
 // Subdomain fallback for sites that don't have an explicit site_domains row.
 // Pattern comes from the centralized domain config so the parent domain
 // (`sites.anchorcorps.com` by default) can be swapped via the

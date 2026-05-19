@@ -22,7 +22,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 ### Host resolution polish (small)
 
-- [ ] **3.1 — Cache invalidation hook on site/domain mutations**
+- [x] **3.1 — Cache invalidation hook on site/domain mutations**
   - Expose `__clearResolveSiteCacheForTests` for prod use via a named `evictSiteCache(hostname | site_id)` helper. The admin save endpoints (Phase 1 Task 1.7) call it after committing a `sites` / `site_domains` mutation. Same-process only — multi-instance broadcast is **deferred to Phase 12** (60s TTL is the worst-case staleness window until then).
   - **Tests:** evicting by hostname removes the cached entry; mutating a site and re-fetching produces fresh data; cache still expires on TTL when nothing called evict.
 
@@ -116,3 +116,13 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 13:35 UTC — Task 3.1 (cache invalidation hook on site/domain mutations)
+**Commit:** (pending — same commit as this log entry)
+**Done:** `src/middleware/resolveSite.ts` exposes three new named exports: `evictSiteCache(hostname)` (delete one entry, port-stripped, idempotent), `resolveSiteCacheSize()` (debug aid, exposed for the upcoming `/__site_resolve` endpoint in 3.2), and `lookupSiteForDebug(pool, hostname)` (cache-aware lookup that doesn't mutate `req` — same code path the middleware uses, but reusable by the debug endpoint without going through Express). `src/server/provisioning/orchestrator.ts` calls `evictSiteCache(hostname)` after both the `INSERT INTO site_domains` and the `UPDATE site_domains SET verification_status/ssl_status` paths — covers the two mutation points the orchestrator owns. Multi-instance Pub/Sub broadcast deferred to Phase 12 per the task plan; the 60s TTL caps worst-case staleness.
+**Tests added:** 5 (`tests/integration/resolveSite-eviction.test.ts`) — cache populates + reports hit on second call; `evictSiteCache` removes the entry, next lookup is a miss; idempotent on uncached hostname; port-stripping (`:3000` evicts the bare-hostname key); negative results (`null`) are also cached and re-served as hits.
+**Next:** 3.2 — `/__site_resolve` debug endpoint that wraps `lookupSiteForDebug`.
+**Notes:**
+- `lookupSiteForDebug` was carved out so 3.2 can reuse the cache path without a `req`. The middleware itself still has its inline cache logic — refactoring it to call `lookupSiteForDebug` would be a clean follow-up but not load-bearing.
+- **One latent bug caught + fixed during this task:** my first Edit to add the helpers didn't land cleanly — the file kept its old shape. Caught by the failing test run (`TypeError: evictSiteCache is not a function`). Re-applied with a more anchored Edit and the exports stuck. No regression risk because the test-driven feedback loop made it visible immediately.
+- Root suite went 156 → **161** (+5 new tests), 27 files. Package suite untouched. Typecheck clean.

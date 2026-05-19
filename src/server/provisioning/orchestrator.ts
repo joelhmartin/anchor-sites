@@ -20,6 +20,7 @@
 
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
+import { evictSiteCache } from "../../middleware/resolveSite.js";
 import {
   getDomainConfig,
   hostnameForSlug,
@@ -113,6 +114,7 @@ export async function provisionSiteHostname(
      ON CONFLICT (hostname) DO NOTHING`,
     [siteId, hostname],
   );
+  evictSiteCache(hostname);
   steps.push({ step: "site_domains", status: "ok", detail: `upserted ${hostname}` });
 
   // ---- 3. Kinsta DNS --------------------------------------------------
@@ -186,6 +188,7 @@ export async function provisionSiteHostname(
         WHERE hostname = $3`,
       [cReady ? "verified" : "pending", cCert ? "active" : "pending", hostname],
     );
+    evictSiteCache(hostname);
   }
 
   return { site_id: siteId, slug, hostname, steps, ready, cloud_run_mapping: mapping };
