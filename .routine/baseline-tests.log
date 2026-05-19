@@ -1,6 +1,6 @@
-2026-05-18 — baseline captured (Tasks 1.0 through 1.7)
+2026-05-18 — baseline captured (Tasks 1.0 through 1.9)
 Suite: vitest run (with DATABASE_URL + TEST_DATABASE_URL set)
-Result: 64 passed, 0 skipped, 0 failed
+Result: 80 passed, 0 skipped, 0 failed
 
 Tests:
   ✓ tests/smoke/baseline.test.ts (3)
@@ -24,6 +24,11 @@ Tests:
       401 missing/wrong token, save → revision, invalid props 400,
       unknown type 400, cross-site 404, reverse-chrono list,
       restore non-destructive, cross-page restore 404, rate limit 429
+  ✓ src/server/email/send.test.ts (12)
+      5 templates render + var substitution, missing vars stay literal,
+      stub/dry-run/api modes, Bearer auth + payload shape, non-2xx
+  ✓ src/server/routine-state.test.ts (4)
+      atomic roundtrip, formatted output, mutator persist, 3-way race
   ✓ src/blocks/registry.test.ts (4)
       register, get, dup detection, listBlocks
   ✓ src/blocks/blocks.test.tsx (13)
@@ -38,13 +43,14 @@ Manual checks:
   ✓ curl -X POST :3000/__blocks/preview → SSR HTML with ac-* classes + data-block-* wrappers
   ✓ tsc --noEmit clean
 
-Env required for the full 64-test baseline:
+Env required for the full 80-test baseline:
   DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev
   TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test
   (Docker container: anchor-sites-postgres-1, host port 5434)
 
 If TEST_DATABASE_URL is unset the integration tests skip cleanly and the
-suite drops to 31 passing (smoke + unit only). The routine should keep both env vars set.
+suite drops to ~47 passing (smoke + unit-only — email + routine-state +
+block tests still run, since they don't need a DB). The routine should keep both env vars set.
 
 Boot Postgres at the start of any run that touches the DB:
   docker compose up -d postgres

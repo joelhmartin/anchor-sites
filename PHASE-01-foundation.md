@@ -233,21 +233,21 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 
 ## Task 1.9 — Routine state files + email infra
 
-- [ ] Create `.routine/STATE.json` schema and initial file (current phase, current task, last email sent timestamp, last commit hash, test pass/fail)
-- [ ] Create `.routine/EMAIL-TRIGGERS.md` (see template at end of this file)
-- [ ] Wire up email sending — use the existing app's email service for consistency
-- [ ] Create email templates in `.routine/templates/`:
-  - [ ] `phase-started.md`
-  - [ ] `phase-completed.md`
-  - [ ] `demo-milestone.md`
-  - [ ] `blocker.md`
-  - [ ] `daily-digest.md`
-- [ ] Test each email type by triggering manually once
-- [ ] Confirm receipt in inbox
+- [x] Create `.routine/STATE.json` schema and initial file (current phase, current task, last email sent timestamp, last commit hash, test pass/fail) *(already populated; typed schema lives in `src/server/routine-state.ts`)*
+- [x] Create `.routine/EMAIL-TRIGGERS.md` (see template at end of this file) *(already present from earlier setup)*
+- [x] Wire up email sending — use the existing app's email service for consistency *(`src/server/email/send.ts` — Resend HTTP API, three modes: stub / dry-run / api, driven by `RESEND_API_KEY`)*
+- [x] Create email templates in `.routine/templates/`:
+  - [x] `phase-started.md`
+  - [x] `phase-completed.md`
+  - [x] `demo-milestone.md`
+  - [x] `blocker.md`
+  - [x] `daily-digest.md`
+- [ ] Test each email type by triggering manually once *(deferred — requires a real `RESEND_API_KEY` and `RESEND_FROM` domain. Routine surfaces email-worthy events in chat per the user's standing instruction; first real send happens once the operator drops a key into Secret Manager during Task 1.8 deploy.)*
+- [ ] Confirm receipt in inbox *(deferred — same gate as above; the dry-run mode test verifies the wire format without a real send)*
 
 **Tests:**
-- [ ] Each email template renders without missing variables
-- [ ] State file updates atomically (no partial writes)
+- [x] Each email template renders without missing variables *(`src/server/email/send.test.ts` covers all 5 templates with `it.each`, plus an "unknown vars stay literal" guardrail)*
+- [x] State file updates atomically (no partial writes) *(`src/server/routine-state.test.ts` — atomic-rename roundtrip + 3-way concurrent updateState leaves valid JSON)*
 
 ---
 
@@ -316,6 +316,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-18 23:37 UTC — Task 1.9 (Resend wiring + atomic STATE.json helper)
+**Commit:** a78e350 (preceded by 8e4dac7)
+**Done:** Email infrastructure end-to-end ready for the first real send. `src/server/email/send.ts` replaces the Task 1.0 stub with a Resend HTTP API client that runs in three modes — `stub` (no `RESEND_API_KEY` → console log + ok:false), `dry-run` (`RESEND_API_KEY="dry-run"` → renders + returns ok:true without HTTP), and `api` (any other value → POST to https://api.resend.com/emails with Bearer auth). `renderTemplate(name, vars)` reads `.routine/templates/<name>.md`, fills `{{key}}` placeholders, splits the `Subject:` header from the body, and intentionally leaves unknown vars as literal placeholders so missing data shows up loudly. Added a typed `RoutineState` shape and an atomic `writeStateAtomic`/`updateState` helper (tempfile + POSIX rename) so any future in-process state writer can't leave the file half-written. `.dockerignore` updated to keep `.routine/templates/` in the production image.
+**Tests added:** 16 (12 in `src/server/email/send.test.ts` + 4 in `src/server/routine-state.test.ts`). All 5 templates render with substitution, missing-var safety, stub/dry-run/api modes including Bearer auth header + JSON body shape, non-2xx mapping, state-file atomic roundtrip, formatted output (trailing newline + 2-space indent), mutator persistence, 3-way concurrent updateState. Total suite now **80 passing, 0 skipped**, tsc clean.
+**Next:** Task 1.10 — README architecture overview, `docs/blocks.md`, finalize `docs/data-model.md` + `docs/local-dev.md` + `docs/deploy.md`, surface Phase 1 completion in chat (Resend stays in stub mode until Task 1.8 ships secrets to prod, so the "ready for Phase 2" message is chat-only).
+**Notes:**
+- "Test each email type by triggering manually once" + "Confirm receipt in inbox" stay unchecked. They require a real `RESEND_API_KEY` and a verified `RESEND_FROM` domain — both belong with the human operator during Task 1.8's Secret Manager step. The dry-run mode + the api-mode unit test verify the wire format without a real send.
+- The templates already shipped in `.routine/templates/` from earlier setup. Task 1.9 added the engine, not the prose.
+- `RESEND_FROM` defaults to `AnchorCorps Builder <builder@anchorcorps.dev>`. The operator will override with whatever domain they verify in Resend.
+- Atomic state helper is opt-in — the routine still updates STATE.json via the Write tool, which is also atomic at the filesystem level. The helper exists for any in-process code path that needs to record into `emails_sent` or similar (e.g., a future scheduler).
 
 ### 2026-05-18 23:30 UTC — Task 1.8 (Cloud Run artifacts; deploy blocked on B-001)
 **Commit:** 53bc8a5
