@@ -20,7 +20,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
 
 ## Tasks
 
-- [ ] **2.1 — Artifact Registry npm repo + auth wiring**
+- [x] **2.1 — Artifact Registry npm repo + auth wiring**
   - `gcloud artifacts repositories create npm-anchorcorps --repository-format=npm --location=us-central1 --project=anchor-hub-480305`
   - Verify with `gcloud artifacts repositories list --project=anchor-hub-480305 --location=us-central1`
   - Append `docs/components-publish.md` with: `.npmrc` template for local dev (uses `gcloud auth print-access-token`), CI auth pattern (service account key), repo URL
@@ -111,3 +111,13 @@ Every box above checked, AND:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 11:25 UTC — Task 2.1 (Artifact Registry npm repo + auth wiring)
+**Commit:** (pending — same commit as this log entry)
+**Done:** Created npm-format Artifact Registry repo `npm-anchorcorps` in `anchor-hub-480305/us-central1` via `gcloud artifacts repositories create`. Wrote `docs/components-publish.md` covering registry coordinates, the `.npmrc` template (token-based auth via `gcloud auth print-access-token`), CI auth pattern (WIF + service-account `roles/artifactregistry.writer` scoped to this repo only), semver policy for `0.x` (manifest changes ride minor bumps with explicit notes), publish flow placeholder for Task 2.7, and a troubleshooting section. No code changes — pure infra + docs.
+**Tests added:** 0 — no code path to test. Repo existence verified via `gcloud artifacts repositories list`. Real publish smoke is Task 2.7.
+**Next:** Task 2.2 — monorepo workspaces + `packages/components/` skeleton + `tsup` build pipeline.
+**Notes:**
+- `gcloud artifacts print-settings npm --scope=@anchorcorps` produced the exact `.npmrc` lines used in the doc.
+- The `anchor-sites-components-publisher` service account is referenced in the doc but **not** created yet — Task 2.7 creates it alongside the Cloud Build trigger. Documented now to keep `docs/components-publish.md` as the single source of truth.
+- No new GCP cost beyond the negligible AR storage (the repo is empty until 2.7).
