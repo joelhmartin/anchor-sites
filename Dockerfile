@@ -32,6 +32,9 @@ COPY --from=build /app/src ./src
 COPY --from=build /app/db ./db
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
+# Email module reads .routine/templates/*.md at runtime; .dockerignore
+# re-includes this path so it lands in the build context.
+COPY --from=build /app/.routine/templates ./.routine/templates
 
 EXPOSE 8080
 # Cloud Run sets $PORT (default 8080). package.json `start` reads it.
