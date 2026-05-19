@@ -6,6 +6,7 @@ import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 import { pageRouter } from "./routes/page.js";
 import { adminPagesRouter } from "./routes/admin-pages.js";
+import { siteResolveRouter } from "./routes/site-resolve.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
@@ -36,6 +37,9 @@ export function createApp(): Express {
   // the router (X-Admin-Token vs ADMIN_API_TOKEN env). Phase 8 replaces with
   // Better-auth sessions per D-020.
   app.use("/api", adminPagesRouter());
+
+  // Admin-only debug endpoint for tenant resolution. P3-T3.2.
+  app.use(siteResolveRouter());
 
   // Tenant page renderer. Registered last so all named admin/probe routes
   // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
