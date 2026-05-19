@@ -27,6 +27,38 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-19 — Tenant provisioning automated end-to-end (one API call)
+**Milestone ID:** phase1-provisioning-automated
+**Phase/Task:** Phase 1, Task 1.11
+**Commit:** a125ac4
+
+**What works:**
+
+```bash
+ADMIN=$(gcloud secrets versions access latest \
+  --secret=ANCHOR_SITES_ADMIN_API_TOKEN --project=anchor-hub-480305)
+
+curl -sX POST https://anchor-sites-kqikza7ska-uc.a.run.app/api/sites/provision \
+  -H "X-Admin-Token: $ADMIN" -H "Content-Type: application/json" \
+  -d '{"slug":"muldoon-dental"}'
+```
+
+Returns a per-step status object showing the Postgres UPSERT, Kinsta CNAME create, and Cloud Run domain mapping create all succeeded. Re-running is idempotent.
+
+**Local fallback:**
+
+```bash
+npm run provision -- --slug=muldoon-dental --wait
+```
+
+Same orchestrator, gcloud-session auth, no API tokens burned.
+
+**Domain swap recipe:** set `SITES_DOMAIN_BASE=new.example.com` in env, re-deploy, re-seed. The legacy-cleanup in `db/seed.ts` removes old hostnames automatically.
+
+**Pending public verification:** The new full-slug URLs `https://muldoon-dental.sites.anchorcorps.com/` + `https://demo-site.sites.anchorcorps.com/` have Kinsta CNAMEs + Cloud Run mappings created; Cloud Run's `DomainRoutable` polling lag (~15-30 min) is the only thing between us and HTTPS responses.
+
+**Coming next:** drop `.routine/NEXT-PHASE-APPROVED` to start Phase 2 once you've eyeballed the new URLs.
+
 ### 2026-05-19 — DNS records added via Kinsta API; certs issuing
 **Milestone ID:** phase1-dns-live
 **Phase/Task:** Phase 1, Task 1.8 (final step — domain mapping)

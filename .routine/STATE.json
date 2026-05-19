@@ -3,9 +3,9 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 1,
   "current_phase_file": "PHASE-01-foundation.md",
-  "current_task": "1.8",
+  "current_task": "1.11",
   "phase_started_at": "2026-05-18T00:00:00Z",
-  "last_commit_sha": "294267b",
+  "last_commit_sha": "a125ac4",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
@@ -13,15 +13,16 @@
     "phase1-complete-local",
     "phase1-cloud-run-deployed",
     "phase1-domain-mappings-created",
-    "phase1-dns-live"
+    "phase1-dns-live",
+    "phase1-provisioning-automated"
   ],
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 81,
+    "current_pass": 114,
     "current_fail": 0,
     "current_skipped": 0,
-    "last_run_at": "2026-05-19T08:00:23Z"
+    "last_run_at": "2026-05-19T09:43:20Z"
   },
   "phase_2_approved": false
 }

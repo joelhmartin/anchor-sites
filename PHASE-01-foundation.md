@@ -264,6 +264,31 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 
 ---
 
+## Task 1.11 — Centralize domain config + automate tenant provisioning
+
+> **Added 2026-05-19 per user request.** Phase 1 was complete in production, but the seeded hostnames were hand-wired. This task makes the domain a global env var and exposes an end-to-end "add a tenant" API the cloud application can call.
+
+- [x] **Config primitive** `src/config/domain.ts` — `SITES_DOMAIN_BASE` + `SITES_DOMAIN_REGISTRABLE` env vars, helpers (`hostnameForSlug`, `subdomainPattern`, `isUnderSitesDomain`).
+- [x] **Refactor `resolveSite` + `db/seed.ts`** to use the config. Subdomain regex computed lazily (test env changes pick up).
+- [x] **Full-slug hostnames**: `muldoon-dental.sites.anchorcorps.com`, `demo-site.sites.anchorcorps.com` (replacing the prefix-shortened forms).
+- [x] **Kinsta DNS client** `src/server/kinsta/client.ts` — typed v2 API surface (domains list, DNS records CRUD, operation polling).
+- [x] **GCP access token + Cloud Run domain mapping REST client** — works inside the Cloud Run container (metadata server) AND from local dev (`gcloud auth print-access-token`).
+- [x] **Provisioning orchestrator** `src/server/provisioning/orchestrator.ts` — 5-step idempotent flow (lookup → site_domains → Kinsta CNAME → Cloud Run mapping → optional cert wait).
+- [x] **Admin API endpoint** `POST /api/sites/:siteId/provision` (+ slug variant `POST /api/sites/provision { slug }`) — X-Admin-Token gated.
+- [x] **Local CLI** `npm run provision -- --slug=X [--wait]` — same orchestrator, gcloud-session auth.
+- [x] **Secrets + IAM**: `KINSTA_API_KEY` + `KINSTA_AGENCY_ID` granted to the Cloud Run runtime SA. Runtime SA also given `roles/run.developer` so it can create domain mappings.
+- [x] **Re-deploy + re-provision** of both existing sites via the new admin endpoint.
+- [x] **Cleanup**: legacy `muldoon.sites.anchorcorps.com` + `demo.sites.anchorcorps.com` Cloud Run mappings + Kinsta CNAMEs deleted (Kinsta DELETE requires the trailing-dot FQDN — codified in `docs/provisioning.md`).
+- [x] **Docs** `docs/provisioning.md` — architecture diagram, env contract, endpoint reference, CLI, idempotency notes, manual cleanup recipe.
+
+**Tests added:** 33 new across the slice (12 config, 9 Kinsta client, 7 Cloud Run client, 5 orchestrator integration). Total suite **114 passing, 0 skipped, 0 failed**, tsc clean.
+
+**Operational outcome:** Adding a new tenant is now a single `POST /api/sites/provision { slug }` call — the orchestrator handles Postgres + Kinsta DNS + Cloud Run + cert in one go, idempotent. Swapping the platform domain is `SITES_DOMAIN_BASE=new.example.com` + re-deploy + re-seed.
+
+**Pending verification (cert propagation):** Both new hostnames have Kinsta CNAMEs live and Cloud Run mappings created. Cloud Run's domain-routable detection lags ~15-30 min behind public DNS, so the new URLs (`https://muldoon-dental.sites.anchorcorps.com/`, `https://demo-site.sites.anchorcorps.com/`) will start responding 200 once that lag clears. Same pattern as the initial deploy on 2026-05-19.
+
+---
+
 ## Completion log
 
 > Append entries as work proceeds. Each entry: timestamp, task IDs touched, what was done, what's next, any new blockers.
@@ -311,6 +336,23 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-19 14:55 UTC — Task 1.11 (provisioning automation; cloud-first + CLI)
+**Commit:** a125ac4 (preceded by 3dfc3a9, 11bda38, 93d9065, becf81f, 7f34311)
+**Done:** End-to-end tenant provisioning is now one API call.
+- **`POST /api/sites/provision { slug }`** (or `POST /api/sites/:siteId/provision`) runs the full sequence: Postgres UPSERT → Kinsta CNAME via the v2 API → Cloud Run domain mapping → optional cert wait. Per-step status returned in the response. Idempotent — re-running on a half-provisioned hostname picks up where it left off.
+- **Domain config centralized.** `SITES_DOMAIN_BASE` + `SITES_DOMAIN_REGISTRABLE` env vars drive the canonical hostname computation (`<slug>.<base>`), the resolveSite subdomain regex, and the seed's `site_domains` rows. Swapping platforms = one env var.
+- **Full-slug hostnames in use.** Old prefix-shortened forms (`muldoon.sites.anchorcorps.com`) replaced with `muldoon-dental.sites.anchorcorps.com` etc. for 1:1 mapping with slugs. Legacy mappings + DNS records cleaned up.
+- **REST-only Cloud Run client.** No shell-out to `gcloud` from inside the container — `getGcpAccessToken()` uses the metadata server when on Cloud Run, falls back to `gcloud auth print-access-token` locally. Same code, two environments.
+- **Kinsta client** wraps the undocumented `/v2/domains/{id}/dns-records` endpoint with FQDN validation, operation polling, and a `addCname()` helper that auto-appends trailing dots.
+- **Local CLI** `npm run provision -- --slug=X` for development without burning cloud cycles.
+**Tests added:** 33 (`src/config/domain.test.ts` ×12, `src/server/kinsta/client.test.ts` ×9, `src/server/gcloud/run-domains.test.ts` ×7, `tests/integration/provisioning.test.ts` ×5). Total suite **114 passing, 0 skipped**, tsc clean.
+**Production**: image `:7f34311` deployed (revision `anchor-sites-00005-4w4`). Runtime SA granted `secretmanager.secretAccessor` on `KINSTA_API_KEY` + `KINSTA_AGENCY_ID`, and `roles/run.developer` on the project. Re-seed ran clean (legacy short-prefix rows wiped, full-slug rows + localhost extras inserted). Both sites re-provisioned via the new admin endpoint — Kinsta returns 200 on the operation poll, Cloud Run accepted both mappings, certs are now propagating through Google's edge (~15-30 min as before).
+**Next:** Wait for cert propagation; verify `https://muldoon-dental.sites.anchorcorps.com/` + `https://demo-site.sites.anchorcorps.com/` both 200. After that, `.routine/NEXT-PHASE-APPROVED` kicks off Phase 2.
+**Notes:**
+- **Kinsta DNS delete requires trailing dot** in the `name` field — codified in the cleanup recipe in `docs/provisioning.md`. Create + delete both want FQDN; create rejects relative labels with a misleading "RRSet not permitted in zone" error.
+- **Runtime SA needed `roles/run.developer`** for the endpoint to create mappings from inside the container. Granted at the project level for simplicity; a custom role with just `run.domainmappings.create` + `run.domainmappings.get` would be tighter for Phase 12 hardening.
+- The cloud-first design with CLI fallback was the explicit user requirement; same orchestrator file backs both paths, with all auth determined by env at call time (no special "mode" flag).
 
 ### 2026-05-19 13:38 UTC — Task 1.8 closed (production URLs live with SSL)
 **Commit:** 988b12e (preceded by c35bb8d, 294267b)
