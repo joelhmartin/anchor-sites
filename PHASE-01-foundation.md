@@ -213,11 +213,11 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 
 - [x] Add `Dockerfile` (or update existing) for the renderer *(multi-stage, prod-only npm ci in the run stage, `PORT=8080` for Cloud Run; `tsx` moved to `dependencies`)*
 - [x] Add `cloudbuild.yaml` or update existing CI to deploy to Cloud Run on main branch push *(authored; trigger creation is in `docs/deploy.md` step 6)*
-- [ ] Configure Cloud Run service to allow unauthenticated requests on rendering routes *(set via `--allow-unauthenticated` in `cloudbuild.yaml`; runs when the human executes `docs/deploy.md` step 7)*
-- [ ] Map wildcard domain `*.preview.anchorcorps.dev` to the Cloud Run service
-  - [ ] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites *(fallback documented in `docs/deploy.md` step 9; will fire if the wildcard mapping is rejected)*
-- [ ] Verify SSL provisions
-- [ ] Confirm both seed sites resolve in production
+- [x] Configure Cloud Run service to allow unauthenticated requests on rendering routes *(deployed 2026-05-19 — `anchor-sites` revision `anchor-sites-00002-nb9` in `anchor-hub-480305` / us-central1, image `:2fd737c`)*
+- [ ] Map wildcard domain `*.preview.anchorcorps.dev` to the Cloud Run service *(blocked on B-002 — Search Console domain verification)*
+  - [ ] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites *(will run after verification — single command, fallback handled in code path)*
+- [ ] Verify SSL provisions *(Cloud Run auto-provisions on domain mapping creation)*
+- [ ] Confirm both seed sites resolve in production *(needs B-002)*
 - [x] Document deploy process in `docs/deploy.md` *(full step-by-step from API enablement through wildcard domain mapping + rollback)*
 - [x] Remove `vercel.json` (D-010) *(no longer present)*
 
@@ -311,6 +311,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-19 05:14 UTC — Task 1.8 (Cloud Run service deployed; domain mapping pending B-002)
+**Commit:** 2fd737c
+**Done:** Production Cloud Run service `anchor-sites` is live in `anchor-hub-480305` / us-central1, reusing the existing `anchor` Cloud SQL instance (Postgres 15) with a new isolated database `anchor_sites_prod` and dedicated user `anchor_sites`. All five secrets wired via Secret Manager: `ANCHOR_SITES_DATABASE_URL` (Unix-socket form pointing at the Cloud SQL instance), `ANCHOR_SITES_ADMIN_API_TOKEN` (64-char opaque), and the three shared `MAILGUN_*` secrets co-owned with anchor-hub. Image lives in the `cloud-run-source-deploy` Artifact Registry repo. Two Cloud Run Jobs created (`anchor-sites-migrate`, `anchor-sites-seed`); both executed successfully on first run — Postgres schema present in prod and the two seed sites + four `site_domains` rows + two published home pages are all in place. The deployed revision is `anchor-sites-00002-nb9` at image tag `:2fd737c`. Decisions captured in D-023 (Mailgun over Resend) and D-024 (same GCP project, shared SQL instance).
+**Tests added:** 0 (deployment work). Local suite remains **81 passing, 0 skipped**. Production smoke: `GET /HEALTHZ` → 200 `{"ok":true,"db":true}` (DB connection confirmed). `POST /api/sites/x/pages/y` without `X-Admin-Token` → 401 (admin gate working). Catch-all SPA fallback serves `dist/index.html` for unknown paths.
+**Next:** Resolve B-002 (operator verifies `anchorcorps.dev` in Search Console). Once verified, the routine runs `gcloud beta run domain-mappings create --service=anchor-sites --domain='*.preview.anchorcorps.dev'`, hands back the CNAME/A target for DNS, and once propagated the demo URLs (`https://muldoon.preview.anchorcorps.dev`, `https://demo.preview.anchorcorps.dev`) come online. Phase 1 box on PLAN.md unticks only the domain-mapping sub-step.
+**Notes:**
+- **`/healthz` (lowercase) is intercepted by GCP's load balancer** and returns Google's stock 404 before reaching the container. Our healthcheck route lives on `/HEALTHZ` for now (case-sensitive in Express). Once a custom domain is mapped, the GFE filter no longer applies and lowercase resumes working. Local dev is unaffected (no GFE in front of `tsx`).
+- **Spoofed `Host:` headers don't reach the container via the `*.run.app` URL** — GFE rejects unknown authorities. So Phase 1's per-tenant rendering is only fully verifiable post-domain-mapping. Locally everything works (`muldoon.localhost:3000`, `demo.localhost:3000`).
+- **No CI trigger wired** for `joelhmartin/anchor-sites`. Next deploy is a manual `gcloud builds submit --config=cloudbuild.yaml`. The trigger is a follow-up — keeping it manual until Phase 2 starts so deploys are deliberate, not on every commit.
+- **Dockerfile latent bug caught + fixed pre-incident:** the bootstrap image didn't COPY `.routine/templates/`, so any future `sendEmail()` call would have ENOENT'd. Fixed in commit 2fd737c, rebuilt + redeployed before any email path was hit.
 
 ### 2026-05-18 23:40 UTC — Task 1.10 (docs pass + Phase 2 handoff)
 **Commit:** 7222b9d

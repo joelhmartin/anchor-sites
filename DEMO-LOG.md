@@ -27,6 +27,42 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-19 — Cloud Run service live (deploy + DB connected; domain mapping pending)
+**Milestone ID:** phase1-cloud-run-deployed
+**Phase/Task:** Phase 1, Task 1.8 (Cloud Run service step)
+**Commit:** 2fd737c
+
+**What to look at:**
+
+```bash
+# Service URL (will move to *.preview.anchorcorps.dev once B-002 resolves):
+URL=https://anchor-sites-kqikza7ska-uc.a.run.app
+
+# Healthcheck — note the uppercase; lowercase /healthz is reserved by GFE.
+curl -s $URL/HEALTHZ
+# → {"ok":true,"db":true}
+
+# Admin API gate (no token → 401):
+curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -d '{}' \
+  $URL/api/sites/x/pages/y
+# → 401
+```
+
+**What's new since last demo:**
+- `anchor-sites` Cloud Run service deployed in `anchor-hub-480305` / us-central1.
+- Cloud SQL connection via Unix socket against the existing `anchor` instance (Postgres 15), database `anchor_sites_prod`, dedicated user `anchor_sites`.
+- Migrations + seed ran successfully via Cloud Run Jobs (`anchor-sites-migrate`, `anchor-sites-seed`).
+- All four secrets wired via Secret Manager: `ANCHOR_SITES_DATABASE_URL`, `ANCHOR_SITES_ADMIN_API_TOKEN`, and the three shared `MAILGUN_*` secrets.
+- Image lives in `cloud-run-source-deploy:anchor-sites:2fd737c`.
+
+**Known limitations:**
+- Spoofed `Host:` headers don't reach the container via `.run.app` (GFE rejects unknown authorities). Full per-tenant rendering is only verifiable once **B-002** lands (domain verification for `anchorcorps.dev` in Search Console).
+- `/healthz` (lowercase) is reserved by the GCP load balancer; we use `/HEALTHZ` for now and document it. Once a custom domain is mapped, lowercase resumes working.
+- No CI trigger wired yet. Pushing to `main` does not auto-deploy; the next deploy is a manual `gcloud builds submit --config=cloudbuild.yaml`. (Wiring the GitHub trigger is deferred so the user controls when each push deploys.)
+
+**Next visible thing coming:**
+- Operator completes Search Console verification (B-002). Routine runs `gcloud beta run domain-mappings create` for `*.preview.anchorcorps.dev`, returns the CNAME/A target for DNS, and once propagated, the demo URLs `https://muldoon.preview.anchorcorps.dev` and `https://demo.preview.anchorcorps.dev` go live.
+
 ### 2026-05-18 — Phase 1 foundation complete (production deploy pending)
 **Milestone ID:** phase1-complete-local
 **Phase/Task:** Phase 1 (foundation) — Tasks 1.0–1.7 + 1.9–1.10 done; 1.8 blocked
