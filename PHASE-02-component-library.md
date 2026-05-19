@@ -113,7 +113,7 @@ Every box above checked, AND:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 12:00 UTC — Task 2.4 (shadcn primitives copy-in)
-**Commit:** (pending — same commit as this log entry)
+**Commit:** 834e13e
 **Done:** Five internal primitives landed under `packages/components/src/primitives/`, exported from a barrel that the opinionated blocks layer (2.5) will consume. None are re-exported from the package root — primitives stay internal.
 - **`Button`** — cva-based variants (primary / secondary / outline / ghost / link) × sizes (sm / md / lg / icon). `asChild` via Radix `Slot` so blocks can render `<a>` while keeping the visual class set. Default variant uses brand-token classes (`bg-theme-accent` etc.). Focus ring uses `ring-theme-accent`.
 - **`Card` family** — `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`. Surface + border tokens map to brand vars.
