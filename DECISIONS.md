@@ -276,4 +276,53 @@
 
 ---
 
+### D-023: Mailgun for email, not Resend; shared with anchor-hub
+
+**Context:** D-012 originally specified Resend as the email provider. Once Task 1.8 began the production deploy walkthrough, the `anchor-hub-480305` GCP project surfaced and it already runs anchor-hub on Mailgun — `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_DEFAULT_FROM`, `MAILGUN_SANDBOX_*` secrets are all populated, and the From domain is already verified inside Mailgun. The builder ships in the same GCP project (see D-004 / D-024 below if introduced) so duplicating a Resend account, verifying a second domain, and authoring a second set of templates buys nothing operationally.
+
+**Decision:** Use **Mailgun** for all builder-side email (phase started / demo milestone / phase completed / blocker / daily digest / test regression). The same Mailgun account + From domain as anchor-hub. `src/server/email/send.ts` calls `https://api.mailgun.net/v3/$MAILGUN_DOMAIN/messages` with HTTP Basic auth (`api:<key>`) and `application/x-www-form-urlencoded` payload. Env vars: `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_DEFAULT_FROM` — secret names match anchor-hub's existing Secret Manager entries.
+
+**Rationale:**
+- **One provider account.** One billing line, one set of compliance reviews, one rate-limit pool to monitor.
+- **From domain already verified.** No DNS gymnastics to start sending.
+- **Shared secrets in Secret Manager.** Cloud Run grants the builder service account read access on the existing `MAILGUN_*` secrets; no copy-paste.
+- **Mailgun rate limits and deliverability profile match what anchor-hub has already tested in production.**
+
+**Alternatives considered:**
+- Resend (rejected — see above; the second-provider tax outweighs marketing/UX preferences for this internal-tool email surface).
+- SES (rejected — adds AWS IAM to the GCP-only stack).
+- Postmark (rejected — same second-account tax as Resend, no integration win).
+
+**How to apply:**
+- Phase 1, Task 1.9: `src/server/email/send.ts` already targets Mailgun. Local dev runs in stub mode (no `MAILGUN_API_KEY`).
+- Phase 1, Task 1.8: `cloudbuild.yaml` injects the three Mailgun secrets via `--set-secrets`. The Cloud Run default SA must hold `roles/secretmanager.secretAccessor` on `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_DEFAULT_FROM`.
+- Phase 12 hardening: re-evaluate when client-facing transactional email lands (the marketing-site email surface is different from the builder-internal one). If clients want a dedicated From for their own site (e.g. `noreply@muldoondental.com`), the renderer can authenticate Mailgun with a different sending domain per `site_id` without changing the contract.
+
+### D-024: AnchorCorps Site Builder shares the anchor-hub GCP project + Cloud SQL instance
+
+**Context:** Task 1.8 needed a target GCP project for the production deploy. The operator (user) confirmed `anchor-hub-480305` already runs anchor-hub on Cloud Run with a Cloud SQL Postgres 15 instance named `anchor` in us-central1, an `cloud-run-source-deploy` Artifact Registry repo with ~44GB of existing images, and an inventory of secrets covering integrations the builder will eventually need (CTM, Mailgun, Monday, Google Ads, Facebook, GA4).
+
+**Decision:**
+- **GCP project:** `anchor-hub-480305`. The builder lives alongside anchor-hub and `ai-endpoint`.
+- **Cloud Run service:** new service `anchor-sites` in `us-central1`. **Separate** from `anchor-hub` per D-004 — different scale profile (renderer = public traffic), different release cadence, different security surface.
+- **Cloud SQL:** reuse the existing `anchor` instance. New database `anchor_sites_prod`. New user `anchor_sites` with privileges only on that database (so anchor-hub's `anchor` database stays isolated by Postgres-native access control).
+- **Artifact Registry:** reuse the existing `cloud-run-source-deploy` repo in us-central1. Images tagged `anchor-sites:<SHORT_SHA>`.
+- **Cloud Build:** new trigger watching `joelhmartin/anchor-sites` `main`, separate from the anchor-hub trigger.
+- **Region:** us-central1 throughout — matches anchor-hub, matches the Cloud SQL instance, zero cross-region latency.
+
+**Rationale:**
+- **Same project preserves the D-004 service-boundary isolation while eliminating duplicated infrastructure.** The anchor-hub project already pays for Artifact Registry storage, Cloud Build minutes, monitoring, billing setup, and IAM bindings; standing up a parallel project would re-pay all of that for no isolation benefit.
+- **Cloud SQL multi-DB is the cheapest correct answer.** Adding `anchor_sites_prod` to the existing instance costs storage delta only (tens of MB). Phase 12 can evaluate whether the renderer's write traffic justifies a dedicated instance once real client load is measured.
+- **Same-project Phase 11 CRM integration** (5 HTTP endpoints into anchor-hub) doesn't need cross-project IAM; the Cloud Run service can call anchor-hub's URL directly using the default service account if/when we move the CRM endpoints behind IAM.
+- **Operator already has gcloud auth to this project.** No new credential or project setup tax.
+
+**Alternatives considered:**
+- New GCP project (`anchorcorps-sites-prod`): rejected — pure tax for the agency-scale this is built for. Re-evaluate if a tenant demands hard project-level isolation in writing.
+- Shared Cloud Run service with anchor-hub: rejected — violates D-004's separation principle, breaks per-service scaling, breaks per-service IAM, mixes public traffic with internal-team traffic.
+
+**How to apply:**
+- `cloudbuild.yaml` substitutions point at `anchor-hub-480305:us-central1:anchor` for `_SQL_INSTANCE` and `cloud-run-source-deploy` for `_AR_REPO`.
+- `docs/deploy.md` updated to reflect existing resources; only **new** resources are: the `anchor_sites` Cloud SQL user, the `anchor_sites_prod` database, the `ANCHOR_SITES_DATABASE_URL` + `ANCHOR_SITES_ADMIN_API_TOKEN` secrets, and the `anchor-sites` Cloud Run service. Everything else is reuse.
+- Phase 10 (domain provisioning) will still map `*.preview.anchorcorps.dev` and per-client domains to the `anchor-sites` Cloud Run service, not to anchor-hub.
+
 <!-- Routine appends future decisions below this line -->

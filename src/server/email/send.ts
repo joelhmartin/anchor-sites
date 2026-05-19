@@ -52,14 +52,20 @@ export async function renderTemplate(
 }
 
 /**
- * Send an email via Resend's HTTP API.
+ * Send an email via Mailgun's HTTP API (D-023 — chosen for consistency with
+ * `anchor-hub`, which already uses Mailgun in the same GCP project).
  *
  * Three modes based on env:
- *   - `RESEND_API_KEY` unset → STUB. Logs to console, returns `ok: false`.
+ *   - `MAILGUN_API_KEY` unset → STUB. Logs to console, returns `ok: false`.
  *     Used in development and in CI before Task 1.8 lands secrets in prod.
- *   - `RESEND_API_KEY === "dry-run"` → DRY-RUN. Renders template + validates
- *     payload but does not call Resend. Used by tests and `npm run` smoke checks.
- *   - Any other value → API. Calls https://api.resend.com/emails.
+ *   - `MAILGUN_API_KEY === "dry-run"` → DRY-RUN. Renders template + validates
+ *     payload but does not call Mailgun. Used by tests and smoke checks.
+ *   - Any other value → API. POSTs to https://api.mailgun.net/v3/<domain>/messages
+ *     using HTTP Basic auth (`api:<key>`).
+ *
+ * `MAILGUN_DOMAIN` must be set when the API key is real — it determines both
+ * the endpoint URL and the default From address. `MAILGUN_DEFAULT_FROM`
+ * overrides the From header (matches the existing anchor-hub secret name).
  */
 export async function sendEmail(args: SendArgs): Promise<SendResult> {
   let subject: string;
@@ -84,12 +90,15 @@ export async function sendEmail(args: SendArgs): Promise<SendResult> {
     };
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM ?? "AnchorCorps Builder <builder@anchorcorps.dev>";
+  const apiKey = process.env.MAILGUN_API_KEY;
+  const domain = process.env.MAILGUN_DOMAIN;
+  const from =
+    process.env.MAILGUN_DEFAULT_FROM ??
+    (domain ? `AnchorCorps Builder <builder@${domain}>` : "AnchorCorps Builder <builder@example.com>");
 
   if (!apiKey) {
     console.log("[email:stub]", { to: args.to, subject });
-    return { ok: false, error: "RESEND_API_KEY not set", mode: "stub" };
+    return { ok: false, error: "MAILGUN_API_KEY not set", mode: "stub" };
   }
   if (apiKey === "dry-run") {
     return {
@@ -98,20 +107,31 @@ export async function sendEmail(args: SendArgs): Promise<SendResult> {
       mode: "dry-run",
     };
   }
+  if (!domain) {
+    return { ok: false, error: "MAILGUN_DOMAIN not set", mode: "api" };
+  }
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const form = new URLSearchParams({
+      from,
+      to: args.to,
+      subject,
+      text: body,
+    });
+    const auth = Buffer.from(`api:${apiKey}`, "utf-8").toString("base64");
+
+    const res = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({ from, to: args.to, subject, text: body }),
+      body: form.toString(),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return { ok: false, error: `resend ${res.status}: ${text}`, mode: "api" };
+      return { ok: false, error: `mailgun ${res.status}: ${text}`, mode: "api" };
     }
     const data = (await res.json().catch(() => ({}))) as { id?: string };
     return { ok: true, id: data.id ?? "unknown", mode: "api" };

@@ -12,17 +12,21 @@
 #                   ($PROJECT_ID:$_REGION:<instance-name>)
 #
 # Secrets must exist in Secret Manager BEFORE the first deploy:
-#   DATABASE_URL          — postgres URL using the Cloud SQL Unix socket
-#                            (postgres:///anchor_dev?host=/cloudsql/$_SQL_INSTANCE)
-#   ADMIN_API_TOKEN       — opaque string; the editor / curl uses it via
-#                            the X-Admin-Token header
-#   RESEND_API_KEY        — Phase 1 Task 1.9 wires this; placeholder OK until then
+#   ANCHOR_SITES_DATABASE_URL    — postgres URL using the Cloud SQL Unix
+#                                   socket (postgres:///anchor_sites_prod?host=/cloudsql/$_SQL_INSTANCE)
+#                                   Scoped to the new anchor_sites DB user so
+#                                   anchor-hub's DATABASE_URL stays isolated.
+#   ANCHOR_SITES_ADMIN_API_TOKEN  — opaque string; the editor / curl uses it
+#                                   via the X-Admin-Token header.
+#   MAILGUN_API_KEY               — shared with anchor-hub (D-023).
+#   MAILGUN_DOMAIN                — shared with anchor-hub.
+#   MAILGUN_DEFAULT_FROM          — shared with anchor-hub.
 
 substitutions:
   _REGION: us-central1
   _SERVICE: anchor-sites
-  _AR_REPO: anchor
-  _SQL_INSTANCE: PROJECT_ID:us-central1:anchor-postgres
+  _AR_REPO: cloud-run-source-deploy
+  _SQL_INSTANCE: anchor-hub-480305:us-central1:anchor
   _IMAGE: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
 
 steps:
@@ -71,7 +75,7 @@ steps:
       - --port=8080
       - --add-cloudsql-instances=${_SQL_INSTANCE}
       - --set-env-vars=NODE_ENV=production
-      - --set-secrets=DATABASE_URL=DATABASE_URL:latest,ADMIN_API_TOKEN=ADMIN_API_TOKEN:latest,RESEND_API_KEY=RESEND_API_KEY:latest
+      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,ADMIN_API_TOKEN=ANCHOR_SITES_ADMIN_API_TOKEN:latest,MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest,MAILGUN_DEFAULT_FROM=MAILGUN_DEFAULT_FROM:latest
       - --min-instances=0
       - --max-instances=10
       - --cpu=1

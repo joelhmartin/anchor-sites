@@ -73,7 +73,8 @@ describe("email template rendering", () => {
 
 describe("sendEmail modes", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
-  const originalKey = process.env.RESEND_API_KEY;
+  const originalKey = process.env.MAILGUN_API_KEY;
+  const originalDomain = process.env.MAILGUN_DOMAIN;
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -81,13 +82,15 @@ describe("sendEmail modes", () => {
 
   afterEach(() => {
     logSpy.mockRestore();
-    if (originalKey === undefined) delete process.env.RESEND_API_KEY;
-    else process.env.RESEND_API_KEY = originalKey;
+    if (originalKey === undefined) delete process.env.MAILGUN_API_KEY;
+    else process.env.MAILGUN_API_KEY = originalKey;
+    if (originalDomain === undefined) delete process.env.MAILGUN_DOMAIN;
+    else process.env.MAILGUN_DOMAIN = originalDomain;
     vi.unstubAllGlobals();
   });
 
-  it("stub mode: no RESEND_API_KEY → logs + returns ok:false, mode:'stub'", async () => {
-    delete process.env.RESEND_API_KEY;
+  it("stub mode: no MAILGUN_API_KEY → logs + returns ok:false, mode:'stub'", async () => {
+    delete process.env.MAILGUN_API_KEY;
     const res = await sendEmail({
       to: "jmartin@anchorcorps.com",
       template: "blocker",
@@ -101,8 +104,8 @@ describe("sendEmail modes", () => {
     }));
   });
 
-  it("dry-run mode: RESEND_API_KEY='dry-run' → ok:true, mode:'dry-run', no fetch", async () => {
-    process.env.RESEND_API_KEY = "dry-run";
+  it("dry-run mode: MAILGUN_API_KEY='dry-run' → ok:true, mode:'dry-run', no fetch", async () => {
+    process.env.MAILGUN_API_KEY = "dry-run";
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const res = await sendEmail({ to: "x@example.com", body: "hi", subject: "Test" });
@@ -114,10 +117,12 @@ describe("sendEmail modes", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("api mode: real key → POSTs to resend with Bearer auth + rendered template", async () => {
-    process.env.RESEND_API_KEY = "re_fake_test_key";
+  it("api mode: real key + domain → POSTs to mailgun with Basic auth + form body", async () => {
+    process.env.MAILGUN_API_KEY = "key-fake-test";
+    process.env.MAILGUN_DOMAIN = "mg.anchorcorps.dev";
+    process.env.MAILGUN_DEFAULT_FROM = "AnchorCorps Builder <builder@mg.anchorcorps.dev>";
     const fetchSpy = vi.fn(async () =>
-      new Response(JSON.stringify({ id: "msg_42" }), {
+      new Response(JSON.stringify({ id: "<20260518.abc@mg.anchorcorps.dev>", message: "Queued" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -139,41 +144,55 @@ describe("sendEmail modes", () => {
     });
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.id).toBe("msg_42");
+      expect(res.id).toContain("@mg.anchorcorps.dev");
       expect(res.mode).toBe("api");
     }
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     const call = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     const [url, init] = call;
-    expect(url).toBe("https://api.resend.com/emails");
+    expect(url).toBe("https://api.mailgun.net/v3/mg.anchorcorps.dev/messages");
     expect(init.method).toBe("POST");
     const headers = init.headers as Record<string, string>;
-    expect(headers.Authorization).toBe("Bearer re_fake_test_key");
-    const body = JSON.parse(init.body as string);
-    expect(body.to).toBe("jmartin@anchorcorps.com");
-    expect(body.subject).toBe("[Builder] Demo ready: First sites live");
-    // Body content comes from the template, not subject vars.
-    expect(body.text).toContain("Visit muldoon.preview.anchorcorps.dev");
-    expect(body.text).toContain("multi-tenant rendering");
+    // HTTP Basic with `api:<key>` base64-encoded.
+    const expected = Buffer.from("api:key-fake-test", "utf-8").toString("base64");
+    expect(headers.Authorization).toBe(`Basic ${expected}`);
+    expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    const body = new URLSearchParams(init.body as string);
+    expect(body.get("to")).toBe("jmartin@anchorcorps.com");
+    expect(body.get("subject")).toBe("[Builder] Demo ready: First sites live");
+    expect(body.get("from")).toContain("builder@mg.anchorcorps.dev");
+    expect(body.get("text")).toContain("Visit muldoon.preview.anchorcorps.dev");
+  });
+
+  it("api mode: missing MAILGUN_DOMAIN → ok:false (no HTTP call)", async () => {
+    process.env.MAILGUN_API_KEY = "key-fake-test";
+    delete process.env.MAILGUN_DOMAIN;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await sendEmail({ to: "x@example.com", body: "hi", subject: "T" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/MAILGUN_DOMAIN/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("api mode: non-2xx response → ok:false with status in error", async () => {
-    process.env.RESEND_API_KEY = "re_fake_test_key";
+    process.env.MAILGUN_API_KEY = "key-fake-test";
+    process.env.MAILGUN_DOMAIN = "mg.example.com";
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("bad token", { status: 401 })),
+      vi.fn(async () => new Response("Forbidden", { status: 401 })),
     );
     const res = await sendEmail({ to: "x@example.com", body: "hi", subject: "T" });
     expect(res.ok).toBe(false);
     if (!res.ok) {
-      expect(res.error).toMatch(/resend 401/);
+      expect(res.error).toMatch(/mailgun 401/);
       expect(res.mode).toBe("api");
     }
   });
 
   it("rejects when neither template nor body is supplied", async () => {
-    delete process.env.RESEND_API_KEY;
+    delete process.env.MAILGUN_API_KEY;
     const res = await sendEmail({ to: "x@example.com" });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/template or body/);
