@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 15:55 UTC — Task 3.10 (sharp variant-generation pg-boss job)
-**Commit:** (pending — same commit as this log entry)
+**Commit:** 1bd0b0e
 **Done:** `media.process-upload` pg-boss job lands. Took the original from a `media_assets` row, runs `sharp` to produce **5 sizes × 2 formats = 10 variants**, content-hashes each, writes to GCS with `Cache-Control: public, max-age=31536000, immutable`, updates the row with `variants_status='ready'`, the variant JSON, source `width`/`height`, `original_bytes`, and `processed_at`. Logged decisions **D-030** (pg-boss boot pattern) and **D-031** (media URL shape).
 - **`src/server/media/variant-spec.ts`** — single source of truth for variant sizes/formats + URL/key helpers. Phase 12 Cloud CDN switch will only modify `variantPublicUrl`.
 - **`src/server/jobs/media-process-upload.ts`** — the handler. Idempotent (`ready` rows short-circuit). Updates `variants_status='processing'` on entry; sets `'ready'` on success or `'failed'` + `last_error` on error (then rethrows so pg-boss records the failure + retries).
