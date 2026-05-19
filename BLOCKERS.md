@@ -63,10 +63,10 @@ Once both production URLs are confirmed, drop `.routine/TASK-1.8-APPROVED` and I
 - Note: `/healthz` (lowercase) is reserved by the GCP load balancer and returns Google's 404 page; `/HEALTHZ` reaches our container. Custom domains aren't subject to that path filter, so once domain mapping lands, lowercase resumes working.
 - Spoofed `Host:` headers don't reach the container via the `.run.app` URL (GFE rejects unknown authorities). Validation of the per-site renderer therefore depends on the domain mapping landing (B-002).
 
-### B-002 — Domain verification for `*.sites.anchorcorps.com`
+### B-002 — Domain verification + DNS records for the seeded sites
 **Raised:** 2026-05-19 05:14 UTC
-**Phase/Task:** Phase 1, Task 1.8 (sub-step 4: wildcard domain mapping)
-**Status:** OPEN — needs operator action in Search Console + DNS
+**Phase/Task:** Phase 1, Task 1.8 (sub-step 4: domain mapping)
+**Status:** PARTIALLY RESOLVED 2026-05-19 13:08 UTC — `anchorcorps.com` verified; per-subdomain mappings created; only DNS records remain
 
 **What I'm trying to do:**
 Map `*.sites.anchorcorps.com` (or per-subdomain fallback for `muldoon.sites.anchorcorps.com` + `demo.sites.anchorcorps.com`) to the `anchor-sites` Cloud Run service so the tenant catch-all router actually receives requests with the correct Host header. Until this lands, the Phase 1 demo milestone is only locally verifiable.
@@ -87,3 +87,29 @@ Map `*.sites.anchorcorps.com` (or per-subdomain fallback for `muldoon.sites.anch
 - Phase 1 demo milestone remains exercisable locally on `muldoon.localhost:3000` / `demo.localhost:3000`.
 - Cloud Run service is up and `/HEALTHZ` is green; admin API is reachable (401 without token, by design).
 - Everything else in Phase 1 (Tasks 1.0–1.7, 1.9, 1.10) is complete.
+
+**Resolution (partial, 2026-05-19 13:08 UTC):**
+- `anchorcorps.com` is verified in Search Console (confirmed via `gcloud domains list-user-verified`).
+- Wildcard mapping (`*.sites.anchorcorps.com`) is **not** supported by `gcloud beta run domain-mappings` — that requires a Load Balancer + Serverless NEG, which is overkill for Phase 1. Falling back to per-subdomain mappings as documented in `docs/deploy.md` step 9.
+- Both per-subdomain mappings created against the `anchor-sites` service in us-central1:
+  - `muldoon.sites.anchorcorps.com`
+  - `demo.sites.anchorcorps.com`
+- Cloud Run is waiting on DNS before issuing SSL certs.
+
+**Only remaining step — DNS records.** In whichever DNS host owns `anchorcorps.com` (Cloudflare, Route53, GoDaddy, etc.), add these two CNAME records:
+
+| Name (host)              | Type  | Value                  | TTL    |
+| ------------------------ | ----- | ---------------------- | ------ |
+| `muldoon.sites`          | CNAME | `ghs.googlehosted.com.` | 300s  |
+| `demo.sites`             | CNAME | `ghs.googlehosted.com.` | 300s  |
+
+> Some DNS hosts want the full subdomain in the Name field (`muldoon.sites.anchorcorps.com`); others want only the relative label. Whichever convention your host uses, the record needs to be a CNAME for that subdomain pointing at `ghs.googlehosted.com.` (note the trailing dot).
+
+Once both records propagate, Cloud Run auto-issues Let's Encrypt certificates (typically 5–15 minutes). After that:
+
+```bash
+curl -s https://muldoon.sites.anchorcorps.com/ | head -40   # → seeded muldoon home
+curl -s https://demo.sites.anchorcorps.com/   | head -40   # → seeded demo content
+```
+
+When both URLs are green, drop `.routine/TASK-1.8-APPROVED` and Phase 1 is fully done.

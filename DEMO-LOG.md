@@ -27,6 +27,30 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-19 — Domain mappings created; awaiting DNS for SSL issuance
+**Milestone ID:** phase1-domain-mappings-created
+**Phase/Task:** Phase 1, Task 1.8 (domain mapping step)
+**Commit:** 588beca
+
+**What's now true:**
+- New image `:588beca` built + deployed (revision `anchor-sites-00003-c4l`).
+- Re-seeded prod via `anchor-sites-seed` — legacy `*anchorcorps.dev` rows deleted, four new `site_domains` rows present (`muldoon.sites.anchorcorps.com`, `muldoon.localhost`, `demo.sites.anchorcorps.com`, `demo.localhost`).
+- `anchorcorps.com` verified in Search Console (`gcloud domains list-user-verified` confirms).
+- Per-subdomain Cloud Run domain mappings created:
+  - `muldoon.sites.anchorcorps.com` → CNAME `ghs.googlehosted.com.`
+  - `demo.sites.anchorcorps.com` → CNAME `ghs.googlehosted.com.`
+
+**Blocker dropped to DNS-only:** B-002 needs two CNAME records in the DNS host that owns `anchorcorps.com`. See `BLOCKERS.md#B-002` for the exact rows.
+
+**Once DNS propagates:**
+
+```bash
+curl -s https://muldoon.sites.anchorcorps.com/ | head -40
+curl -s https://demo.sites.anchorcorps.com/   | head -40
+```
+
+Both should return 200 with the seeded hero/rich-text/cta content and per-site brand tokens — same output as the local-dev demo from 2026-05-18.
+
 ### 2026-05-19 — Cloud Run service live (deploy + DB connected; domain mapping pending)
 **Milestone ID:** phase1-cloud-run-deployed
 **Phase/Task:** Phase 1, Task 1.8 (Cloud Run service step)
