@@ -416,4 +416,32 @@
 - For animations / keyframes / anything Tailwind can't express, add to the labelled section in `src/styles.css`.
 - The renderer's SSR layer inlines `dist/styles.css` into the `<style>` tag (`render-page.tsx`, see PACKAGE_BLOCK_CSS). No `<link>` to a bundle file; no client hydration needed for styles.
 
+### D-029: Brand-token shape — keys match `--theme-<kebab>`, values are CSS color expressions or `var(--…)`
+
+**Context:** Phase 1 stored `sites.default_brand_tokens` as freeform `Record<string, unknown>` JSONB. The renderer emits each `key: value` pair inside `:root { … }` in the SSR'd `<style>` tag. Without a schema, a malformed or hostile value (`javascript:alert(1)`, multi-line CSS, an injection that escapes the declaration) could ride through into every rendered page. Phase 3 adds `pages.brand_tokens_override` (P3-T3.4) — same risk, doubled surface.
+
+**Decision:** `src/blocks/brand-tokens.ts` defines `brandTokensSchema` (Zod). Keys MUST match `^--theme-[a-z0-9]+(-[a-z0-9]+)*$`. Values MUST be one of:
+- 3/4/6/8-digit hex (`#fff`, `#ffff`, `#ffffff`, `#ffffffaa`)
+- `rgb(…)`, `rgba(…)`, `hsl(…)`, `hsla(…)`
+- `var(--…)` references (optionally with a fallback comma)
+- A small allow-list of named colors and CSS-wide keywords (`transparent`, `currentcolor`, `white`, etc.)
+
+Anything else (raw URL, JS expression, multi-line value, unbalanced parens) is rejected at the validation point.
+
+**Companion helper:** `mergeBrandTokens(siteDefault, pageOverride)` does a per-key merge (page wins). The merge does NOT re-validate — both inputs are expected to have been validated at their save points. Non-string values (defense in depth) are skipped.
+
+**Rationale:**
+- **Bounded attack surface:** every brand token reaches the SSR'd `<style>` tag inside `:root { … }`. The schema closes the "anything goes" hole that would let a hostile JSON payload escape the declaration.
+- **Forward-compat:** the `--theme-<kebab>` key convention matches what the `@anchorcorps/components` Tailwind config already expects (`bg-theme-main`, `text-theme-on-surface`, etc.). The schema *enforces* the convention so admins can't introduce a `--brand-foo` token that the package's classes won't pick up.
+- **No full CSS parser:** the value regexes are deliberately lenient — they sanity-check shape, not semantics. A `rgb(999, -1, ∞)` slips through. That's acceptable because the browser silently ignores invalid color values; an admin's brand fix is one save away.
+
+**Alternatives considered:**
+- A full CSS-color parser (e.g. `csstree`): rejected — adds a runtime dep for a sanity filter that doesn't need to be exhaustive.
+- Allow any `string`: rejected — leaves the SSR `<style>` injection surface open.
+- Restrict to hex only: rejected — would block `var(--…)` chaining, which is genuinely useful for derived tokens.
+
+**How to apply:**
+- Anywhere brand tokens enter the system (P3-T3.4 admin save for `pages.brand_tokens_override`, the future Phase 4 admin-UI site-row editor, `db/seed.ts` for the seeded sites), validate via `brandTokensSchema.parse(...)` or `safeParse(...)` before commit.
+- At render time (P3-T3.5), the renderer merges site default + page override via `mergeBrandTokens(...)` and serializes the result into the `<style>` tag. No re-validation at render time — the data was validated when written.
+
 <!-- Routine appends future decisions below this line -->
