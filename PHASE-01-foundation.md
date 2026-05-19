@@ -300,7 +300,7 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - CSS lives in plain `.css` files (not CSS Modules) so the `ac-` prefix survives unhashed — that's the public API consumers can target per architectural anchor #8.
 
 ### 2026-05-18 22:53 UTC — Task 1.4 (BlockRenderer + /__blocks/preview harness)
-**Commit:** *(filled below)*
+**Commit:** 32bbdca
 **Done:** Built `<BlockRenderer>` that walks an array of blocks, looks each one up in the registry, validates props with the block's Zod schema, and renders one of: the real component (happy path), `<UnknownBlock>` (type missing), or `<BlockError>` (props invalid). Fallbacks render silent `aria-hidden` placeholders in production, visible debug UI in dev. Editable mode wraps each rendered block in a `<div data-block-id data-block-type>` for the Phase 5 editor to resolve clicks; non-editable mode emits no wrapper. Added the `/__blocks/preview` admin-only harness — an Express GET serves a small HTML form, POST accepts `{blocks:[…]}` JSON and returns SSR HTML. Mounted dev-only via `NODE_ENV !== "production"` gate in `app.ts`.
 **Tests added:** 9 (`src/components/BlockRenderer.test.tsx` ×6, `tests/smoke/blocks-preview.test.ts` ×3). Total suite now **39 passing, 0 skipped**, tsc clean. Verified end-to-end with curl against the live dev server.
 **Next:** Task 1.5 — multi-tenant request resolution middleware (Host header → site_id, with subdomain fallback).
