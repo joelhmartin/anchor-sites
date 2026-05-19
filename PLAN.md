@@ -29,7 +29,7 @@ The existing template's auth, blog, and events flows must **keep working at ever
 
 ## Phase checklist
 
-- [x] **Phase 1 — Block schema + renderer + first live multi-tenant site** *(see `PHASE-01-foundation.md`. Tasks 1.0–1.7 + 1.9–1.10 done locally. Task 1.8 production deploy gated by B-001 — operator GCP access needed.)*
+- [x] **Phase 1 — Block schema + renderer + first live multi-tenant site** *(see `PHASE-01-foundation.md`. All tasks 1.0–1.10 complete. Two production URLs live: `https://muldoon.sites.anchorcorps.com/` + `https://demo.sites.anchorcorps.com/`, both serving SSR'd block JSON over HTTPS via Cloud Run in `anchor-hub-480305`.)*
 - [ ] Phase 2 — Global component library (`@anchorcorps/components` v0.1) *(see D-018: shadcn/ui + Radix primitives + Embla Carousel under opinionated `ac-` prefixed blocks)*
 - [ ] Phase 3 — Multi-tenant renderer (host resolution, brand tokens, media) *(see D-022: GCS + Cloud CDN + pre-generated variants via sharp + pg-boss; signed-URL direct uploads)*
 - [ ] Phase 4 — Admin UI shell (sites list, new-site wizard skeleton)

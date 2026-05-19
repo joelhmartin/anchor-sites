@@ -213,11 +213,11 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 
 - [x] Add `Dockerfile` (or update existing) for the renderer *(multi-stage, prod-only npm ci in the run stage, `PORT=8080` for Cloud Run; `tsx` moved to `dependencies`)*
 - [x] Add `cloudbuild.yaml` or update existing CI to deploy to Cloud Run on main branch push *(authored; trigger creation is in `docs/deploy.md` step 6)*
-- [x] Configure Cloud Run service to allow unauthenticated requests on rendering routes *(deployed 2026-05-19 — `anchor-sites` revision `anchor-sites-00002-nb9` in `anchor-hub-480305` / us-central1, image `:2fd737c`)*
-- [ ] Map wildcard domain `*.preview.anchorcorps.dev` to the Cloud Run service *(blocked on B-002 — Search Console domain verification)*
-  - [ ] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites *(will run after verification — single command, fallback handled in code path)*
-- [ ] Verify SSL provisions *(Cloud Run auto-provisions on domain mapping creation)*
-- [ ] Confirm both seed sites resolve in production *(needs B-002)*
+- [x] Configure Cloud Run service to allow unauthenticated requests on rendering routes *(deployed 2026-05-19 — `anchor-sites` revision `anchor-sites-00003-c4l` in `anchor-hub-480305` / us-central1, image `:588beca`)*
+- [x] Map wildcard domain `*.sites.anchorcorps.com` to the Cloud Run service *(D-025 — switched from anchorcorps.dev; wildcard mapping not supported by `gcloud beta run domain-mappings`, fallback to per-subdomain mappings — see next item)*
+  - [x] If wildcard mapping is not available in your GCP region, log to `BLOCKERS.md` and fall back to manual per-subdomain mapping for the two seed sites *(B-002 documented the fallback; both per-subdomain mappings created — `muldoon.sites.anchorcorps.com` + `demo.sites.anchorcorps.com` both → ghs.googlehosted.com)*
+- [x] Verify SSL provisions *(Google Trust Services WR3 certs valid through 2026-08-17, served correctly via SNI)*
+- [x] Confirm both seed sites resolve in production *(both return 200 with seeded content, distinct brand tokens — verified via curl 2026-05-19 13:38 UTC)*
 - [x] Document deploy process in `docs/deploy.md` *(full step-by-step from API enablement through wildcard domain mapping + rollback)*
 - [x] Remove `vercel.json` (D-010) *(no longer present)*
 
@@ -225,9 +225,9 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - [ ] CI deploys successfully on push to main
 - [ ] Production URLs serve the same content as local
 
-**Demo milestone:** Real production URLs working. **Email trigger:** Deferred — Resend wires in Task 1.9. Surfaces in chat when production URLs are confirmed.
+**Demo milestone:** ✅ Two production URLs live with seeded multi-tenant content — `https://muldoon.sites.anchorcorps.com/` and `https://demo.sites.anchorcorps.com/`. **Email trigger:** Surfaced in chat per user's standing instruction; demo-milestone id `phase1-dns-live` recorded in `STATE.json.demo_milestones_sent`.
 
-**Blocker:** B-001 — Phase 1 production deploy needs human GCP access. See `BLOCKERS.md`.
+**Blocker:** B-001 + B-002 both resolved. See `BLOCKERS.md`.
 
 ---
 
@@ -311,6 +311,21 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-19 13:38 UTC — Task 1.8 closed (production URLs live with SSL)
+**Commit:** 988b12e (preceded by c35bb8d, 294267b)
+**Done:** Both production URLs serve seeded block-rendered content over HTTPS. The pipeline that started with `pages.blocks` JSONB in Postgres ends at the public internet, with per-site brand tokens preserved end-to-end and a Google-issued certificate per hostname.
+- **`https://muldoon.sites.anchorcorps.com/`** → 200, "Modern dental care, gentle hands." hero, `--theme-main: #0a3d62`, `data-site-slug="muldoon-dental"`.
+- **`https://demo.sites.anchorcorps.com/`** → 200, "Same renderer. Different site." hero, `--theme-main: #1f1f1f`, `data-site-slug="demo-site"`.
+- Cert: `CN=muldoon.sites.anchorcorps.com`, issuer `Google Trust Services WR3`, `notAfter=Aug 17 2026 13:10:20 GMT`. Same for demo.
+- DNS records were added via Kinsta's `/v2/domains/{id}/dns-records` endpoint (discovered after exhaustive 404s under `/dns/*` and `/zones/*` — see resolution notes in `BLOCKERS.md#B-002`). Initial POST with relative name `muldoon.sites` returned `RRSet not permitted in zone`; FQDN name `muldoon.sites.anchorcorps.com` succeeded.
+- `.routine/TASK-1.8-APPROVED` dropped at 13:38 UTC.
+**Tests added:** 0. Local suite still 81/81. Production smoke (above) is the test for this step.
+**Next:** With Task 1.8 closed, Phase 1 is **complete on the routine side AND in production**. Phase 2 waits on `.routine/NEXT-PHASE-APPROVED`. Per PLAN.md hard rule #1, the routine will not start expanding Phase 2 until that file lands.
+**Notes:**
+- Wildcard mapping (`*.sites.anchorcorps.com` as a single Cloud Run domain mapping) is not supported by `gcloud beta run domain-mappings` — that requires a Load Balancer + Serverless NEG. Per-subdomain mappings handle the Phase 1 two-site need; Phase 10 (domain provisioning at scale) will re-evaluate the Load Balancer setup when client-owned domains arrive.
+- Kinsta DNS API quirk worth remembering: `name` field expects FQDN, not relative label. The error message ("RRSet not permitted in zone") is misleading; the actual cause is that Kinsta treats `muldoon.sites` as a fully-qualified name (`muldoon.sites.`) rather than relative to the zone.
+- Cert provisioning took ~22 minutes end-to-end on first request (DNS → Cloud Run → Google Trust Services WR3 issuance → propagation to Google's edge). Subsequent custom domains in Phase 10 should be faster since the validation path is already warm.
 
 ### 2026-05-19 05:14 UTC — Task 1.8 (Cloud Run service deployed; domain mapping pending B-002)
 **Commit:** 2fd737c

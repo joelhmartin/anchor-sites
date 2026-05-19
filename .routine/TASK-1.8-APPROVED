@@ -1,0 +1,9 @@
+Phase 1, Task 1.8 — Cloud Run deploy approved and verified live.
+
+Both production URLs return 200 with seeded block-rendered content:
+- https://muldoon.sites.anchorcorps.com/  (brand --theme-main: #0a3d62)
+- https://demo.sites.anchorcorps.com/     (brand --theme-main: #1f1f1f)
+
+Cert issued by Google Trust Services (WR3), valid through 2026-08-17.
+
+Resolved 2026-05-19 ~13:38 UTC.
