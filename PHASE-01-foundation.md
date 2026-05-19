@@ -318,7 +318,7 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
 
 ### 2026-05-18 23:30 UTC — Task 1.8 (Cloud Run artifacts; deploy blocked on B-001)
-**Commit:** <pending>
+**Commit:** 53bc8a5
 **Done:** All repo-side artifacts for the Cloud Run deploy. `Dockerfile` rewritten — multi-stage, runtime stage uses `npm ci --omit=dev`, `PORT=8080` (Cloud Run default), `tsx` moved from `devDependencies` to `dependencies` so `npm start` resolves inside the prod image. `cloudbuild.yaml` defines build → push → migrate job → `gcloud run deploy` with `--allow-unauthenticated`, Cloud SQL socket attachment, and `--set-secrets` for `DATABASE_URL` / `ADMIN_API_TOKEN` / `RESEND_API_KEY`. `vercel.json` deleted (D-010). `docs/deploy.md` walks the human operator from API enablement through Cloud SQL provisioning, Secret Manager, the migration + seed Cloud Run Jobs, the Cloud Build trigger, and wildcard domain mapping (with per-subdomain fallback documented).
 **Tests added:** 0 — no new code paths to test on the routine side. The "CI deploys on push to main" + "Production URLs serve same content as local" tests are post-deploy checks that fire after B-001 resolves.
 **Next:** Raise B-001 (done), then proceed to Task 1.9 (Resend wiring + email templates) and Task 1.10 (docs pass) — neither needs production access. Task 1.8 reopens once `.routine/TASK-1.8-APPROVED` lands.
