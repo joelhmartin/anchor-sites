@@ -3,6 +3,11 @@ dist
 .git
 .env
 .env.local
-.routine
 files
 *.log
+
+# Keep the email templates in the image so src/server/email/send.ts can read
+# them at runtime; exclude the rest of .routine (state files, logs, prompts).
+.routine/*
+!.routine/templates
+!.routine/templates/**
