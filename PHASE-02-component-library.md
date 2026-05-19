@@ -113,7 +113,7 @@ Every box above checked, AND:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 13:25 UTC — Task 2.10 (Phase 2 docs + plan tick) — PHASE COMPLETE
-**Commit:** (pending — same commit as this log entry)
+**Commit:** d404ea5
 **Done:**
 - **`DECISIONS.md`** — appended **D-026** (monorepo via npm workspaces in this repo), **D-027** (tsup as the package build pipeline), **D-028** (prebuilt CSS bundle; consumers don't install Tailwind). Each entry covers context / decision / rationale / alternatives considered / how-to-apply, with explicit Phase-2 task back-references and the decision points that emerged during execution (build-order bug → fixed in 2.3; Tailwind CLI ignoring `postcss.config.js` → fixed in 2.5 by inlining keyframes; npm ignoring workspace `.npmrc` → fixed in 2.7 with `NPM_CONFIG_USERCONFIG`).
 - **`docs/components-consumption.md`** — new doc. Covers block registration pattern (renderer iterates `blockManifest` + calls own `registerBlock`), CSS inline-via-SSR mechanism, brand-token wiring, the Docker workspace-aware deploy, and when to break the workspace pattern (= when a second consumer exists outside this repo).
