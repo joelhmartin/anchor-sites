@@ -59,6 +59,23 @@ export type ProvisionOptions = {
 };
 
 /**
+ * Look up a site_id from a slug. Throws if no match.
+ */
+export async function siteIdFromSlug(
+  slug: string,
+  pool: Pool = defaultPool,
+): Promise<string> {
+  const r = await pool.query<{ id: string }>(
+    `SELECT id FROM sites WHERE slug = $1`,
+    [slug],
+  );
+  if (r.rowCount === 0) {
+    throw new Error(`no site with slug ${JSON.stringify(slug)}`);
+  }
+  return r.rows[0].id;
+}
+
+/**
  * Provision a tenant hostname for an existing site (by id).
  *
  * The site must already exist in the `sites` table. Use this for both

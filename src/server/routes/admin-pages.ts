@@ -5,7 +5,7 @@ import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { getBlock } from "../../blocks/registry.js";
-import { provisionSiteHostname } from "../provisioning/orchestrator.js";
+import { provisionSiteHostname, siteIdFromSlug } from "../provisioning/orchestrator.js";
 // Side-effect: register the three static block types so saves validate.
 import "../../blocks/index.js";
 
@@ -253,24 +253,31 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
 
   // -------------------------------------------------------------------------
   // POST /api/sites/:siteId/provision — add Kinsta CNAME + Cloud Run mapping
+  // POST /api/sites/provision         — same, but take slug in body
   // -------------------------------------------------------------------------
   // Long-running (cert wait can take 20+ min) → not behind the save limiter.
   // Caller controls `wait` via the body.
-  router.post(
-    "/sites/:siteId/provision",
-    admin,
-    async (req: Request, res: Response, next: NextFunction) => {
-      const { siteId } = req.params;
-      const wait = Boolean((req.body ?? {}).wait);
-      try {
-        const result = await provisionSiteHostname(siteId, { pool, wait });
-        const httpStatus = result.steps.some((s) => s.status === "error") ? 500 : 200;
-        res.status(httpStatus).json(result);
-      } catch (err) {
-        next(err);
+  const provisionHandler = async (req: Request, res: Response, next: NextFunction) => {
+    const body = (req.body ?? {}) as { slug?: string; wait?: boolean };
+    const wait = Boolean(body.wait);
+    try {
+      let siteId = req.params.siteId;
+      if (!siteId) {
+        if (!body.slug) {
+          res.status(400).json({ error: "must supply siteId in path or slug in body" });
+          return;
+        }
+        siteId = await siteIdFromSlug(body.slug, pool);
       }
-    },
-  );
+      const result = await provisionSiteHostname(siteId, { pool, wait });
+      const httpStatus = result.steps.some((s) => s.status === "error") ? 500 : 200;
+      res.status(httpStatus).json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+  router.post("/sites/:siteId/provision", admin, provisionHandler);
+  router.post("/sites/provision", admin, provisionHandler);
 
   return router;
 }
