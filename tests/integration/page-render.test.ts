@@ -54,7 +54,7 @@ d("page renderer catch-all (integration)", () => {
   });
 
   it("muldoon home renders with seeded hero text + SEO meta", async () => {
-    const res = await request(app).get("/").set("Host", "muldoon.sites.anchorcorps.com");
+    const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
     expect(res.text).toContain("Modern dental care, gentle hands.");
@@ -73,7 +73,7 @@ d("page renderer catch-all (integration)", () => {
   });
 
   it("demo home renders different content + different brand tokens", async () => {
-    const res = await request(app).get("/").set("Host", "demo.sites.anchorcorps.com");
+    const res = await request(app).get("/").set("Host", "demo-site.sites.anchorcorps.com");
     expect(res.status).toBe(200);
     expect(res.text).toContain("Same renderer. Different site.");
     expect(res.text).not.toContain("Modern dental care, gentle hands.");
@@ -84,7 +84,7 @@ d("page renderer catch-all (integration)", () => {
   it("returns 404 (site-shelled) for an unknown slug on a known site", async () => {
     const res = await request(app)
       .get("/this-page-does-not-exist")
-      .set("Host", "muldoon.sites.anchorcorps.com");
+      .set("Host", "muldoon-dental.sites.anchorcorps.com");
     expect(res.status).toBe(404);
     expect(res.text).toMatch(/Page not found/);
     // 404 still wears the site's brand
@@ -98,8 +98,8 @@ d("page renderer catch-all (integration)", () => {
   });
 
   it("brand tokens differ between the two sites' rendered CSS", async () => {
-    const m = await request(app).get("/").set("Host", "muldoon.sites.anchorcorps.com");
-    const d = await request(app).get("/").set("Host", "demo.sites.anchorcorps.com");
+    const m = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+    const d = await request(app).get("/").set("Host", "demo-site.sites.anchorcorps.com");
     const mTokens = m.text.match(/--theme-main:\s*([^;]+);/)?.[1].trim();
     const dTokens = d.text.match(/--theme-main:\s*([^;]+);/)?.[1].trim();
     expect(mTokens).toBe("#0a3d62");
@@ -113,7 +113,7 @@ d("page renderer catch-all (integration)", () => {
       `UPDATE pages SET status = 'draft' WHERE site_id = (SELECT id FROM sites WHERE slug='muldoon-dental') AND slug = 'home'`,
     );
     try {
-      const res = await request(app).get("/").set("Host", "muldoon.sites.anchorcorps.com");
+      const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
       expect(res.status).toBe(404);
     } finally {
       await pool.query(

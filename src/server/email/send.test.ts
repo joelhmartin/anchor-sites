@@ -134,7 +134,7 @@ describe("sendEmail modes", () => {
       template: "demo-milestone",
       vars: {
         demo_title: "First sites live",
-        demo_action: "Visit muldoon.sites.anchorcorps.com",
+        demo_action: "Visit muldoon-dental.sites.anchorcorps.com",
         demo_changes: "- multi-tenant rendering",
         demo_limitations: "- editor not built yet",
         next_milestone: "save endpoint",
@@ -162,7 +162,7 @@ describe("sendEmail modes", () => {
     expect(body.get("to")).toBe("jmartin@anchorcorps.com");
     expect(body.get("subject")).toBe("[Builder] Demo ready: First sites live");
     expect(body.get("from")).toContain("builder@mg.anchorcorps.com");
-    expect(body.get("text")).toContain("Visit muldoon.sites.anchorcorps.com");
+    expect(body.get("text")).toContain("Visit muldoon-dental.sites.anchorcorps.com");
   });
 
   it("api mode: missing MAILGUN_DOMAIN → ok:false (no HTTP call)", async () => {

@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../src/server/db.js";
+import { getDomainConfig, hostnameForSlug } from "../src/config/domain.js";
 
 type PageSeed = {
   slug: string;
@@ -13,7 +14,13 @@ type SiteSeed = {
   slug: string;
   display_name: string;
   default_brand_tokens: Record<string, unknown>;
-  domains: string[];
+  /**
+   * Extra hostnames to register beyond the canonical `<slug>.<SITES_DOMAIN_BASE>`.
+   * Use for local-dev hostnames (e.g. `<slug>.localhost`) or for legacy
+   * aliases. The canonical hostname is derived from the slug + domain config
+   * and inserted alongside these.
+   */
+  extra_domains: string[];
   pages: PageSeed[];
 };
 
@@ -25,7 +32,7 @@ const SITES: SiteSeed[] = [
       "--theme-main": "#0a3d62",
       "--theme-accent": "#f6b93b",
     },
-    domains: ["muldoon.sites.anchorcorps.com", "muldoon.localhost"],
+    extra_domains: ["muldoon-dental.localhost", "muldoon.localhost"],
     pages: [
       {
         slug: "home",
@@ -80,7 +87,7 @@ const SITES: SiteSeed[] = [
       "--theme-main": "#1f1f1f",
       "--theme-accent": "#22c55e",
     },
-    domains: ["demo.sites.anchorcorps.com", "demo.localhost"],
+    extra_domains: ["demo-site.localhost", "demo.localhost"],
     pages: [
       {
         slug: "home",
@@ -137,15 +144,28 @@ export async function seed(
   try {
     await client.query("BEGIN");
 
-    // Sweep legacy hostnames from earlier seeds (we switched preview.anchorcorps.dev
-    // → sites.anchorcorps.com per D-025). Idempotent — no-op once the rows are gone.
+    // Sweep legacy hostnames from earlier seed schemes. Idempotent — no-op
+    // once the rows are gone.
+    //   - `%anchorcorps.dev`         → D-025 (switched the TLD entirely)
+    //   - `muldoon.sites.*`, `demo.sites.*` → D-026 (short-prefix slugs
+    //     replaced by full-slug hostnames). We can't generically detect this
+    //     class without a column flag, but the two known legacy rows are
+    //     listed by exact match so the cleanup is safe + targeted.
     await client.query(
       `DELETE FROM site_domains WHERE hostname LIKE '%anchorcorps.dev'`,
     );
+    await client.query(
+      `DELETE FROM site_domains WHERE hostname IN ('muldoon.sites.anchorcorps.com','demo.sites.anchorcorps.com')`,
+    );
 
+    const cfg = getDomainConfig();
     let pageCount = 0;
     let domainCount = 0;
     for (const site of SITES) {
+      // Canonical hostname derived from slug + SITES_DOMAIN_BASE.
+      // Extras (localhost variants, legacy aliases) follow.
+      const canonical = hostnameForSlug(site.slug, cfg);
+      const allDomains = [canonical, ...site.extra_domains];
       const siteRes = await client.query<{ id: string }>(
         `INSERT INTO sites (slug, display_name, default_brand_tokens)
          VALUES ($1, $2, $3::jsonb)
@@ -182,8 +202,8 @@ export async function seed(
         pageCount++;
       }
 
-      for (let i = 0; i < site.domains.length; i++) {
-        const hostname = site.domains[i];
+      for (let i = 0; i < allDomains.length; i++) {
+        const hostname = allDomains[i];
         const isPrimary = i === 0;
         await client.query(
           `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)

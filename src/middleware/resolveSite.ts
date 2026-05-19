@@ -1,6 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../server/db.js";
+import { subdomainPattern } from "../config/domain.js";
 
 // Reserved per D-016 — Phase 7.5 will populate this from `site_plugins`. Empty
 // array in Phase 1 so downstream consumers can already iterate without retrofit.
@@ -34,12 +35,14 @@ export function __clearResolveSiteCacheForTests(): void {
   cache.clear();
 }
 
-// Subdomain fallback for sites that don't have an explicit site_domains row
-// yet. `muldoon.sites.anchorcorps.com` → whichever site has `slug = 'muldoon'`.
-// The regex is intentionally scoped to `*.sites.anchorcorps.com` so non-sites
-// subdomains under anchorcorps.com (mail, www, etc.) are never mis-routed —
-// Phase 10 client-owned domains go through explicit `site_domains` rows.
-const SUBDOMAIN_RE = /^([a-z0-9][a-z0-9-]*)\.sites\.anchorcorps\.com$/i;
+// Subdomain fallback for sites that don't have an explicit site_domains row.
+// Pattern comes from the centralized domain config so the parent domain
+// (`sites.anchorcorps.com` by default) can be swapped via the
+// `SITES_DOMAIN_BASE` env var. Computed lazily so tests that mutate
+// `process.env` pick up the change without re-importing the module.
+function currentSubdomainPattern(): RegExp {
+  return subdomainPattern();
+}
 
 function stripPort(host: string): string {
   const portIdx = host.indexOf(":");
@@ -66,7 +69,7 @@ async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | 
     return toResolvedSite(domainRes.rows[0], "domain");
   }
 
-  const match = SUBDOMAIN_RE.exec(hostname);
+  const match = currentSubdomainPattern().exec(hostname);
   if (match) {
     const slug = match[1].toLowerCase();
     const slugRes = await pool.query<SiteRow>(

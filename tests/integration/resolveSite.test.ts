@@ -52,7 +52,7 @@ d("resolveSite middleware (integration)", () => {
   it("resolves muldoon via explicit site_domains row", async () => {
     const res = await request(buildApp(pool))
       .get("/whoami")
-      .set("Host", "muldoon.sites.anchorcorps.com");
+      .set("Host", "muldoon-dental.sites.anchorcorps.com");
     expect(res.status).toBe(200);
     expect(res.body.site.slug).toBe("muldoon-dental");
     expect(res.body.site.matched_via).toBe("domain");
@@ -63,7 +63,7 @@ d("resolveSite middleware (integration)", () => {
   it("resolves demo via explicit site_domains row", async () => {
     const res = await request(buildApp(pool))
       .get("/whoami")
-      .set("Host", "demo.sites.anchorcorps.com");
+      .set("Host", "demo-site.sites.anchorcorps.com");
     expect(res.status).toBe(200);
     expect(res.body.site.slug).toBe("demo-site");
     expect(res.body.site.matched_via).toBe("domain");
@@ -86,7 +86,7 @@ d("resolveSite middleware (integration)", () => {
   it("strips the port from the Host header before lookup", async () => {
     const res = await request(buildApp(pool))
       .get("/whoami")
-      .set("Host", "muldoon.sites.anchorcorps.com:8080");
+      .set("Host", "muldoon-dental.sites.anchorcorps.com:8080");
     expect(res.status).toBe(200);
     expect(res.body.site.slug).toBe("muldoon-dental");
   });
@@ -125,13 +125,13 @@ d("resolveSite middleware (integration)", () => {
 
     const r1 = await request(app)
       .get("/whoami")
-      .set("Host", "muldoon.sites.anchorcorps.com");
+      .set("Host", "muldoon-dental.sites.anchorcorps.com");
     expect(r1.status).toBe(200);
     expect(queryCount).toBe(1);
 
     const r2 = await request(app)
       .get("/whoami")
-      .set("Host", "muldoon.sites.anchorcorps.com");
+      .set("Host", "muldoon-dental.sites.anchorcorps.com");
     expect(r2.status).toBe(200);
     expect(queryCount).toBe(1); // cache hit, no new query
   });
