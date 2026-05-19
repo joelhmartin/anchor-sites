@@ -11,7 +11,8 @@
     "lint": "echo 'lint placeholder'",
     "typecheck": "tsc --noEmit",
     "migrate:up": "node-pg-migrate -m db/migrations up",
-    "migrate:down": "node-pg-migrate -m db/migrations down"
+    "migrate:down": "node-pg-migrate -m db/migrations down",
+    "db:seed": "tsx db/seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

@@ -58,23 +58,26 @@
 
 ## Task 1.2 — Postgres schema for sites, pages, revisions
 
-- [ ] Create migration `add_sites_pages_revisions.sql` with:
-  - [ ] `sites` table (id UUID PK, slug TEXT UNIQUE, display_name, status, default_brand_tokens JSONB, created_at)
-  - [ ] `site_domains` table (id, site_id FK, hostname UNIQUE, is_primary, verification_status, ssl_status, created_at) — *populated by Phase 10, schema now*
-  - [ ] `pages` table (id UUID PK, site_id FK, slug, title, blocks JSONB DEFAULT `'[]'`, seo JSONB DEFAULT `'{}'`, status TEXT DEFAULT 'draft', published_at, updated_at, UNIQUE(site_id, slug))
-  - [ ] `page_revisions` table (id UUID PK, page_id FK ON DELETE CASCADE, blocks JSONB, seo JSONB, author_id, source TEXT, created_at)
-  - [ ] Index on `pages(site_id, slug)` and `pages(site_id, status)`
-  - [ ] GIN index on `pages.blocks` for future structural queries
-- [ ] Apply migration in dev
-- [ ] Write rollback migration
-- [ ] Seed two sites: `muldoon-dental` and `demo-site` with placeholder display names
-- [ ] Seed one home page per site with an empty `blocks: []` for now
-- [ ] Document the schema in `docs/data-model.md`
-- [ ] Append to `DECISIONS.md`: "Page storage is JSONB blocks array, not normalized block rows. Rationale: ..."
+- [x] Create migration `db/migrations/1747571000000_sites_pages_revisions.cjs` with:
+  - [x] `sites` table (id UUID PK, slug TEXT UNIQUE, display_name, status, default_brand_tokens JSONB, created_at)
+  - [x] `site_domains` table (id, site_id FK, hostname UNIQUE, is_primary, verification_status, ssl_status, created_at) — *populated by Phase 10, schema now*
+  - [x] `pages` table (id UUID PK, site_id FK, slug, title, blocks JSONB DEFAULT `'[]'`, seo JSONB DEFAULT `'{}'`, status TEXT DEFAULT 'draft', published_at, created_at, updated_at, UNIQUE(site_id, slug))
+  - [x] `page_revisions` table (id UUID PK, page_id FK ON DELETE CASCADE, blocks JSONB, seo JSONB, author_id, source TEXT, created_at)
+  - [x] Index on `pages(site_id, slug)` *(via UNIQUE constraint)* and `pages(site_id, status)`
+  - [x] GIN index on `pages.blocks` for future structural queries
+  - [x] Shared `touch_updated_at()` trigger function + `pages_touch_updated_at` trigger
+  - [x] CHECK constraints on `sites.status`, `site_domains.verification_status`, `site_domains.ssl_status`, `pages.status`
+- [x] Apply migration in dev
+- [x] Write rollback migration *(in same file — `exports.down`)*
+- [x] Seed two sites: `muldoon-dental` and `demo-site` with placeholder display names
+- [x] Seed one home page per site with an empty `blocks: []` for now
+- [x] Document the schema in `docs/data-model.md`
+- [x] *(Decision already captured: D-001 in DECISIONS.md covers "JSONB blocks array, not normalized block rows" — no duplicate append needed)*
 
 **Tests:**
-- [ ] Migration runs cleanly forward and backward
-- [ ] Seed script is idempotent (re-running doesn't duplicate)
+- [x] Migration runs cleanly forward and backward *(tests/integration/schema.test.ts — `migrate down then up` test)*
+- [x] Seed script is idempotent (re-running doesn't duplicate) *(tests/integration/seed.test.ts)*
+- [x] Bonus: cascade delete from `pages` removes `page_revisions`; `updated_at` trigger fires; CHECK constraints reject bad statuses
 
 ---
 
@@ -278,6 +281,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - Vite's `/api → :3000` proxy was removed; Vite no longer runs standalone.
 - Existing client (`src/App.jsx` and the rest) was not touched. `npm run dev` now runs Express on `:3000` which serves the SPA via Vite middleware — same SPA, different parent process.
 - 10 npm-audit vulnerabilities reported on install (6 moderate, 4 high). Mostly transitive; raising a low-priority blocker would be premature this early. Will reassess after Task 1.2.
+
+### 2026-05-18 22:41 UTC — Task 1.2 (Postgres schema for sites, pages, revisions)
+**Commit:** *(filled below)*
+**Done:** Schema migration creates four core tables (`sites`, `site_domains`, `pages`, `page_revisions`) with proper FKs/cascades, CHECK constraints on status fields, GIN index on `pages.blocks` for future structural queries, UNIQUE(site_id, slug) on pages, and a shared `touch_updated_at()` trigger function. Wrote idempotent `db/seed.ts` (UPSERT pattern) seeding `muldoon-dental` and `demo-site` with home pages. Documented schema in `docs/data-model.md`. Refactored seed into an exported `seed(pool)` function so it's callable from tests.
+**Tests added:** 8 (`tests/integration/schema.test.ts` ×6, `tests/integration/seed.test.ts` ×2). Total suite now **13 passing, 0 skipped**. Tests gated on `TEST_DATABASE_URL` so they auto-skip when no DB env is provided.
+**Next:** Task 1.3 — block registry pattern with `registerBlock()` runtime API (per D-016), three block types (Hero, RichText, CTA), Zod schemas.
+**Notes:**
+- Docker port collision: host already had Postgres on `:5432` and a stray `anchor_db` container on `:5433`. Settled on `:5434` for our `anchor-sites-postgres-1` container. `docker-compose.yml` and `.env.example` updated.
+- Test isolation: created `anchor_test` database in the same container; `TEST_DATABASE_URL` points there. Schema test migrates fully down then up — destructive to that DB only. Vitest pinned to `pool: "forks"`, `singleFork: true` so the schema test finishes before the seed test runs.
+- `author_id` in `page_revisions` is intentionally nullable `uuid` with no FK yet — Phase 8 (Better-auth, D-020) will add the FK to `auth_users` without a type change.
+- `site_plugins` table NOT created here; deferred to Phase 7.5 per D-016. Phase 1 middleware will return `req.site.plugins = []` as a literal until then.
 
 ### 2026-05-18 21:32 UTC — Task 1.1 (Pre-flight baseline)
 **Commit:** 3a9fd8c
