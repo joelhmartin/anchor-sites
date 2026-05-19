@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 17:20 UTC — Task 3.14 (renderer block-data hydration for images) — DEMO MILESTONE
-**Commit:** (pending — same commit as this log entry)
+**Commit:** beae9f2
 **Done:** Media references in `pages.blocks` are now hydrated into `MediaContext` at SSR time. End-to-end demo works: a `media_assets` row with `variants_status='ready'` referenced from an `image` block produces `<picture>` with WebP source + JPG fallback + width/height + alt in the SSR'd HTML.
 - **`src/server/render-hydration.ts`** — `collectAssetIds(blocks)` recursively walks blocks to pull every `props.asset_id` (Image block) + `props.slides[*].image_asset_id` (Hero Slider) + descendants via `block.children`. Returns deduped ids. `loadAssetsForBlocks(pool, siteId, blocks)` queries `media_assets` once (`SELECT … WHERE site_id = $1 AND id = ANY($2::uuid[]) AND variants_status = 'ready'`), filters out unready rows, projects to `MediaAssetData`.
 - **`src/server/render-page.tsx`** — `renderPage` now takes `{ assets: MediaAssetData[] }`. Wraps `<BlockRenderer>` in `<MediaProvider assets={...}>` (imported from `@anchorcorps/components`).
