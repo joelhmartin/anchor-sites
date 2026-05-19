@@ -121,6 +121,41 @@ d("schema migrations (integration)", () => {
     await pool.query(`DELETE FROM sites WHERE slug = 'check-test'`);
   });
 
+  it("pages.brand_tokens_override is a nullable jsonb (P3-T3.4)", async () => {
+    const res = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+      `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'brand_tokens_override'`,
+    );
+    expect(res.rowCount).toBe(1);
+    expect(res.rows[0].data_type).toBe("jsonb");
+    expect(res.rows[0].is_nullable).toBe("YES");
+
+    // Functional: a NULL row inserts fine, and a JSONB override is queryable.
+    const site = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ('bto-test', 'BTO Test') RETURNING id`,
+    );
+    const siteId = site.rows[0].id;
+    try {
+      const ins = await pool.query<{ id: string; bto: unknown }>(
+        `INSERT INTO pages (site_id, slug, title, blocks, seo, brand_tokens_override)
+         VALUES ($1, 'home', 'Home', '[]'::jsonb, '{}'::jsonb, $2::jsonb)
+         RETURNING id, brand_tokens_override AS bto`,
+        [siteId, JSON.stringify({ "--theme-main": "#ff0000" })],
+      );
+      expect(ins.rows[0].bto).toEqual({ "--theme-main": "#ff0000" });
+
+      const nullIns = await pool.query(
+        `INSERT INTO pages (site_id, slug, title, blocks, seo) VALUES ($1, 'other', 'Other', '[]'::jsonb, '{}'::jsonb)
+         RETURNING brand_tokens_override`,
+        [siteId],
+      );
+      expect(nullIns.rows[0].brand_tokens_override).toBeNull();
+    } finally {
+      await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]);
+    }
+  });
+
   it("migrate down then up returns to clean schema", async () => {
     await runMigrate("down", Infinity);
     const empty = await pool.query(

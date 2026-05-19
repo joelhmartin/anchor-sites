@@ -37,7 +37,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - Append decision **D-029** to `DECISIONS.md`.
   - **Tests:** valid token map parses; bad key rejected; bad value rejected.
 
-- [ ] **3.4 — Migration: `pages.brand_tokens_override JSONB`**
+- [x] **3.4 — Migration: `pages.brand_tokens_override JSONB`**
   - `db/migrations/<ts>_pages_brand_tokens_override.cjs` adds a nullable JSONB column. Updates `db/seed.ts` if needed (no — leave existing seed data null).
   - **Tests:** schema test confirms the column exists + is nullable; up + down works.
 
@@ -117,8 +117,18 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 13:55 UTC — Task 3.3 (brand-token Zod schema)
+### 2026-05-19 14:00 UTC — Task 3.4 (`pages.brand_tokens_override` migration)
 **Commit:** (pending — same commit as this log entry)
+**Done:** `db/migrations/1747572000000_pages_brand_tokens_override.cjs` adds a nullable `jsonb` column to `pages`. NULL means "use site default unchanged" — this is the common case, so making it nullable avoids backfilling every existing page row with `{}`. Migration applied to dev DB and verified.
+**Tests added:** 1 schema test in `tests/integration/schema.test.ts` covering: column exists with type `jsonb` + nullable, INSERT with a JSONB override round-trips correctly, INSERT without it leaves NULL.
+**Next:** 3.5 — wire `mergeBrandTokens` into `render-page.tsx`.
+**Notes:**
+- Migration is straightforward `addColumn`/`dropColumn`; down works cleanly (verified by the existing "migrate down then up" full-reset test, which now sees 5 migrations apply in sequence).
+- The `admin-pages` save endpoint doesn't yet accept `brand_tokens_override` in the payload — that wires in 3.5 alongside the renderer merge so the read + write surfaces land together.
+- Root suite: 7 schema tests passing; full root suite still green. Will run the workspace suite at end of 3.5.
+
+### 2026-05-19 13:55 UTC — Task 3.3 (brand-token Zod schema)
+**Commit:** ac4fadd
 **Done:** `src/blocks/brand-tokens.ts` exports `brandTokensSchema` (Zod) + `mergeBrandTokens(siteDefault, pageOverride)`. Schema enforces key shape `^--theme-<kebab>$` and value shape: 3/4/6/8-digit hex, `rgb()/rgba()`, `hsl()/hsla()`, `var(--…)` refs, basic named colors. `mergeBrandTokens` does per-key merge with page-wins precedence (no re-validation — inputs are expected to be pre-validated at save time). Appended **D-029** to `DECISIONS.md` covering scope, rationale, alternatives, and how to apply.
 **Tests added:** 16 (`src/blocks/brand-tokens.test.ts`) — 11 schema cases (accepts: empty, the Phase 1 muldoon/demo shapes, rgb/hsl, var refs, named colors; rejects: non-`--theme-` keys, uppercase keys, malformed values, JS-like values, hex with wrong digit counts; reports offending key in path) + 5 merge cases (override wins per-key, null-on-either-side, non-string defense, both-null).
 **Save-path wiring deferred to 3.4 + 3.5:** the admin-pages save endpoint doesn't yet accept `brand_tokens_override` (3.4 adds the column; 3.5 wires the merge in the renderer). The schema is exported and ready for both. Future Phase 4 admin UI for the site row will use the same export.
