@@ -4,6 +4,7 @@ import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
+import { pageRouter } from "./routes/page.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
@@ -24,12 +25,16 @@ export function createApp(): Express {
   if (process.env.NODE_ENV !== "production") {
     app.use(blocksPreviewRouter);
 
-    // Tenant resolution probe — confirms Host → site lookup wiring before the
-    // catch-all page renderer lands in Task 1.6.
+    // Tenant resolution probe — useful for debugging Host → site lookups.
     app.get("/__site", resolveSite(), (req: Request, res: Response) => {
       res.json({ site: req.site });
     });
   }
+
+  // Tenant page renderer. Registered last so all named admin/probe routes
+  // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
+  // static-index fallback in prod — both mounted by `src/server/index.ts`).
+  app.use(pageRouter());
 
   return app;
 }
