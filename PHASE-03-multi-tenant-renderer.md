@@ -77,7 +77,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - Publish `0.2.0` to AR.
   - **Tests:** schema parses defaults; component renders `<picture>` with 4 `<source>`s; lazy by default; focal-point CSS emitted when set.
 
-- [ ] **3.13 — Hero-slider per-slide image migration**
+- [x] **3.13 — Hero-slider per-slide image migration**
   - `hero-slider` per-slide schema gains `image_asset_id: string`. Backwards-compat: `image: string` (URL) is accepted for one minor version and rendered as a raw `<img>` (no srcset). A migration helper in the seed lets existing slides keep working without panic. Phase 4 admin UI will surface the upgrade prompt.
   - **Tests:** old `image: string` still renders; new `image_asset_id` produces `<picture>`.
 
@@ -116,6 +116,17 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 17:00 UTC — Task 3.13 (hero-slider `image_asset_id` migration; @anchorcorps/components@0.3.0)
+**Commit:** 00ce262
+**Done:** Hero-slider per-slide schema now accepts **`image_asset_id`** alongside the legacy **`image`** URL string. Component resolves `image_asset_id` via `MediaContext`, picks the widest WebP variant for `background-image`, uses asset.focal_point for `backgroundPosition`. Missing-asset path falls back to the legacy `image` URL so editors can preview while uploads are in flight. Both fields default to empty — old payloads ride through unchanged. Package bumped to **`0.3.0`** and published to AR.
+**Tests added:** 3 in `src/blocks/__tests__/blocks.test.tsx` — legacy URL still renders + overlay, image_asset_id resolves widest WebP + focal point as backgroundPosition, missing asset falls back to legacy.
+**Next:** 3.14 — renderer block-data hydration for images.
+**Notes:**
+- **Background-image vs `<picture>`:** the slide intentionally uses a CSS background (not a `<picture>`) so the gradient overlay sits cleanly on top. Widest WebP is the right pick for hero viewports.
+- **D-027 versioning:** new optional field on an existing schema → minor. 0.2.0 → 0.3.0.
+- **jsdom test gotcha:** `backgroundPosition: "20.00% 80.00%"` is normalized to `"20% 80%"`. Test accepts either form via regex.
+- **Pin policy still `"*"`** — workspace symlink picks up 0.3.0 immediately.
 
 ### 2026-05-19 16:40 UTC — Task 3.12 (`<Image>` block + `@anchorcorps/components@0.2.0`) — DEMO MILESTONE
 **Commit:** c6f9b0b
