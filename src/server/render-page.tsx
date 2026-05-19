@@ -7,6 +7,7 @@ import type { ReactElement } from "react";
 import { BlockRenderer } from "../components/BlockRenderer.js";
 import type { Block } from "../blocks/types.js";
 import type { ResolvedSite } from "../middleware/resolveSite.js";
+import { mergeBrandTokens } from "../blocks/brand-tokens.js";
 
 /**
  * Inline the @anchorcorps/components prebuilt CSS bundle + the inline
@@ -40,6 +41,8 @@ export type PageRecord = {
   title: string;
   blocks: Block[];
   seo: Record<string, unknown>;
+  /** P3-T3.5 — optional per-page override merged on top of site defaults. */
+  brand_tokens_override?: Record<string, unknown> | null;
 };
 
 type SeoFields = { title?: string; description?: string };
@@ -53,9 +56,9 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function brandTokenCss(tokens: Record<string, unknown>): string {
+function brandTokenCss(tokens: Record<string, string>): string {
   return Object.entries(tokens)
-    .map(([k, v]) => `${k}: ${String(v)};`)
+    .map(([k, v]) => `${k}: ${v};`)
     .join(" ");
 }
 
@@ -75,8 +78,11 @@ function shell(opts: {
   bodyHtml: string;
   status: number;
   extraCss?: string;
+  /** P3-T3.5 — per-page override merged on top of site defaults. */
+  pageOverride?: Record<string, unknown> | null;
 }): { html: string; status: number } {
-  const brandStyle = brandTokenCss(opts.site.default_brand_tokens ?? {});
+  const merged = mergeBrandTokens(opts.site.default_brand_tokens, opts.pageOverride);
+  const brandStyle = brandTokenCss(merged);
   const styles = `:root { ${brandStyle} }${SHELL_BASE_CSS}${PACKAGE_BLOCK_CSS}${RICH_TEXT_CSS}${opts.extraCss ?? ""}`;
 
   const html = `<!doctype html>
@@ -121,7 +127,14 @@ export function renderPage(
   const seo = (page.seo ?? {}) as SeoFields;
   const title = seo.title || page.title || site.display_name;
   const bodyHtml = renderShellContent(site, <BlockRenderer blocks={page.blocks ?? []} />);
-  return shell({ site, title, description: seo.description, bodyHtml, status: 200 });
+  return shell({
+    site,
+    title,
+    description: seo.description,
+    bodyHtml,
+    status: 200,
+    pageOverride: page.brand_tokens_override ?? null,
+  });
 }
 
 export function renderNotFound(site: ResolvedSite): { html: string; status: number } {

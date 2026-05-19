@@ -107,6 +107,32 @@ d("page renderer catch-all (integration)", () => {
     expect(mTokens).not.toBe(dTokens);
   });
 
+  it("brand_tokens_override on a page wins per-key over the site default (P3-T3.5)", async () => {
+    await pool.query(
+      `UPDATE pages
+          SET brand_tokens_override = $1::jsonb
+        WHERE site_id = (SELECT id FROM sites WHERE slug='muldoon-dental')
+          AND slug = 'home'`,
+      [JSON.stringify({ "--theme-main": "#ff00aa" })],
+    );
+    try {
+      const r = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(r.status).toBe(200);
+      // Sanity: peek at the :root block of the SSR'd <style> tag.
+      const rootBlock = r.text.match(/:root\s*\{([^}]*)\}/)?.[1] ?? "(:root not found)";
+      // Override wins for --theme-main.
+      expect(rootBlock).toMatch(/--theme-main:\s*#ff00aa\s*;/);
+      // Non-overridden site default still passes through (--theme-accent unchanged).
+      expect(r.text).toMatch(/--theme-accent:\s*#f6b93b\s*;/);
+    } finally {
+      await pool.query(
+        `UPDATE pages SET brand_tokens_override = NULL
+          WHERE site_id = (SELECT id FROM sites WHERE slug='muldoon-dental')
+            AND slug = 'home'`,
+      );
+    }
+  });
+
   it("draft pages are not served", async () => {
     // flip muldoon home to draft, request it, then restore.
     await pool.query(

@@ -149,6 +149,75 @@ d("admin pages API (integration)", () => {
     });
   });
 
+  // ---------- BRAND TOKENS OVERRIDE (P3-T3.5) ----------
+
+  it("accepts a brand_tokens_override and persists it", async () => {
+    const override = { "--theme-main": "#ff00aa", "--theme-accent": "#000" };
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-bto"), brand_tokens_override: override });
+    expect(res.status).toBe(200);
+
+    const row = await pool.query<{ brand_tokens_override: Record<string, string> }>(
+      `SELECT brand_tokens_override FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    expect(row.rows[0].brand_tokens_override).toEqual(override);
+  });
+
+  it("rejects an invalid brand_tokens_override with 400", async () => {
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({
+        blocks: validBlocks("-bad"),
+        brand_tokens_override: { "--brand-main": "#fff" }, // wrong prefix
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid payload/);
+  });
+
+  it("brand_tokens_override: null clears an existing override", async () => {
+    // First, set one.
+    await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-set"), brand_tokens_override: { "--theme-main": "#f00" } });
+    // Then clear it explicitly.
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-clear"), brand_tokens_override: null });
+    expect(res.status).toBe(200);
+
+    const row = await pool.query<{ brand_tokens_override: unknown }>(
+      `SELECT brand_tokens_override FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    expect(row.rows[0].brand_tokens_override).toBeNull();
+  });
+
+  it("omitting brand_tokens_override leaves an existing override unchanged", async () => {
+    const override = { "--theme-main": "#abcdef" };
+    await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-pre"), brand_tokens_override: override });
+
+    // Now save with NO brand_tokens_override in the payload.
+    await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-noop") });
+
+    const row = await pool.query<{ brand_tokens_override: Record<string, string> }>(
+      `SELECT brand_tokens_override FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    expect(row.rows[0].brand_tokens_override).toEqual(override);
+  });
+
   it("rejects unknown block types with 400", async () => {
     const res = await request(app)
       .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)

@@ -6,6 +6,7 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { getBlock } from "../../blocks/registry.js";
 import { provisionSiteHostname, siteIdFromSlug } from "../provisioning/orchestrator.js";
+import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 // Side-effect: register the three static block types so saves validate.
 import "../../blocks/index.js";
 
@@ -20,6 +21,9 @@ const savePayload = z.object({
   blocks: z.array(blockShape),
   seo: z.record(z.unknown()).optional(),
   source: z.string().max(64).optional(),
+  // P3-T3.5: per-page brand-token override. `null` clears any existing
+  // override; omitting the key leaves the column unchanged.
+  brand_tokens_override: brandTokensSchema.nullable().optional(),
 });
 
 type SavePayload = z.infer<typeof savePayload>;
@@ -108,10 +112,29 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        // brand_tokens_override semantics: undefined → leave column,
+        // null → clear column, object → set column. We pass a sentinel to
+        // the SQL CASE so all three branches stay in one round-trip.
+        const btoMode =
+          payload.brand_tokens_override === undefined
+            ? "unchanged"
+            : payload.brand_tokens_override === null
+              ? "clear"
+              : "set";
+        const btoValue =
+          payload.brand_tokens_override && typeof payload.brand_tokens_override === "object"
+            ? JSON.stringify(payload.brand_tokens_override)
+            : null;
+
         const pageRes = await client.query<{ id: string }>(
           `UPDATE pages
               SET blocks = $1::jsonb,
-                  seo = COALESCE($2::jsonb, seo)
+                  seo = COALESCE($2::jsonb, seo),
+                  brand_tokens_override = CASE $5
+                    WHEN 'unchanged' THEN brand_tokens_override
+                    WHEN 'clear'     THEN NULL
+                    WHEN 'set'       THEN $6::jsonb
+                  END
             WHERE id = $3 AND site_id = $4
             RETURNING id`,
           [
@@ -119,6 +142,8 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             payload.seo ? JSON.stringify(payload.seo) : null,
             pageId,
             siteId,
+            btoMode,
+            btoValue,
           ],
         );
 

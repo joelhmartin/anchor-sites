@@ -23,7 +23,7 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
 
     try {
       const result = await pool.query<PageRecord>(
-        `SELECT title, blocks, seo
+        `SELECT title, blocks, seo, brand_tokens_override
            FROM pages
           WHERE site_id = $1 AND slug = $2 AND status = 'published'
           LIMIT 1`,

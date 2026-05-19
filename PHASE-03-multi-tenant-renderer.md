@@ -41,7 +41,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - `db/migrations/<ts>_pages_brand_tokens_override.cjs` adds a nullable JSONB column. Updates `db/seed.ts` if needed (no — leave existing seed data null).
   - **Tests:** schema test confirms the column exists + is nullable; up + down works.
 
-- [ ] **3.5 — Render-time merge: site default + page override**
+- [x] **3.5 — Render-time merge: site default + page override**
   - `render-page.tsx` merges `site.default_brand_tokens` with `page.brand_tokens_override` (page wins per-key, NOT full replace). Page-override goes through the same Zod schema so a malformed override can't render.
   - **Tests:** page with no override matches Phase 1 behavior; page with override merges correctly; malformed override → block error pattern (same as Phase 1 invalid blocks).
 
@@ -117,8 +117,22 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 14:00 UTC — Task 3.4 (`pages.brand_tokens_override` migration)
+### 2026-05-19 14:15 UTC — Task 3.5 (render-time brand-token merge + save-path acceptance) — DEMO MILESTONE
 **Commit:** (pending — same commit as this log entry)
+**Done:** Brand-token override path is live end-to-end.
+- **`render-page.tsx`** imports `mergeBrandTokens` and calls it inside `shell(...)` so the `<style>` tag's `:root { ... }` reflects site default ⊕ page override (page wins per-key). `PageRecord` expands with `brand_tokens_override?: Record<string, unknown> | null`. The shell signature gains `pageOverride?` so `renderPage` + `renderNotFound` can pass through cleanly. `brandTokenCss` typing tightened to `Record<string, string>` to match the merged shape.
+- **`src/server/routes/page.ts`** SELECT now reads `brand_tokens_override` alongside `title, blocks, seo`.
+- **`src/server/routes/admin-pages.ts`** save payload accepts `brand_tokens_override: brandTokensSchema.nullable().optional()`. Three-mode semantics: `undefined` → leave column, `null` → clear column, object → set column. Implemented as a single SQL CASE so all three branches stay in one round-trip.
+**Tests added:** 5 — 4 in `tests/integration/admin-pages.test.ts` (accepts + persists, rejects invalid key prefix, `null` clears, omitted leaves unchanged) + 1 in `tests/integration/page-render.test.ts` (set override via SQL, request page, assert override + non-override values both present in the `:root` block).
+**Next:** 3.6 — `media_assets` migration.
+**Notes:**
+- **Edit tool ghosted twice in this task.** First on `resolveSite.ts` in 3.1, again on `page.ts` here — the Edit said "success" but the file wasn't changed. Caught both via failing tests. Re-applying the edit with the exact same `old_string` worked. No regression risk because the test loop is fast enough that the missing edit was visible inside 60 seconds. Worth keeping an eye on; if it recurs, the workaround is `grep` after every Edit to confirm.
+- **Schema parity preserved.** All four save-endpoint tests added cover the new feature without touching existing assertions. The "rejects invalid blocks" tests still pass because the brand-tokens shape error is reported via the same `"invalid payload"` Zod-error path.
+- **Demo:** muldoon-dental's home page can now serve a different `--theme-main` than the site default with a single page-level save. Visible in the SSR'd `<style>` tag immediately.
+- Root suite: 182 → **188** (+6, 1 from 3.4 + 5 here). 29 files. Typecheck clean.
+
+### 2026-05-19 14:00 UTC — Task 3.4 (`pages.brand_tokens_override` migration)
+**Commit:** 749935e
 **Done:** `db/migrations/1747572000000_pages_brand_tokens_override.cjs` adds a nullable `jsonb` column to `pages`. NULL means "use site default unchanged" — this is the common case, so making it nullable avoids backfilling every existing page row with `{}`. Migration applied to dev DB and verified.
 **Tests added:** 1 schema test in `tests/integration/schema.test.ts` covering: column exists with type `jsonb` + nullable, INSERT with a JSONB override round-trips correctly, INSERT without it leaves NULL.
 **Next:** 3.5 — wire `mergeBrandTokens` into `render-page.tsx`.
