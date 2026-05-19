@@ -269,7 +269,7 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 <!-- Routine appends here -->
 
 ### 2026-05-18 21:25 UTC — Task 1.0 (Backend scaffold)
-**Commit:** *(see next commit after this entry — will be filled by following run if needed)*
+**Commit:** d42f143
 **Done:** Stood up Express + Vite middleware-mode server (`src/server/{index,app,db}.ts`), `/healthz`, Postgres pool with `ping()`, `node-pg-migrate` setup with `pgcrypto` init migration, Resend email stub, Dockerfile skeleton, docker-compose for local Postgres 16, TypeScript toolchain (server-side only). Added `D-013`, `D-014`, `D-015` to DECISIONS. Approval file `.routine/TASK-1.0-APPROVED` present.
 **Tests added:** 3 (`tests/smoke/baseline.test.ts`) — 2 passing, 1 skipped (DB test gated on `DATABASE_URL`). Migration up/down test deferred — manual verification noted in the task box.
 **Next:** Task 1.1 — capture this baseline into `.routine/baseline-tests.log` (already done as part of 1.0 outro) and add any missing smoke coverage. Then on to Task 1.2 (sites/pages/revisions migration).
