@@ -189,20 +189,21 @@ This is the keystone of the whole builder. Get it right or everything else is ha
 
 Even though there's no editor yet, build the save endpoint and revision tracking now so Phase 5 just plugs in.
 
-- [ ] Create `POST /api/sites/:siteId/pages/:pageId` (admin-only):
-  - [ ] Validates entire blocks array against registry schemas
-  - [ ] Updates `pages.blocks` and `pages.seo`
-  - [ ] Inserts a `page_revisions` row in the same transaction
-  - [ ] Returns the saved page + new revision ID
-- [ ] Create `GET /api/sites/:siteId/pages/:pageId/revisions` returning ordered revision list
-- [ ] Create `POST /api/sites/:siteId/pages/:pageId/revisions/:revisionId/restore` that re-saves an old revision as the current state (which itself creates a new revision row — never destructive)
-- [ ] Add basic rate limiting on saves (10/min/user is fine)
+- [x] Create `POST /api/sites/:siteId/pages/:pageId` (admin-only):
+  - [x] Validates entire blocks array against registry schemas
+  - [x] Updates `pages.blocks` and `pages.seo`
+  - [x] Inserts a `page_revisions` row in the same transaction
+  - [x] Returns the saved page + new revision ID
+- [x] Create `GET /api/sites/:siteId/pages/:pageId/revisions` returning ordered revision list
+- [x] Create `POST /api/sites/:siteId/pages/:pageId/revisions/:revisionId/restore` that re-saves an old revision as the current state (which itself creates a new revision row — never destructive)
+- [x] Add basic rate limiting on saves (10/min/user is fine) *(per-IP token-bucket via `src/middleware/rateLimit.ts`; default 10/min, configurable for tests)*
 
 **Tests:**
-- [ ] Saving a valid blocks array creates a revision
-- [ ] Saving an invalid blocks array rejects with 400 and clear error
-- [ ] Restoring an old revision creates a new revision (doesn't overwrite)
-- [ ] Revisions are returned in reverse chronological order
+- [x] Saving a valid blocks array creates a revision
+- [x] Saving an invalid blocks array rejects with 400 and clear error
+- [x] Restoring an old revision creates a new revision (doesn't overwrite)
+- [x] Revisions are returned in reverse chronological order
+- [x] Bonus: 401 without admin token; 401 with wrong token; 400 on unknown block type; 404 on cross-site page id; 404 on cross-page revision id; 429 after exhausting the bucket (Retry-After present)
 
 ---
 
@@ -310,6 +311,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-18 23:25 UTC — Task 1.7 (admin save + revisions + restore)
+**Commit:** 8f273e3 (preceded by 2b0c74a, 6d970ec)
+**Done:** Admin API for saving page content with append-only revision history. `POST /api/sites/:siteId/pages/:pageId` validates the payload (Zod) AND each block's props against its registry schema before updating `pages.blocks`/`pages.seo` and inserting a `page_revisions` row in the same transaction — atomicity guarantees nothing's saved without a corresponding history entry. `GET /api/sites/:siteId/pages/:pageId/revisions` returns reverse-chronological list. `POST .../revisions/:revisionId/restore` copies the revision back into `pages` AND inserts a new `restore:<id>`-tagged revision — history never gets overwritten. Two new middlewares: `requireAdmin` (X-Admin-Token vs `ADMIN_API_TOKEN` env, refuses if env unset) and `rateLimit` (token-bucket per-key, default key = `req.ip`, 10/min budget on save + restore).
+**Tests added:** 10 (`tests/integration/admin-pages.test.ts`) — auth (401 missing/wrong token), valid save (revision + page state), invalid props (400 with structured `failures[]`), unknown type, cross-site page id (404), list ordering, restore non-destructive (3 revisions after restore of the 1st), cross-page revision id (404), rate limit (429 + Retry-After). Total suite now **64 passing, 0 skipped**, tsc clean.
+**Next:** Task 1.8 — Dockerfile, `cloudbuild.yaml`, Cloud Run deploy, wildcard domain mapping, SSL, remove `vercel.json`. Likely needs human GCP credentials → if so, raise a blocker and continue with Tasks 1.9 + 1.10 first.
+**Notes:**
+- `requireAdmin` is applied per-route, not router-level, so unknown `/api/*` paths return 404 (preserving the baseline smoke test that hits `/api/does-not-exist`). Caught immediately on first full-suite run after wiring the router.
+- `ADMIN_API_TOKEN` is **not** set by default — `requireAdmin` returns 401 if the env var is absent. No silent admin access. Phase 8 (Better-auth per D-020) replaces with session-based admin checks; until then the editor will hold this token in its env config.
+- Rate limit key is `req.ip` for now. When real auth lands in Phase 8, swap to a user-id-keyed bucket. Bucket is per-process; revisit in Phase 12 hardening for multi-instance fairness.
+- Restore source tag (`restore:<revisionId>`) lets the editor surface "Restored from rev X" in the history sidebar.
 
 ### 2026-05-18 23:20 UTC — Task 1.6 (catch-all page renderer + seeded content)
 **Commit:** 1737b62 (preceded by 7689098, cfd2b98, 8fccf5f)
