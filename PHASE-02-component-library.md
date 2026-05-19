@@ -113,7 +113,7 @@ Every box above checked, AND:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 12:20 UTC — Task 2.5 (opinionated blocks first wave)
-**Commit:** (pending — same commit as this log entry)
+**Commit:** 65627e0
 **Done:** Six opinionated `ac-`-prefixed blocks landed in `packages/components/src/blocks/<name>/{schema.ts,component.tsx,index.ts}`. Each ships a Zod schema (every field has a `.default(...)`), a pure React component using `ac-<name>` root classes + brand-token Tailwind utilities + the primitives from 2.4, and an `index.ts` exporting a `BlockManifestEntry`.
 - **`hero`** — port of Phase 1 inline. Same schema (eyebrow / title / subtitle / cta_label / cta_href / align). Uses `<Button asChild>` so the CTA renders as `<a>` while keeping the variant styling. CSS class `ac-hero`. Category `header`.
 - **`hero-slider`** — Embla-backed multi-slide variant. Schema includes `slides: HeroSlide[]`, `autoplay`, `interval_ms`, `align`. Per-slide background image with a translucent overlay for legibility. Arrows hidden when only one slide. CSS class `ac-hero-slider`. Category `header`.
