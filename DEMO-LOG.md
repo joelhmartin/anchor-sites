@@ -27,6 +27,28 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-19 — DNS records added via Kinsta API; certs issuing
+**Milestone ID:** phase1-dns-live
+**Phase/Task:** Phase 1, Task 1.8 (final step — domain mapping)
+**Commit:** 294267b
+
+**What's now live:**
+- `muldoon.sites.anchorcorps.com` → CNAME → `ghs.googlehosted.com.` → Google IP (verified via `dig @1.1.1.1`)
+- `demo.sites.anchorcorps.com` → CNAME → `ghs.googlehosted.com.` → Google IP (verified)
+- Cloud Run mappings: `DomainRoutable: True` for both. Let's Encrypt cert issuance in flight (typically 10–15 min on first request).
+
+**How:** Kinsta's public v2 API exposes record CRUD via the `/v2/domains/{id}/dns-records` endpoint (not under `/dns/*` or `/zones/*` as the docs imply). Both CNAMEs posted via the API; operation polling returned success. Public dig confirms propagation.
+
+**Expected within ~15 min of this entry:**
+
+```bash
+curl -sI https://muldoon.sites.anchorcorps.com/    # → HTTP/2 200
+curl -s  https://muldoon.sites.anchorcorps.com/ | grep "Modern dental care"
+curl -s  https://demo.sites.anchorcorps.com/    | grep "Same renderer. Different site."
+```
+
+Two different sites, one renderer, all content from `pages.blocks` JSONB in `anchor-hub-480305:us-central1:anchor` → `anchor_sites_prod`. Phase 1 architectural milestone is real.
+
 ### 2026-05-19 — Domain mappings created; awaiting DNS for SSL issuance
 **Milestone ID:** phase1-domain-mappings-created
 **Phase/Task:** Phase 1, Task 1.8 (domain mapping step)

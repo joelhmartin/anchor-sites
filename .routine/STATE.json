@@ -5,16 +5,17 @@
   "current_phase_file": "PHASE-01-foundation.md",
   "current_task": "1.8",
   "phase_started_at": "2026-05-18T00:00:00Z",
-  "last_commit_sha": "588beca",
+  "last_commit_sha": "294267b",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
     "first-multi-tenant-page-local",
     "phase1-complete-local",
     "phase1-cloud-run-deployed",
-    "phase1-domain-mappings-created"
+    "phase1-domain-mappings-created",
+    "phase1-dns-live"
   ],
-  "blockers_open": 1,
+  "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
     "current_pass": 81,
