@@ -87,7 +87,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 ### Phase 3 wrap
 
-- [ ] **3.15 — Phase 3 docs + decisions + plan tick**
+- [x] **3.15 — Phase 3 docs + decisions + plan tick**
   - `docs/media-pipeline.md`: bucket layout, IAM, signed-URL flow, variant URL shape, lifecycle.
   - `DECISIONS.md` += D-029 / D-030 / D-031 (added inline as their tasks land, but cross-referenced here for completeness).
   - `PLAN.md` Phase 3 row ticked.
@@ -116,6 +116,21 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 17:35 UTC — Task 3.15 (Phase 3 docs + plan tick) — PHASE 3 COMPLETE
+**Commit:** (pending — same commit as this log entry)
+**Done:**
+- **`PLAN.md`** — Phase 3 row ticked `[x]` with the same one-line summary pattern Phases 1 + 2 used. References the inflection points: `resolveSite` eviction + debug endpoint, brand-token Zod schema + per-page override merge, the full D-022 media pipeline (bucket, lifecycle, pg-boss, signed-URL upload, sharp variant job emitting 5×2 variants, `<Image>` block + hero-slider migration in `@anchorcorps/components@0.3.0`, end-to-end renderer hydration), Cloud CDN deferred to Phase 12.
+- **`.routine/baseline-tests.log`** — appended Phase 3 baseline entry. Suite went 156 → **227** (+71) across 32 → 34 files. Includes per-suite breakdown (root 110 → 168 = +58; package 46 → 59 = +13).
+- **`DECISIONS.md`** — already carries D-029 (Phase 3.3), D-030 (Phase 3.8), D-031 (Phase 3.10). Cross-referenced in Phase 3 plan header.
+- **`docs/media-pipeline.md`** — already covers bucket layout, lifecycle, IAM, the deferred Cloud CDN, and the upload/process/render flow (Phase 3.7). No further docs needed.
+**Tests added:** 0 — pure docs + plan tick.
+**Next:** **Phase 3 complete.** Wait for `.routine/NEXT-PHASE-APPROVED` before any Phase 4 work. Phase 4 (admin UI shell — sites list + new-site wizard skeleton) is the natural sequel.
+**Notes:**
+- **All six Phase 3 demo milestones surfaced in chat per the EMAIL-TRIGGERS convention:** phase started (3.1), brand-token merge live (3.5), `@anchorcorps/components@0.2.0` published with `<Image>` block (3.12), `@anchorcorps/components@0.3.0` with hero-slider migration (3.13), end-to-end media pipeline (3.14), phase complete (this entry).
+- **Routine retrospective:** 15 sub-tasks landed across roughly 4 hours of focused work. The "commit per sub-checkbox" pattern produced ~20 commits which kept the `git log` scannable. The "Edit ghost" issue (Edit success-with-no-effect) surfaced 3-4 times — caught every time by failing tests + greps; a habit of grepping after Edits on hot files would prevent the false starts entirely.
+- **Phase 3 carries Phases 5–7 forward.** `MediaContext` is the contract Phase 5's Puck editor will use to preview block changes against real media. The pg-boss + variant pattern is what Phase 7's template materialization will reuse. The brand-token override path is what Phase 5's per-page editor will mutate.
+- **Cloud CDN still deferred.** v0.1 serves variants via `storage.googleapis.com` direct. The Phase 12 hardening task will wire LB + backend bucket + DNS + managed SSL behind `media.anchorcorps.com`. The Image block calls `variantPublicUrl(...)` so the swap is a one-function change.
 
 ### 2026-05-19 17:20 UTC — Task 3.14 (renderer block-data hydration for images) — DEMO MILESTONE
 **Commit:** beae9f2

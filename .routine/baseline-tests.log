@@ -72,3 +72,26 @@ Single command runs both:
   DATABASE_URL=... TEST_DATABASE_URL=... npm test
 
 Boot Postgres first as before.
+
+---
+
+2026-05-19 — Phase 3 baseline update (Task 3.15)
+Suite: vitest run with vitest.workspace.ts
+Result: 227 passed, 0 skipped, 0 failed across 34 test files
+
+Breakdown:
+  Root renderer suite: 168 (was 110 at Phase 2 close; +58 across
+    Phase 3 — eviction (5), site-resolve endpoint (5), brand-tokens
+    schema (16), brand-tokens migration + admin save acceptance (5),
+    media_assets schema (1), pg-boss boot (5), media upload-url +
+    complete callback (9), sharp variant job (4), hydration unit
+    + integration (8))
+  @anchorcorps/components suite: 59 (was 46 at Phase 2 close;
+    +13 across Phase 3 — Image block (10), hero-slider migration (3))
+
+Single command runs both:
+  DATABASE_URL=... TEST_DATABASE_URL=... npm test
+
+Phase 3 also added pg-boss to the dev DB schema (pgboss.* tables
+created automatically by bootJobs on first run). The schema-migration
+test counts 5 tables including media_assets.
