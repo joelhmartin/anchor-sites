@@ -1,4 +1,3 @@
-import "./styles.css";
 import { registerBlock } from "../registry.js";
 import { richTextSchema } from "./schema.js";
 import { RichText } from "./component.js";

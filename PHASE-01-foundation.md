@@ -115,23 +115,26 @@ This is the keystone of the whole builder. Get it right or everything else is ha
   ```tsx
   type Props = { blocks: Block[]; editable?: boolean };
   ```
-- [ ] For each block:
-  - [ ] Look up registry entry, render `<UnknownBlock>` placeholder if type not found
-  - [ ] Validate `props` with the registry schema
-  - [ ] On validation failure, render `<BlockError>` showing the error in dev, silent placeholder in prod
-  - [ ] On success, render the component with parsed props
-  - [ ] Pass `block.id` as React key
-- [ ] Create `<UnknownBlock>` and `<BlockError>` fallback components
-- [ ] Add `data-block-id` and `data-block-type` attributes on each rendered block's root element (needed for editor in Phase 5, set up now)
-- [ ] Create a Storybook-style harness route at `/__blocks/preview` that lets you POST a blocks array and see it render — gated to admin in dev only
+- [x] For each block:
+  - [x] Look up registry entry, render `<UnknownBlock>` placeholder if type not found
+  - [x] Validate `props` with the registry schema (Zod `safeParse`)
+  - [x] On validation failure, render `<BlockError>` showing the error in dev, silent placeholder in prod (gated on `NODE_ENV`)
+  - [x] On success, render the component with parsed props
+  - [x] Pass `block.id` as React key
+- [x] Create `<UnknownBlock>` and `<BlockError>` fallback components
+- [x] Add `data-block-id` and `data-block-type` attributes on each rendered block's root element via a thin `<Wrap>` (only emitted when `editable={true}`; production renders a Fragment with no markup noise)
+- [x] Create a Storybook-style harness route at `/__blocks/preview` that lets you POST a blocks array and see it render — gated to non-production env in `app.ts`
 
 **Tests:**
-- [ ] Renderer handles empty array
-- [ ] Renderer handles unknown block type without crashing
-- [ ] Renderer handles invalid props without crashing
-- [ ] Renderer renders three known blocks in order with correct keys
+- [x] Renderer handles empty array
+- [x] Renderer handles unknown block type without crashing (`<UnknownBlock>`)
+- [x] Renderer handles invalid props without crashing (`<BlockError>`)
+- [x] Renderer renders three known blocks in order with correct keys
+- [x] BlockError is silent (aria-hidden placeholder) when `NODE_ENV=production`
+- [x] Non-editable mode omits `data-block-*` wrapper
+- [x] HTTP smoke tests for GET + POST `/__blocks/preview` + 400 on malformed input
 
-**Demo milestone:** Once `/__blocks/preview` works, you can POST a JSON blocks array and see it render. **Email trigger:** "Block renderer is live — try posting to /__blocks/preview" with example curl.
+**Demo milestone:** `/__blocks/preview` is live in dev. POST `{"blocks":[…]}` and the harness renders SSR HTML with `ac-` classes and `data-block-id`/`data-block-type` editor hooks. **Email trigger:** Deferred — Resend not wired until Task 1.9; logged in completion log instead.
 
 ---
 
@@ -295,6 +298,16 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - Added deps: `nanoid` (for future ID generation in editor), `zod-to-json-schema` (for Phase 6 AI prompts), `@types/react@18` + `@types/react-dom@18` (pinned to match React 18 in deps).
 - Vitest config now includes `.test.tsx` files and sets `css: false` so block CSS imports are no-ops in tests.
 - CSS lives in plain `.css` files (not CSS Modules) so the `ac-` prefix survives unhashed — that's the public API consumers can target per architectural anchor #8.
+
+### 2026-05-18 22:53 UTC — Task 1.4 (BlockRenderer + /__blocks/preview harness)
+**Commit:** *(filled below)*
+**Done:** Built `<BlockRenderer>` that walks an array of blocks, looks each one up in the registry, validates props with the block's Zod schema, and renders one of: the real component (happy path), `<UnknownBlock>` (type missing), or `<BlockError>` (props invalid). Fallbacks render silent `aria-hidden` placeholders in production, visible debug UI in dev. Editable mode wraps each rendered block in a `<div data-block-id data-block-type>` for the Phase 5 editor to resolve clicks; non-editable mode emits no wrapper. Added the `/__blocks/preview` admin-only harness — an Express GET serves a small HTML form, POST accepts `{blocks:[…]}` JSON and returns SSR HTML. Mounted dev-only via `NODE_ENV !== "production"` gate in `app.ts`.
+**Tests added:** 9 (`src/components/BlockRenderer.test.tsx` ×6, `tests/smoke/blocks-preview.test.ts` ×3). Total suite now **39 passing, 0 skipped**, tsc clean. Verified end-to-end with curl against the live dev server.
+**Next:** Task 1.5 — multi-tenant request resolution middleware (Host header → site_id, with subdomain fallback).
+**Notes:**
+- **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
+- **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
+- **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
 
 ### 2026-05-18 21:32 UTC — Task 1.1 (Pre-flight baseline)
 **Commit:** 3a9fd8c

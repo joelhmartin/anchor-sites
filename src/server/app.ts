@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { ping } from "./db.js";
+import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 
 export function createApp(): Express {
   const app = express();
@@ -16,6 +17,12 @@ export function createApp(): Express {
     const db = await ping();
     res.status(200).json({ ok: true, db });
   });
+
+  // Admin-only block preview harness. Gated to non-production envs only —
+  // Phase 4 will add real admin auth + a properly mounted admin UI.
+  if (process.env.NODE_ENV !== "production") {
+    app.use(blocksPreviewRouter);
+  }
 
   return app;
 }

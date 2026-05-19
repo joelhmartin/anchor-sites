@@ -1,4 +1,3 @@
-import "./styles.css";
 import { registerBlock } from "../registry.js";
 import { heroSchema } from "./schema.js";
 import { Hero } from "./component.js";

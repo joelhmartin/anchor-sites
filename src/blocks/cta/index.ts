@@ -1,4 +1,3 @@
-import "./styles.css";
 import { registerBlock } from "../registry.js";
 import { ctaSchema } from "./schema.js";
 import { Cta } from "./component.js";
