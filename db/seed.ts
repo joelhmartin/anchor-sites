@@ -55,14 +55,14 @@ const SITES: SiteSeed[] = [
             type: "rich-text",
             props: {
               html: "<h2>Why patients choose Muldoon</h2><p>Three decades of family dentistry, same staff most of that time. We do the boring stuff well and the hard stuff carefully.</p>",
-              max_width: "md",
+              max_width: "medium",
             },
           },
           {
             id: "muldoon-cta",
             type: "cta",
             props: {
-              title: "Ready when you are.",
+              heading: "Ready when you are.",
               body: "Most new-patient appointments available within the week.",
               button_label: "Call now",
               button_href: "tel:+15555550123",
@@ -110,18 +110,18 @@ const SITES: SiteSeed[] = [
             type: "rich-text",
             props: {
               html: "<h2>Block-driven, multi-tenant</h2><p>Switch the <code>Host</code> header and a different page loads — same Express process, same renderer, same component package. This is the foundation phase.</p>",
-              max_width: "lg",
+              max_width: "wide",
             },
           },
           {
             id: "demo-cta",
             type: "cta",
             props: {
-              title: "Read the architecture notes",
+              heading: "Read the architecture notes",
               body: "DECISIONS.md captures every choice that shaped this build.",
               button_label: "Open the log",
               button_href: "https://github.com/joelhmartin/anchor-sites/blob/main/DECISIONS.md",
-              variant: "secondary",
+              variant: "muted",
             },
           },
         ],
