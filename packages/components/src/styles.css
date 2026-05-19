@@ -1,0 +1,16 @@
+/**
+ * @anchorcorps/components — single CSS bundle.
+ *
+ * Compiled to `dist/styles.css` by the package's build pipeline (D-028).
+ * Consumers import this once at app startup:
+ *
+ *   import "@anchorcorps/components/styles.css";
+ *
+ * No `font-family` declarations live here (D-005). Brand-token mapping is
+ * configured in `tailwind.config.js`; classes resolve to CSS custom
+ * properties consumers set at `:root` per-site.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

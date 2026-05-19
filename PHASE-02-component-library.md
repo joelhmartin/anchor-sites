@@ -33,7 +33,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Root scripts: `build:components`, `dev:components`, `test:components`
   - **Tests:** smoke build emits `dist/index.js` / `dist/index.cjs` / `dist/index.d.ts`; vitest unit test in the package proves the workspace runs its own tests
 
-- [ ] **2.3 — Tailwind + CSS toolchain inside the package**
+- [x] **2.3 — Tailwind + CSS toolchain inside the package**
   - Package-local `tailwind.config.ts` + `postcss.config.cjs`, content globs scoped to `packages/components/src/**/*.{ts,tsx}`
   - Deps: `tailwindcss`, `tailwindcss-animate`, `class-variance-authority`, `clsx`, `tailwind-merge`, `postcss`, `autoprefixer`
   - `tsup.config.ts` injects the Tailwind CSS pipeline; build emits `dist/styles.css` consumers import as a side effect
@@ -112,8 +112,20 @@ Every box above checked, AND:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 11:35 UTC — Task 2.2 (Monorepo workspaces + package skeleton)
+### 2026-05-19 11:45 UTC — Task 2.3 (Tailwind + CSS toolchain in package)
 **Commit:** (pending — same commit as this log entry)
+**Done:** Package-local Tailwind 3.4 pipeline. New files: `packages/components/tailwind.config.js` (ESM, content scoped to `src/**`, brand-token color map wiring `bg-theme-main` → `var(--theme-main)` etc., `tailwindcss-animate` plugin), `postcss.config.js`, `src/styles.css` (Tailwind `@base/@components/@utilities` directives + header comment naming the consumption import path), `src/lib/cn.ts` (standard shadcn `clsx`+`tailwind-merge` helper used by every primitive and block from 2.4 onward). Build pipeline: `npm run build` now runs `tsup` (JS+types) first, then `tailwindcss --minify` (writes `dist/styles.css` into the already-populated dist dir — order matters because tsup `clean: true` would otherwise wipe the CSS). Deps split correctly between runtime (`clsx`, `tailwind-merge`, `class-variance-authority`) and build-only (`tailwindcss`, `tailwindcss-animate`, `postcss`, `autoprefixer`).
+**Tests added:** 5 — 3 in `src/lib/cn.test.ts` covering clsx composition + tailwind-merge conflict resolution + non-conflict passthrough, 2 in `tests/build-artifacts.test.ts` asserting (a) ESM/CJS/types entrypoints exist and (b) `dist/styles.css` is non-empty and contains the Tailwind license banner + preflight `box-sizing: border-box`. The build-artifacts file uses `describe.skip` when `dist/` is missing so devs can run unit tests without rebuilding. Package suite: 8 passed (5 new). Root renderer suite still 114 passed; package typecheck clean.
+**Next:** Task 2.4 — copy in shadcn primitives (button, card, carousel, accordion, slot) using `cn` + Radix + Embla. Internal-only layer.
+**Notes:**
+- **Build order bug caught immediately:** first attempt ran `build:css && build:js`. tsup's `clean: true` wiped the CSS. Reversed to `build:js && build:css`. Recorded here so future reorderings re-check the order.
+- The first build-artifacts test regex (`/\*\s*,\s*::?before/`) was too strict — minified CSS drops the space between `*,` and `:after`. Replaced with the Tailwind license banner pattern + a `box-sizing: border-box` check; both are stable across minify modes.
+- Brand tokens in `tailwind.config.js` map to CSS custom properties the renderer already sets at `:root` per-site (see `src/server/render-page.tsx`). The Phase 1 inline blocks use plain CSS variables; Phase 2 blocks can use either the Tailwind class form (`bg-theme-main`) or the raw `var(--theme-main)`, whichever reads cleaner per-block.
+- `tailwindcss-animate` plugin enables `animate-*` utility classes used by Radix-derived primitives (accordion open/close, etc.) without each primitive shipping its own keyframes.
+- A `dev:css` script is provided alongside `dev` (JS watcher). Both run concurrently when the developer needs CSS HMR; we won't add `concurrently` as a dep until Task 2.9 if needed.
+
+### 2026-05-19 11:35 UTC — Task 2.2 (Monorepo workspaces + package skeleton)
+**Commit:** 2cc8a98
 **Done:** Added `"workspaces": ["packages/*"]` to root `package.json` plus `build:components` / `dev:components` / `test:components` orchestration scripts. Created `packages/components/` with `package.json` (name `@anchorcorps/components`, version `0.1.0`, `publishConfig.registry` → the AR npm repo, `exports` map covering ESM, CJS, types, and `./styles.css`), `tsconfig.json` (`jsx: "react-jsx"`, strict, `noEmit`), `tsup.config.ts` (ESM + CJS + dts + sourcemaps, externals: react / react-dom / react/jsx-runtime / zod), `vitest.config.ts` (`jsdom`), and `README.md`. First package source landed: `src/index.ts` exports `VERSION` / `blockManifest` / `registerAll` / `BlockManifestEntry` / `RegisterBlockFn`. `src/blocks/manifest.ts` defines the entry shape (structurally compatible with the renderer's `BlockRegistryEntry`) and ships an empty manifest array — populated in 2.5. `RegisterBlockFn` matches the renderer's `registerBlock(type, entry)` signature so the package never imports the renderer (D-016). `dist/` is already gitignored at repo root so the package's build output is auto-excluded.
 **Tests added:** 3 (`packages/components/src/index.test.ts`) — `VERSION` matches `0.1.x`, `blockManifest` is an array, `registerAll` invokes the caller's register once per entry (zero in 0.1.0 skeleton). Package suite: 3 passed. Root renderer suite still 114 passed (unaffected — root vitest globs at `src/**` + `tests/**`, not `packages/**`).
 **Next:** Task 2.3 — Tailwind + cva + clsx + tailwind-merge inside the package; tsup pipeline emits `dist/styles.css`.
