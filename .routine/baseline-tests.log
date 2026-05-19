@@ -1,27 +1,39 @@
-2026-05-18 — baseline captured (Tasks 1.0, 1.1, 1.2, 1.3)
+2026-05-18 — baseline captured (Tasks 1.0 through 1.4)
 Suite: vitest run (with DATABASE_URL + TEST_DATABASE_URL set)
-Result: 30 passed, 0 skipped, 0 failed
+Result: 39 passed, 0 skipped, 0 failed
 
 Tests:
   ✓ tests/smoke/baseline.test.ts (3)
+      GET /healthz, unknown route 404, DB pool connect
   ✓ tests/smoke/spa.test.ts (2)
+      GET / via Vite middleware, route-order check
+  ✓ tests/smoke/blocks-preview.test.ts (3)
+      GET /__blocks/preview form, POST renders SSR, 400 malformed
   ✓ tests/integration/schema.test.ts (6)
+      tables, indexes, FK cascade, updated_at trigger, CHECK, up/down
   ✓ tests/integration/seed.test.ts (2)
+      idempotency, expected slugs
   ✓ src/blocks/registry.test.ts (4)
-      registerBlock + getBlock + hasBlock, dup detection, listBlocks
+      register, get, dup detection, listBlocks
   ✓ src/blocks/blocks.test.tsx (13)
-      hero/rich-text/cta schema validation (valid + invalid)
-      SSR render of all three blocks
-      anchor #8 enforcement: no font-family in component output
-      side-effect registration via index.ts imports
+      schema validation + SSR + anchor #8 (no font-family) + side-effect registration
+  ✓ src/components/BlockRenderer.test.tsx (6)
+      empty, unknown, invalid, three-in-order, non-editable, prod-silent
 
 Manual checks:
-  ✓ npm run dev → server on http://localhost:3000
+  ✓ npm run dev → server on http://localhost:3000 (Express + Vite middleware)
+  ✓ curl :3000/healthz → 200 {"ok":true,"db":true}
+  ✓ curl :3000/__blocks/preview → 200 HTML form
+  ✓ curl -X POST :3000/__blocks/preview → SSR HTML with ac-* classes + data-block-* wrappers
   ✓ tsc --noEmit clean
 
-DB env:
+Env required for the full 39-test baseline:
   DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev
   TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test
+  (Docker container: anchor-sites-postgres-1, host port 5434)
 
 If TEST_DATABASE_URL is unset the integration tests skip cleanly and the
-suite drops to 22 passing. The routine should keep both env vars set.
+suite drops to 31 passing. The routine should keep both env vars set.
+
+Boot Postgres at the start of any run that touches the DB:
+  docker compose up -d postgres
