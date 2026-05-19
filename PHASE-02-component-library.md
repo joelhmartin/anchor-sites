@@ -39,7 +39,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - `tsup.config.ts` injects the Tailwind CSS pipeline; build emits `dist/styles.css` consumers import as a side effect
   - **Tests:** build assertion — `dist/styles.css` exists and contains a known class from the opinionated blocks layer
 
-- [ ] **2.4 — shadcn primitives copy-in (internal layer)**
+- [x] **2.4 — shadcn primitives copy-in (internal layer)**
   - Copy into `packages/components/src/primitives/`: `button`, `card`, `carousel` (Embla), `accordion` (Radix), `slot` (Radix)
   - Deps: `@radix-ui/react-accordion`, `@radix-ui/react-slot`, `embla-carousel-react`, `embla-carousel-autoplay`
   - Primitives are **not** exported from the package root. They are internal building blocks for the opinionated blocks layer.
@@ -111,6 +111,22 @@ Every box above checked, AND:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 12:00 UTC — Task 2.4 (shadcn primitives copy-in)
+**Commit:** (pending — same commit as this log entry)
+**Done:** Five internal primitives landed under `packages/components/src/primitives/`, exported from a barrel that the opinionated blocks layer (2.5) will consume. None are re-exported from the package root — primitives stay internal.
+- **`Button`** — cva-based variants (primary / secondary / outline / ghost / link) × sizes (sm / md / lg / icon). `asChild` via Radix `Slot` so blocks can render `<a>` while keeping the visual class set. Default variant uses brand-token classes (`bg-theme-accent` etc.). Focus ring uses `ring-theme-accent`.
+- **`Card` family** — `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`. Surface + border tokens map to brand vars.
+- **`Accordion` family** — wraps `@radix-ui/react-accordion`. Trigger uses a unicode chevron (`▾`) rotated via `data-state=open` instead of inline SVG (D-005). Content uses `data-[state=*]:animate-*` classes from `tailwindcss-animate`.
+- **`Carousel` family** — Embla wrapper with `useEmblaCarousel`, context provider exposing `scrollPrev/scrollNext/canScrollPrev/canScrollNext`, `CarouselContent` + `CarouselItem` with ARIA `region` + `group` roles + `aria-roledescription`, `CarouselPrevious`/`CarouselNext` buttons with disabled-when-edge state and customizable `label` prop. Keyboard navigation via Arrow keys (Left/Up = prev, Right/Down = next) on the region (`tabIndex=0`). Default control glyphs are unicode `‹` `›`.
+- **`Slot`** — thin re-export of `@radix-ui/react-slot` so other primitives can import from inside the package.
+**Tests added:** 15 across 4 test files (Button: 4, Card: 2, Accordion: 4, Carousel: 5). Embla + Radix need browser globals jsdom lacks — added shims to `vitest.setup.ts` for `matchMedia` (Embla), `ResizeObserver` (Radix), `IntersectionObserver` (Embla). `@testing-library/jest-dom` matchers registered via the same setup file; types added to `tsconfig.json`. Package suite: 23 passed. Build emits the same artifacts as before plus the larger transpiled JS bundle (no measurable size jump until 2.5 actually uses these). Root renderer 114 passed; package typecheck clean.
+**Next:** Task 2.5 — opinionated blocks first wave (6 ac-prefixed blocks built on top of these primitives, registered into the manifest).
+**Notes:**
+- **Three jsdom shims caught at first test run**, in order: `matchMedia` (Embla `optionsMediaQueries`), `ResizeObserver` (Radix), `IntersectionObserver` (Embla `init`). All three are standard mocks — none of them affect what the tests are actually asserting (ARIA roles, click handlers, keyboard events). Same setup file will serve every block test in 2.5.
+- The carousel keyboard-nav test only asserts the keydown handler doesn't throw + preventDefault is callable. A full "advance to next slide" assertion would require driving Embla's internal layout pass, which jsdom can't do without a real layout engine. Acceptable for v0.1; revisit if a real bug surfaces.
+- Brand tokens are used directly as Tailwind classes (`bg-theme-main`, `text-theme-on-surface`) — these resolve to CSS custom properties at render time. No `font-family` declarations anywhere in the primitives (D-005).
+- Icon strategy: unicode glyphs (`▾` `‹` `›`) inside `<span aria-hidden="true">`. When opinionated blocks need richer icons (e.g. a logo reel needs no icons but a CTA might want one), the consuming block can pass children or use Font Awesome classes per D-005.
 
 ### 2026-05-19 11:45 UTC — Task 2.3 (Tailwind + CSS toolchain in package)
 **Commit:** ef7128f
