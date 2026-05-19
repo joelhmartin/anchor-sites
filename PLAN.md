@@ -33,7 +33,7 @@ The existing template's auth, blog, and events flows must **keep working at ever
 - [ ] Phase 2 — Global component library (`@anchorcorps/components` v0.1)
 - [ ] Phase 3 — Multi-tenant renderer (host resolution, brand tokens, media)
 - [ ] Phase 4 — Admin UI shell (sites list, new-site wizard skeleton)
-- [ ] Phase 5 — On-page editor (EditableWrapper, side panel, Tiptap, undo/redo)
+- [ ] Phase 5 — Visual editor on Puck *(see D-017: Puck supplies drag-and-drop, side panel, undo/redo; we write a Zod→Puck-fields adapter and a `Block[]` ↔ Puck `Data` converter. Tiptap wraps as a custom Puck field for rich text. The "EditableWrapper / on-page" wording from earlier drafts is replaced by Puck's preview+side-panel UX.)*
 - [ ] Phase 6 — AI editing layer (Claude API, schema-validated edits)
 - [ ] Phase 7 — Template system (save-as-template, new-from-template)
 - [ ] Phase 7.5 — Plugin / integration framework *(see D-016: manifest contract, `site_plugins` table, plugin loader, admin enable/disable. Concrete plugins like Stripe / PayPal / booking are post-7.5 packages, not master-plan phases.)*

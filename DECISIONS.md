@@ -148,6 +148,39 @@
 - Phase 7.5: implement `manifest.ts` contract, `site_plugins` table, plugin loader, admin UI for enable/disable + config (with the editor from Phase 5).
 - Specific plugins (Stripe, PayPal, calendar booking, custom integrations) are post-7.5 phases or out-of-band package work, not in the master plan.
 
+### D-017: Use Puck for the Phase 5 visual editor
+
+**Context:** Phase 5 originally specified building the on-page editor from scratch (EditableWrapper, side panel, Tiptap, undo/redo). [Puck](https://puckeditor.com) is a mature, MIT-licensed React visual editor that already ships drag-and-drop, field renderers, viewport switcher, and undo/redo. Adopting it saves weeks of Phase 5 work and lowers maintenance.
+
+**Decision:** Use Puck as the Phase 5 editor. Block schemas, the block registry, and the block renderer (Phase 1) remain unchanged — Puck **calls** our components and **emits** JSON that we round-trip through our canonical `Block[]` shape.
+
+**Boundary contract:**
+- **Canonical data shape stays ours:** `Block[]` (id, type, props, children) per D-001. This is what's stored in `pages.blocks` JSONB, what the AI editor (Phase 6) mutates, and what the prod renderer consumes. Puck's data shape (`{ content, root, zones }`) is a *view* of our data, not the source of truth.
+- **Editor boundary converter:** A pair of functions in `src/editor/puck-adapter.ts` — `toPuckData(blocks: Block[]): Data` and `fromPuckData(data: Data): Block[]`. Lossless round-trip is a tested invariant.
+- **Zod stays the contract (D-002):** A `zodToPuckFields(schema)` adapter generates Puck's field config from the same Zod schema that validates props, types the React component, and serializes into AI prompts. We do not define fields twice.
+- **Components are shared:** The React component a block registers is the *same* component Puck renders in the editor and the prod renderer renders on the public site. No editor-only forks.
+
+**Rationale:**
+- **Phase 5 shrinks dramatically:** Puck supplies the editor chrome we'd otherwise build. Estimated savings: 3–5 routine work blocks.
+- **No coupling beyond the editor:** Phase 1, Phase 6, Phase 7.5 (plugins), and the prod renderer never import Puck. Puck only lives behind the admin editor route. If Puck ever needs to be replaced, only `src/editor/` changes.
+- **Plugin compatibility (D-016):** Puck's component map is mutable — plugins that call `registerBlock()` at load can also register with Puck's editor map via the same call. No special plugin path needed.
+- **AI editing compatibility:** Phase 6 mutates `Block[]` (our shape). On save, Puck reloads the converted data. AI doesn't know Puck exists.
+
+**Trade-offs accepted:**
+- **Editor UX leans side-panel + preview iframe**, not pure inline click-to-edit. Inline editing for rich text fields lands via a Puck custom field wrapping Tiptap. The "click anywhere on the page to edit" UX from the original Phase 5 spec is softened — we get drag-and-drop + side-panel forms, not Webflow-style direct manipulation. Acceptable for v1.
+- **Field DSL drift risk:** If Puck's field types diverge from what Zod can express, the adapter gets uglier. Mitigation: start with simple Zod schemas; add custom Puck fields for the few cases Zod can't model (rich text, image picker, color).
+
+**Alternatives considered:**
+- Chai Builder (rejected — less mature, smaller community, would put us in the early-adopter risk seat for v1).
+- Custom editor as originally specified (rejected — high cost for marginal UX upside; we can always replace Puck later via the adapter boundary).
+- Builder.io / Plasmic (rejected — vendor lock-in, hosted services with their own data model; conflicts with D-001).
+
+**How to apply:**
+- Phase 1 unchanged. `Block[]` shape stays as planned. Block components must remain pure functions of props (already required).
+- Phase 5 expansion will define: `puck-adapter.ts` (data converter + `zodToPuckFields`), editor route, Puck config assembly from the block registry, Tiptap-as-Puck-field for rich text.
+- Phase 5 expansion will pick a Puck version to pin and freeze the data-shape conversion contract.
+- Phase 6 (AI editing) is unchanged — it operates on `Block[]`, not Puck's `Data`.
+
 ---
 
 <!-- Routine appends future decisions below this line -->
