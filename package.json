@@ -2,6 +2,9 @@
   "name": "anchor-site-template",
   "version": "0.0.1",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
     "build": "vite build",
@@ -13,7 +16,10 @@
     "migrate:up": "node-pg-migrate -m db/migrations up",
     "migrate:down": "node-pg-migrate -m db/migrations down",
     "db:seed": "tsx db/seed.ts",
-    "provision": "tsx scripts/provision-site.ts"
+    "provision": "tsx scripts/provision-site.ts",
+    "build:components": "npm -w @anchorcorps/components run build",
+    "dev:components": "npm -w @anchorcorps/components run dev",
+    "test:components": "npm -w @anchorcorps/components run test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

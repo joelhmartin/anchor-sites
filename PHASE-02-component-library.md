@@ -26,7 +26,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Append `docs/components-publish.md` with: `.npmrc` template for local dev (uses `gcloud auth print-access-token`), CI auth pattern (service account key), repo URL
   - **Tests:** none directly (smoked by 2.7)
 
-- [ ] **2.2 — Monorepo workspaces + package skeleton**
+- [x] **2.2 — Monorepo workspaces + package skeleton**
   - Add `"workspaces": ["packages/*"]` to root `package.json`
   - Create `packages/components/{package.json,tsconfig.json,tsup.config.ts,src/index.ts,README.md}`
   - `package.json` → name `@anchorcorps/components`, version `0.1.0`, `publishConfig.registry` pointing at the AR npm repo, `main`/`module`/`types`/`exports` map
@@ -112,8 +112,19 @@ Every box above checked, AND:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 11:25 UTC — Task 2.1 (Artifact Registry npm repo + auth wiring)
+### 2026-05-19 11:35 UTC — Task 2.2 (Monorepo workspaces + package skeleton)
 **Commit:** (pending — same commit as this log entry)
+**Done:** Added `"workspaces": ["packages/*"]` to root `package.json` plus `build:components` / `dev:components` / `test:components` orchestration scripts. Created `packages/components/` with `package.json` (name `@anchorcorps/components`, version `0.1.0`, `publishConfig.registry` → the AR npm repo, `exports` map covering ESM, CJS, types, and `./styles.css`), `tsconfig.json` (`jsx: "react-jsx"`, strict, `noEmit`), `tsup.config.ts` (ESM + CJS + dts + sourcemaps, externals: react / react-dom / react/jsx-runtime / zod), `vitest.config.ts` (`jsdom`), and `README.md`. First package source landed: `src/index.ts` exports `VERSION` / `blockManifest` / `registerAll` / `BlockManifestEntry` / `RegisterBlockFn`. `src/blocks/manifest.ts` defines the entry shape (structurally compatible with the renderer's `BlockRegistryEntry`) and ships an empty manifest array — populated in 2.5. `RegisterBlockFn` matches the renderer's `registerBlock(type, entry)` signature so the package never imports the renderer (D-016). `dist/` is already gitignored at repo root so the package's build output is auto-excluded.
+**Tests added:** 3 (`packages/components/src/index.test.ts`) — `VERSION` matches `0.1.x`, `blockManifest` is an array, `registerAll` invokes the caller's register once per entry (zero in 0.1.0 skeleton). Package suite: 3 passed. Root renderer suite still 114 passed (unaffected — root vitest globs at `src/**` + `tests/**`, not `packages/**`).
+**Next:** Task 2.3 — Tailwind + cva + clsx + tailwind-merge inside the package; tsup pipeline emits `dist/styles.css`.
+**Notes:**
+- Decision **D-026** (workspaces in this repo) and **D-027** (tsup) are now live. They'll be appended to `DECISIONS.md` as part of Task 2.10's docs pass so the entry can reference what landed.
+- The exports map already advertises `./styles.css`. tsup doesn't produce a CSS file in the 0.1.0 skeleton; 2.3 adds it. Consumers that try to import `@anchorcorps/components/styles.css` before 2.3 will fail, which is acceptable — the renderer swap isn't until 2.8.
+- `tsup` + jsdom + @testing-library landed as devDeps (77 new packages, vulns are in transitive dev-only chains; pre-existing root audit warnings unchanged).
+- Root `tsconfig.json` `include` is scoped to root `src/**` etc. — it doesn't try to typecheck `packages/`. Each package owns its own tsconfig.
+
+### 2026-05-19 11:25 UTC — Task 2.1 (Artifact Registry npm repo + auth wiring)
+**Commit:** 5c86421
 **Done:** Created npm-format Artifact Registry repo `npm-anchorcorps` in `anchor-hub-480305/us-central1` via `gcloud artifacts repositories create`. Wrote `docs/components-publish.md` covering registry coordinates, the `.npmrc` template (token-based auth via `gcloud auth print-access-token`), CI auth pattern (WIF + service-account `roles/artifactregistry.writer` scoped to this repo only), semver policy for `0.x` (manifest changes ride minor bumps with explicit notes), publish flow placeholder for Task 2.7, and a troubleshooting section. No code changes — pure infra + docs.
 **Tests added:** 0 — no code path to test. Repo existence verified via `gcloud artifacts repositories list`. Real publish smoke is Task 2.7.
 **Next:** Task 2.2 — monorepo workspaces + `packages/components/` skeleton + `tsup` build pipeline.
