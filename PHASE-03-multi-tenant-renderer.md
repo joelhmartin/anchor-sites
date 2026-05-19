@@ -47,7 +47,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 ### Media pipeline (large — D-022)
 
-- [ ] **3.6 — Migration: `media_assets` table**
+- [x] **3.6 — Migration: `media_assets` table**
   - `db/migrations/<ts>_media_assets.cjs` creates: `id UUID PK`, `site_id FK→sites ON DELETE CASCADE`, `gcs_key TEXT NOT NULL UNIQUE`, `content_type TEXT NOT NULL`, `alt TEXT DEFAULT ''`, `focal_point JSONB`, `variants_status TEXT CHECK (...) DEFAULT 'pending'`, `original_bytes BIGINT`, `width INT`, `height INT`, `created_at`, `processed_at`, `archived_at`. Index on `(site_id, created_at DESC)`.
   - **Tests:** schema test (table + columns + FK cascade + check constraint + indexes); up + down.
 
@@ -116,6 +116,16 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 14:30 UTC — Task 3.6 (`media_assets` migration)
+**Commit:** (pending — same commit as this log entry)
+**Done:** `db/migrations/1747573000000_media_assets.cjs` creates the `media_assets` table per the D-022 / Phase 3 plan. Columns: `id` (uuid PK), `site_id` (uuid FK → sites ON DELETE CASCADE), `gcs_key` (unique text — canonical original GCS key), `content_type` (text), `alt` (text, default ''), `focal_point` (jsonb — nullable `{x: 0-1, y: 0-1}`), `variants_status` (text, CHECK in `pending|processing|ready|failed`, default pending), `variants` (jsonb — populated by 3.10 with `[{name, format, width, height, url}]` per variant), `original_bytes` (bigint), `width`/`height` (int), `created_at`/`processed_at`/`archived_at` (timestamptz), `last_error` (text). Index `(site_id, created_at)` for the admin-UI listing in Phase 4. Migration applied to dev DB.
+**Tests added:** 2 schema cases — full column shape inventory + FK cascade + CHECK constraint rejects unknown `variants_status`; updated the "migrate down → up" test to count 5 tables instead of 4.
+**Next:** 3.7 — `gcloud` infra (bucket + Cloud CDN + lifecycle + IAM).
+**Notes:**
+- `gcs_key` is `UNIQUE` so the upload-URL endpoint (3.9) can rely on it as a tie-breaker if it ever races. Per-site prefix means cross-tenant collisions are impossible by construction (each site's UUID prefix makes the key globally unique).
+- `variants` is JSONB rather than a separate table — variant rows are derived data, written/read together, never updated incrementally except as a whole replacement. A `media_asset_variants` table would just split a single write into N writes for no query-pattern win.
+- Root suite: 188 → **189** (+1, the two added cases collapse into a single `it(...)` test by design, plus the down/up test counts 5 instead of 4). 29 files.
 
 ### 2026-05-19 14:15 UTC — Task 3.5 (render-time brand-token merge + save-path acceptance) — DEMO MILESTONE
 **Commit:** b3176b7

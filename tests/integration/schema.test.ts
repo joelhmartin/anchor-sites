@@ -156,19 +156,69 @@ d("schema migrations (integration)", () => {
     }
   });
 
+  it("media_assets table has expected shape + FK cascade + check constraint (P3-T3.6)", async () => {
+    const cols = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+      `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='media_assets'
+        ORDER BY ordinal_position`,
+    );
+    const names = cols.rows.map((r) => r.column_name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "id", "site_id", "gcs_key", "content_type", "alt", "focal_point",
+        "variants_status", "variants", "original_bytes", "width", "height",
+        "created_at", "processed_at", "archived_at", "last_error",
+      ]),
+    );
+
+    // FK cascade: dropping the site removes its media rows.
+    const site = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ('ma-cascade', 'MA Cascade') RETURNING id`,
+    );
+    const siteId = site.rows[0].id;
+    await pool.query(
+      `INSERT INTO media_assets (site_id, gcs_key, content_type)
+       VALUES ($1, $2, 'image/png')`,
+      [siteId, `${siteId}/originals/a.png`],
+    );
+    const beforeDrop = await pool.query(`SELECT count(*) FROM media_assets WHERE site_id = $1`, [siteId]);
+    expect(Number(beforeDrop.rows[0].count)).toBe(1);
+
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]);
+    const afterDrop = await pool.query(`SELECT count(*) FROM media_assets WHERE site_id = $1`, [siteId]);
+    expect(Number(afterDrop.rows[0].count)).toBe(0);
+
+    // CHECK constraint on variants_status — need a site row to attach to.
+    const check = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ('ma-check', 'MA Check') RETURNING id`,
+    );
+    const checkSiteId = check.rows[0].id;
+    try {
+      const bad = pool.query(
+        `INSERT INTO media_assets (site_id, gcs_key, content_type, variants_status)
+         VALUES ($1, 'tmp/bad', 'image/png', 'bogus')`,
+        [checkSiteId],
+      );
+      await expect(bad).rejects.toThrow(/check/i);
+    } finally {
+      await pool.query(`DELETE FROM sites WHERE id = $1`, [checkSiteId]);
+    }
+  });
+
   it("migrate down then up returns to clean schema", async () => {
     await runMigrate("down", Infinity);
     const empty = await pool.query(
       `SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN
-       ('sites','site_domains','pages','page_revisions')`,
+       ('sites','site_domains','pages','page_revisions','media_assets')`,
     );
     expect(Number(empty.rows[0].count)).toBe(0);
 
     await runMigrate("up", Infinity);
     const back = await pool.query(
       `SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN
-       ('sites','site_domains','pages','page_revisions')`,
+       ('sites','site_domains','pages','page_revisions','media_assets')`,
     );
-    expect(Number(back.rows[0].count)).toBe(4);
+    expect(Number(back.rows[0].count)).toBe(5);
   }, 60_000);
 });
