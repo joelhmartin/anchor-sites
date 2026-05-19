@@ -113,7 +113,7 @@ Every box above checked, AND:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 13:00 UTC — Task 2.8 (renderer consumption + swap) — DEMO MILESTONE
-**Commit:** (pending — same commit as this log entry)
+**Commit:** fd22302
 **Done:** Renderer now sources `hero`, `cta`, `hero-slider`, `testimonial-carousel`, `logo-reel`, `faq-accordion` from `@anchorcorps/components` via the workspace symlink in dev. The package's `blockManifest` is iterated and every entry registered against the renderer's existing `registerBlock` — the package never imports the renderer's registry (D-016).
 - Root `package.json` adds `"@anchorcorps/components": "*"` as a runtime dep. npm workspaces creates the `node_modules/@anchorcorps/components → packages/components` symlink on `npm install`.
 - `src/blocks/index.ts` rewritten — pulls `blockManifest` from the package, loops `registerBlock(type, rest)`, then side-effect imports `./rich-text/index.js` so the inline rich-text block (deferred to Phase 5 / Tiptap) stays registered.
