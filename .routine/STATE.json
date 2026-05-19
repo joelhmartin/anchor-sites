@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 2,
   "current_phase_file": "PHASE-02-component-library.md",
-  "current_task": "2.8",
+  "current_task": "2.9",
   "phase_started_at": "2026-05-19T11:15:00Z",
   "last_commit_sha": "95080a8",
   "last_email_sent_at": null,
@@ -17,15 +17,18 @@
     "phase1-provisioning-automated",
     "phase2-started",
     "phase2-package-built-locally",
-    "phase2-package-published-0.1.0"
+    "phase2-package-published-0.1.0",
+    "phase2-renderer-on-package-blocks"
   ],
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 114,
+    "current_pass": 110,
     "current_fail": 0,
     "current_skipped": 0,
-    "last_run_at": "2026-05-19T11:09:32Z"
+    "current_pass_package_components": 46,
+    "last_run_at": "2026-05-19T11:52:00Z",
+    "notes": "Root suite went from 114 → 110 after Phase 2 Task 2.8 swap: four Phase-1 hero/cta-specific tests removed from src/blocks/blocks.test.tsx because the package now owns those blocks. Net coverage gained: the package suite (current_pass_package_components: 46) covers them plus 4 new blocks + primitives + manifest contract."
   },
   "phase_2_approved": true
 }

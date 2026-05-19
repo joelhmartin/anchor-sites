@@ -1,8 +1,40 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as pathResolve } from "node:path";
 import { renderToString } from "react-dom/server";
 import type { ReactElement } from "react";
 import { BlockRenderer } from "../components/BlockRenderer.js";
 import type { Block } from "../blocks/types.js";
 import type { ResolvedSite } from "../middleware/resolveSite.js";
+
+/**
+ * Inline the @anchorcorps/components prebuilt CSS bundle + the inline
+ * rich-text CSS into the SSR'd HTML once at module-load. The renderer
+ * has no client-side hydration that would normally pick up a bundled
+ * stylesheet, so we serve all block CSS via the shell's <style> tag.
+ * Package CSS resolves through createRequire (workspace symlink in dev,
+ * AR-installed copy in prod); the rich-text CSS lives inside this repo
+ * so it resolves by absolute path off `import.meta.url`.
+ */
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const requireFromHere = createRequire(import.meta.url);
+function tryReadFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+function tryReadPackageAsset(specifier: string): string {
+  try {
+    return readFileSync(requireFromHere.resolve(specifier), "utf8");
+  } catch {
+    return "";
+  }
+}
+const PACKAGE_BLOCK_CSS = tryReadPackageAsset("@anchorcorps/components/styles.css");
+const RICH_TEXT_CSS = tryReadFile(pathResolve(__dirname, "../blocks/rich-text/styles.css"));
 
 export type PageRecord = {
   title: string;
@@ -45,7 +77,7 @@ function shell(opts: {
   extraCss?: string;
 }): { html: string; status: number } {
   const brandStyle = brandTokenCss(opts.site.default_brand_tokens ?? {});
-  const styles = `:root { ${brandStyle} }${SHELL_BASE_CSS}${opts.extraCss ?? ""}`;
+  const styles = `:root { ${brandStyle} }${SHELL_BASE_CSS}${PACKAGE_BLOCK_CSS}${RICH_TEXT_CSS}${opts.extraCss ?? ""}`;
 
   const html = `<!doctype html>
 <html lang="en" data-site-slug="${escapeHtml(opts.site.slug)}">

@@ -1,105 +1,83 @@
 import { describe, it, expect } from "vitest";
 import { renderToString } from "react-dom/server";
 import { createElement } from "react";
-// Side-effect imports register each block in the registry.
-import { heroSchema, Hero } from "./hero/index.js";
+
+// Importing `./index.js` registers the package blocks + the inline
+// rich-text block against the renderer's registry via side effects.
+import "./index.js";
 import { richTextSchema, RichText } from "./rich-text/index.js";
-import { ctaSchema, Cta } from "./cta/index.js";
 import { getBlock, listBlocks } from "./registry.js";
 
-describe("static block side-effect registration", () => {
-  it("hero, rich-text, and cta are all in the registry after import", () => {
+describe("block registration after src/blocks/index.ts loads", () => {
+  it("registers the Phase 1 ports from the package", () => {
+    // Schema parity — these come from @anchorcorps/components now.
     expect(getBlock("hero")?.label).toBe("Hero");
+    expect(getBlock("cta")?.label).toBe("Call to action");
+  });
+
+  it("registers the new blocks shipped by the package (v0.1)", () => {
+    expect(getBlock("hero-slider")?.category).toBe("header");
+    expect(getBlock("testimonial-carousel")?.category).toBe("content");
+    expect(getBlock("logo-reel")?.category).toBe("content");
+    expect(getBlock("faq-accordion")?.category).toBe("content");
+  });
+
+  it("registers the inline rich-text block (kept inline pending Phase 5 Tiptap)", () => {
     expect(getBlock("rich-text")?.label).toBe("Rich text");
-    expect(getBlock("cta")?.label).toBe("CTA banner");
+  });
+
+  it("listBlocks contains every expected type", () => {
     const types = listBlocks().map((r) => r.type).sort();
-    // Subset check — registry.test.ts may have added test fixtures earlier in the file order.
-    expect(types).toEqual(expect.arrayContaining(["cta", "hero", "rich-text"]));
+    expect(types).toEqual(
+      expect.arrayContaining([
+        "cta",
+        "faq-accordion",
+        "hero",
+        "hero-slider",
+        "logo-reel",
+        "rich-text",
+        "testimonial-carousel",
+      ]),
+    );
   });
 });
 
-describe("block schemas", () => {
-  describe("hero", () => {
-    it("validates a valid props object", () => {
-      const parsed = heroSchema.parse({ title: "Hello" });
-      expect(parsed.title).toBe("Hello");
-      expect(parsed.align).toBe("center"); // default
-      expect(parsed.cta_label).toBe("Get started"); // default
-    });
-
-    it("fills defaults when given an empty object", () => {
-      const parsed = heroSchema.parse({});
-      expect(parsed.title).toBe("Headline goes here");
-    });
-
-    it("rejects invalid props", () => {
-      expect(() => heroSchema.parse({ title: "" })).toThrow();
-      expect(() => heroSchema.parse({ align: "diagonal" })).toThrow();
-    });
+describe("inline rich-text block", () => {
+  it("accepts an HTML string", () => {
+    const parsed = richTextSchema.parse({ html: "<p>hi</p>" });
+    expect(parsed.html).toBe("<p>hi</p>");
+    expect(parsed.max_width).toBe("medium");
   });
 
-  describe("rich-text", () => {
-    it("accepts an HTML string", () => {
-      const parsed = richTextSchema.parse({ html: "<p>hi</p>" });
-      expect(parsed.html).toBe("<p>hi</p>");
-      expect(parsed.max_width).toBe("medium"); // default
-    });
-
-    it("rejects an invalid max_width", () => {
-      expect(() => richTextSchema.parse({ max_width: "huge" })).toThrow();
-    });
+  it("rejects an invalid max_width", () => {
+    expect(() => richTextSchema.parse({ max_width: "huge" })).toThrow();
   });
 
-  describe("cta", () => {
-    it("validates and applies defaults", () => {
-      const parsed = ctaSchema.parse({ heading: "Hey" });
-      expect(parsed.heading).toBe("Hey");
-      expect(parsed.button_label).toBe("Contact us");
-      expect(parsed.variant).toBe("primary");
-    });
-
-    it("rejects empty heading", () => {
-      expect(() => ctaSchema.parse({ heading: "" })).toThrow();
-    });
-
-    it("rejects unknown variant", () => {
-      expect(() => ctaSchema.parse({ variant: "danger" })).toThrow();
-    });
-  });
-});
-
-describe("block components render via SSR", () => {
-  it("Hero renders with ac- classes and the title", () => {
-    const html = renderToString(createElement(Hero, heroSchema.parse({ title: "Hi" })));
-    expect(html).toContain("ac-hero");
-    expect(html).toContain("ac-hero__title");
-    expect(html).toContain("Hi");
-  });
-
-  it("RichText renders dangerouslySetInnerHTML content", () => {
+  it("renders dangerouslySetInnerHTML content via SSR", () => {
     const html = renderToString(
       createElement(RichText, richTextSchema.parse({ html: "<p>body</p>" })),
     );
     expect(html).toContain("ac-rich-text");
     expect(html).toContain("<p>body</p>");
   });
+});
 
-  it("Cta renders heading and button", () => {
+describe("architectural anchors via SSR on a registered hero block", () => {
+  it("rendered hero never emits an inline font-family declaration (D-005)", () => {
+    const entry = getBlock("hero");
+    if (!entry) throw new Error("hero not registered");
     const html = renderToString(
-      createElement(
-        Cta,
-        ctaSchema.parse({ heading: "Hey", button_label: "Go", button_href: "/x" }),
-      ),
+      createElement(entry.component, entry.schema.parse({ title: "x" })),
     );
-    expect(html).toContain("ac-cta");
-    expect(html).toContain("Hey");
-    expect(html).toContain("Go");
-    expect(html).toContain('href="/x"');
+    expect(html).not.toMatch(/font-family\s*:/i);
   });
 
-  it("rendered Hero never contains a font-family declaration", () => {
-    const html = renderToString(createElement(Hero, heroSchema.parse({ title: "x" })));
-    // Components must not emit inline font-family per architectural anchor #8.
-    expect(html).not.toMatch(/font-family\s*:/i);
+  it("rendered hero carries the ac-hero root class", () => {
+    const entry = getBlock("hero");
+    if (!entry) throw new Error("hero not registered");
+    const html = renderToString(
+      createElement(entry.component, entry.schema.parse({ title: "x" })),
+    );
+    expect(html).toContain("ac-hero");
   });
 });

@@ -68,7 +68,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Document the tag-and-publish flow in `docs/components-publish.md`
   - **Tests:** dry-run publish (`npm publish --dry-run`) added to PR CI; first real publish lands `0.1.0` to the AR repo as a manual smoke
 
-- [ ] **2.8 — Renderer consumption + swap**
+- [x] **2.8 — Renderer consumption + swap**
   - Root `package.json` adds `@anchorcorps/components` as workspace dep (`workspace:*` for dev, pinned `^0.1.0` for deploy)
   - `src/blocks/index.ts` rewrites to import `blockManifest` and loop `registerBlock`
   - Delete `src/blocks/hero/`, `src/blocks/cta/` and their tests — the package owns them
@@ -111,6 +111,22 @@ Every box above checked, AND:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 13:00 UTC — Task 2.8 (renderer consumption + swap) — DEMO MILESTONE
+**Commit:** (pending — same commit as this log entry)
+**Done:** Renderer now sources `hero`, `cta`, `hero-slider`, `testimonial-carousel`, `logo-reel`, `faq-accordion` from `@anchorcorps/components` via the workspace symlink in dev. The package's `blockManifest` is iterated and every entry registered against the renderer's existing `registerBlock` — the package never imports the renderer's registry (D-016).
+- Root `package.json` adds `"@anchorcorps/components": "*"` as a runtime dep. npm workspaces creates the `node_modules/@anchorcorps/components → packages/components` symlink on `npm install`.
+- `src/blocks/index.ts` rewritten — pulls `blockManifest` from the package, loops `registerBlock(type, rest)`, then side-effect imports `./rich-text/index.js` so the inline rich-text block (deferred to Phase 5 / Tiptap) stays registered.
+- `src/blocks/hero/` + `src/blocks/cta/` deleted. `src/blocks/styles.ts` deleted (was unused — never imported by the client entry).
+- `src/server/render-page.tsx` now inlines two CSS bundles into the SSR'd `<style>` tag: the package's prebuilt `dist/styles.css` (resolved via `createRequire(import.meta.url).resolve("@anchorcorps/components/styles.css")`) and the inline `rich-text/styles.css` (resolved via `path.resolve(__dirname, "../blocks/rich-text/styles.css")`). Both wrapped in `try/catch` so a missing file degrades silently rather than crashing the server. Read once at module-load and cached.
+- `src/blocks/blocks.test.tsx` rewritten — drops the hero+cta-specific schema and component tests (the package owns them now), keeps registration assertions across all seven types, keeps rich-text schema + SSR tests, keeps the "no inline font-family on Hero" architectural-anchor test but now resolves the Hero component via the registry rather than importing it directly.
+**Tests added/changed:** Root suite went from 114 → **110** (lost 4 tests that lived in Phase 1's inline hero/cta and the schema/SSR sections of `blocks.test.tsx`). Those 4 tests are replaced by the package suite's 15 block render tests + 8 manifest contract tests + 23 primitive tests = **46 in the package**. Net total **156**, vs Phase 1 finish of **114** — every Phase 1 invariant is still under test, plus the new blocks. `tests/integration/page-render.test.ts` still passes 6/6, including its `expect(res.text).toContain("ac-hero")` / `"ac-cta"` assertions against the seeded muldoon-dental + demo sites. Renderer typecheck clean.
+**Next:** Task 2.9 — workspace test orchestration (`vitest.workspace.ts` or a root script that runs both suites), `dev:components` watcher for HMR, Cloud Build renderer trigger gains a token-authed `.npmrc` so prod `npm ci` can resolve `@anchorcorps/components` from AR.
+**Notes:**
+- **Latent Phase 1 CSS gap fixed as a side effect.** Phase 1's `src/blocks/styles.ts` was never imported by `src/main.jsx` or the server, so the seeded production sites likely rendered with only the shell base CSS — `.ac-hero`, `.ac-cta`, `.ac-rich-text` rules were never reaching the browser. The 2.8 swap inlines the package CSS bundle (and the inline rich-text CSS) directly into the SSR'd `<style>` tag, which closes that gap. The next production deploy will visibly improve.
+- **No `.npmrc` committed.** Workspace symlink doesn't need one. Task 2.9 adds the prod-side `.npmrc` template (gitignored) + Cloud Build wiring.
+- **Pin policy for production deploys:** root `package.json` currently has `"@anchorcorps/components": "*"`. Task 2.9 narrows this to `"^0.1.0"` once we confirm AR-resolution works in the renderer's Cloud Build trigger — keeps the workspace-symlinked dev path identical to today.
+- The renderer's tests intentionally do **not** test the package's blocks beyond registration + the no-font-family anchor — that's the package suite's job. This keeps the boundary clean and avoids drift if the package internals change.
 
 ### 2026-05-19 12:50 UTC — Task 2.7 (publish workflow + first publish) — DEMO MILESTONE
 **Commit:** 95080a8
