@@ -444,4 +444,53 @@ Anything else (raw URL, JS expression, multi-line value, unbalanced parens) is r
 - Anywhere brand tokens enter the system (P3-T3.4 admin save for `pages.brand_tokens_override`, the future Phase 4 admin-UI site-row editor, `db/seed.ts` for the seeded sites), validate via `brandTokensSchema.parse(...)` or `safeParse(...)` before commit.
 - At render time (P3-T3.5), the renderer merges site default + page override via `mergeBrandTokens(...)` and serializes the result into the `<style>` tag. No re-validation at render time — the data was validated when written.
 
+### D-030: pg-boss boot pattern — Express-process worker by default, `JOBS_ENABLED=false` opt-out
+
+**Context:** Phase 3 is the first phase that needs background work (variant generation, future DNS polling, future CRM sync retries). D-019 picked pg-boss as the queue. Two boot models were on the table:
+- **Same process:** Express + pg-boss worker share the Node process. One image, one Cloud Run service.
+- **Separate process:** Express service + dedicated worker service. Two Cloud Run services off the same image (different `CMD` / env).
+
+**Decision:** Same-process worker is the **v0.1 default**. `src/server/index.ts` calls `bootJobs(pool)` after the HTTP listener starts. `JOBS_ENABLED=false` (env) returns a no-op handle so tests, one-off scripts, and any future fan-out scenario can skip the worker. The boot path coalesces concurrent calls via a module-level `bootPromise` so two parallel boots never produce two pg-boss instances.
+
+**Rationale:**
+- **Cheapest correct answer for v0.1.** One image, one service, one auto-scaling profile, one observability surface.
+- **No new infrastructure.** pg-boss creates its own `pgboss.*` schema in the existing Postgres at boot. No Redis, no Cloud Tasks IAM dance.
+- **Easy escape hatch.** A future workload that needs isolated worker scaling can run the same image with `JOBS_ENABLED=true` and request scaling tuned for the worker pool, while the renderer service runs with `JOBS_ENABLED=false` to skip the local worker.
+
+**Alternatives considered:**
+- Always-separate worker: rejected — premature for the load profile (a few dozen image uploads/day for the foreseeable future). Re-evaluate if a job class needs >1m of CPU per task.
+- Auto-discover handlers from the filesystem: rejected — explicit `registerHandlers(boss)` keeps the worker boot path one greppable list. Adding a job is one import + one line.
+
+**How to apply:** New jobs add their handler module under `src/server/jobs/<name>.ts`, import + register inside `registerHandlers`. Tests use `bootJobs(pool, { extraHandlers })` + `__resetJobsForTests()` for isolation.
+
+### D-031: Media URL shape — content-hash-suffixed immutable variants; v0.1 serves from `storage.googleapis.com` (Cloud CDN deferred)
+
+**Context:** The Image block needs a stable, cacheable URL for each variant. The variant job (3.10) re-runs are possible (retries, re-processing), so the URL must be deterministic across runs of identical input while still invalidating freely when content changes. Cloud CDN under `media.anchorcorps.com` is the eventual home; Phase 3 doesn't ship it.
+
+**Decision:** Variant URLs follow:
+
+```
+https://storage.googleapis.com/anchorcorps-media/variants/<site_id>/<asset_id>-<variant>.<hash>.<ext>
+```
+
+- `<variant>` ∈ `thumbnail | sm | md | lg | 2x` (200w / 480w / 768w / 1280w / 2560w).
+- `<hash>` is the first 10 hex chars of `sha256(variant_bytes)`. Different bytes → different URL → free cache invalidation. Same bytes (e.g. re-running the variant job on the same source) → same URL → idempotent overwrite.
+- `<ext>` ∈ `webp | jpg`. Each variant ships in BOTH formats so the `<picture>` block can pick.
+- Cache-Control on every variant: `public, max-age=31536000, immutable`. The URL changes whenever content does, so this is safe.
+- Originals are PRIVATE under `originals/<site_id>/<asset_id>.<ext>` — only signed URLs can read or write them.
+
+**Cloud CDN behind `media.anchorcorps.com` is deferred** to a Phase 12 hardening task. The Image block calls a helper `variantPublicUrl(...)` so the eventual switch is a one-function change.
+
+**Rationale:**
+- **Content-hashed URLs are the standard immutable-asset pattern.** No invalidation API needed; the URL itself encodes the version.
+- **Per-site prefix isolation.** Cross-tenant collision is impossible by UUID construction.
+- **No upscaling.** The variant job caps each variant's target width at the source width. Smaller images don't get fake-large variants; the `<picture>` srcset just lists fewer entries.
+
+**Alternatives considered:**
+- Version-in-DB instead of content hash: rejected — adds a write path on every re-process + opens up cache-bust races.
+- `?v=...` query string instead of path-embedded hash: rejected — some CDNs ignore query strings for cache key by default.
+- One format per variant: rejected — WebP/AVIF support varies enough that JPG fallback matters for older browsers (D-005 wants the renderer to "just work" without runtime detection logic).
+
+**How to apply:** Job writes to `variants/<site_id>/<asset_id>-<variant>.<hash>.<ext>` with the immutable cache header. The Image block (3.12) iterates `media_assets.variants` and assembles a `<picture>` with WebP `<source>` (srcset across the five widths) + JPG `<img>` fallback. The Phase 12 CDN switch only touches `variantPublicUrl(...)`.
+
 <!-- Routine appends future decisions below this line -->

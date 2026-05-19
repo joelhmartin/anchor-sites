@@ -63,7 +63,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - `POST /api/sites/:siteId/media/upload-url` (`requireAdmin` + `rateLimit`). Body: `{ content_type, alt?, focal_point? }`. Validates `content_type` matches `image/(jpeg|png|webp|avif|gif)`. Inserts a `media_assets` row (`variants_status='pending'`, `gcs_key=<site_id>/originals/<asset_id>.<ext>`). Returns `{ asset_id, upload_url, expires_at, headers }`. Signed via the GCS client SDK with a 15-minute window.
   - **Tests:** auth gate; rate-limit gate; bad content_type 400; valid request returns shape; row inserted; idempotency optional.
 
-- [ ] **3.10 — Variant-generation job (sharp)**
+- [x] **3.10 — Variant-generation job (sharp)**
   - `src/server/jobs/media-process-upload.ts` — pg-boss handler for `media.process-upload`. Downloads the original from GCS, runs `sharp` to produce variants (`thumbnail` 200w, `sm` 480w, `md` 768w, `lg` 1280w, `2x` 2560w) in both WebP + JPG, content-hashes each, uploads with `Cache-Control: public, max-age=31536000, immutable`, records variant URLs in a `media_assets.variants JSONB` column, sets `variants_status='ready'`. Retries via pg-boss on transient failure. Append decision **D-031**.
   - **Tests:** job handler against an in-process fake GCS (the GCS client SDK has a test mode or we stub the storage client); pending → ready transition; variants array shape; retry behavior on transient error.
 
@@ -117,8 +117,23 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 15:30 UTC — Task 3.9 (signed-URL upload endpoint)
+### 2026-05-19 15:55 UTC — Task 3.10 (sharp variant-generation pg-boss job)
 **Commit:** (pending — same commit as this log entry)
+**Done:** `media.process-upload` pg-boss job lands. Took the original from a `media_assets` row, runs `sharp` to produce **5 sizes × 2 formats = 10 variants**, content-hashes each, writes to GCS with `Cache-Control: public, max-age=31536000, immutable`, updates the row with `variants_status='ready'`, the variant JSON, source `width`/`height`, `original_bytes`, and `processed_at`. Logged decisions **D-030** (pg-boss boot pattern) and **D-031** (media URL shape).
+- **`src/server/media/variant-spec.ts`** — single source of truth for variant sizes/formats + URL/key helpers. Phase 12 Cloud CDN switch will only modify `variantPublicUrl`.
+- **`src/server/jobs/media-process-upload.ts`** — the handler. Idempotent (`ready` rows short-circuit). Updates `variants_status='processing'` on entry; sets `'ready'` on success or `'failed'` + `last_error` on error (then rethrows so pg-boss records the failure + retries).
+- **`src/server/jobs/index.ts`** — `registerHandlers` now creates the `media.process-upload` queue and wires the handler.
+- Added `sharp` as a runtime dep.
+**Tests added:** 4 (`tests/integration/media-process-upload.test.ts`) — 10-variant happy path with real sharp pipeline + fake-GCS in-memory backend + DB-row transition + immutable cache header verification; no-upscale behavior on a 300×300 source (sm and 2x both cap at 300w); failure path (missing original → variants_status='failed' + last_error rethrown); idempotency (already-ready row no-ops with zero writes).
+**Next:** 3.11 — upload-complete callback (enqueues this job).
+**Notes:**
+- **Fake GCS** is a tiny `Map<string, Buffer>` exposing `bucket(name).file(key).download()` + `.save()` — exactly the surface the handler uses. Real GCS would be a manual smoke step in 3.14, not part of automated coverage.
+- **Sharp does real work in tests.** Generating + resizing + encoding the 1600×900 fixture across 10 variants takes ~400ms wall time, well within the 30s test timeout. The fixture is built in-memory via `sharp({ create: ... })` so no on-disk binary fixtures are committed.
+- **Content hash is 10 hex chars (40 bits)** — collision probability is negligible at the per-asset+variant scale, and short URLs read cleanly.
+- **Sharp installed cleanly via npm.** It ships prebuilt binaries for `darwin-arm64` + `linux-x64-musl` (Alpine), so the existing Dockerfile picks up the Linux variant on build. No native-build toolchain required in the image.
+
+### 2026-05-19 15:30 UTC — Task 3.9 (signed-URL upload endpoint)
+**Commit:** a130c11
 **Done:** Admin can mint a v4 signed PUT URL for a fresh original. Added `@google-cloud/storage` as a runtime dep. New module + router:
 - **`src/server/media/storage.ts`** — lazily-constructed `Storage` client (auto-discovers ADC in prod/dev, accepts `__setStorageForTests` injection). Exports `signUploadUrl({ gcsKey, contentType, expiresMs? })` (v4 signed PUT, 15min default) + `extForContentType(ct)` (whitelist of jpeg/png/webp/avif/gif) + `MEDIA_BUCKET` constant (`anchorcorps-media` by default, env-overridable). The dependency-injection hook on the route makes the tests use a stub signer — no real GCS calls needed for unit coverage.
 - **`src/server/routes/media.ts`** — `mediaRouter(opts)` exposing `POST /api/sites/:siteId/media/upload-url`. Validates `{ content_type, alt?, focal_point? }` via Zod (focal-point coords clamped 0-1). Verifies the site exists (404 on miss). Inserts `media_assets` row with `gcs_key='pending'`, gets the new uuid back, then `UPDATE`s `gcs_key` to `originals/<site_id>/<asset_id>.<ext>` so the row is self-consistent. Calls the injected signer + returns `{ asset_id, gcs_key, upload_url, expires_at, headers }`.

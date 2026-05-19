@@ -1,5 +1,12 @@
 import { PgBoss } from "pg-boss";
 import type { Pool } from "pg";
+import { pool as defaultPool } from "../db.js";
+import {
+  handleMediaProcessUpload,
+  type MediaProcessUploadInput,
+} from "./media-process-upload.js";
+
+export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 
 /**
  * pg-boss bootstrap (D-030, P3-T3.8).
@@ -125,9 +132,11 @@ export async function stopJobs(): Promise<void> {
  * Task 3.10. The empty function is intentional so the boot path is
  * exercised end-to-end before any real workload.
  */
-async function registerHandlers(_boss: PgBoss): Promise<void> {
-  // P3-T3.10 will add:
-  //   await boss.work("media.process-upload", handleMediaProcessUpload);
+async function registerHandlers(boss: PgBoss): Promise<void> {
+  await boss.createQueue(MEDIA_PROCESS_UPLOAD);
+  await boss.work<MediaProcessUploadInput>(MEDIA_PROCESS_UPLOAD, async ([job]) => {
+    await handleMediaProcessUpload(job.data, { pool: defaultPool });
+  });
 }
 
 /**
