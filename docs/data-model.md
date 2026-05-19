@@ -10,14 +10,14 @@ The top-level multi-tenant entity.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `uuid` (PK) | `gen_random_uuid()` |
-| `slug` | `text` UNIQUE | Used for `<slug>.preview.anchorcorps.dev` fallback domain resolution |
+| `slug` | `text` UNIQUE | Used for `<slug>.sites.anchorcorps.com` fallback domain resolution |
 | `display_name` | `text` | Shown in admin UI |
 | `status` | `text` | CHECK: `'active' \| 'archived' \| 'suspended'`. Default `'active'` |
 | `default_brand_tokens` | `jsonb` | Per-site CSS custom properties — e.g. `{"--theme-main": "#0a3d62"}`. Injected into HTML `<head>` by the renderer (Task 1.6) |
 | `created_at` | `timestamptz` | |
 
 ### `site_domains`
-Schema defined in Phase 1. The Phase 1 seed populates the four dev/preview hostnames (`muldoon.preview.anchorcorps.dev`, `muldoon.localhost`, `demo.preview.anchorcorps.dev`, `demo.localhost`); Phase 10 (domain provisioning) adds client-owned custom domains. The Phase 1 renderer falls back to subdomain → `sites.slug` resolution for `*.preview.anchorcorps.dev` and `*.anchorcorps.dev` when no `site_domains` row matches.
+Schema defined in Phase 1. The Phase 1 seed populates the four dev/preview hostnames (`muldoon.sites.anchorcorps.com`, `muldoon.localhost`, `demo.sites.anchorcorps.com`, `demo.localhost`); Phase 10 (domain provisioning) adds client-owned custom domains. The Phase 1 renderer falls back to subdomain → `sites.slug` resolution for `*.sites.anchorcorps.com` and `*.anchorcorps.com` (Phase 10 only) when no `site_domains` row matches.
 
 | Column | Type | Notes |
 |---|---|---|

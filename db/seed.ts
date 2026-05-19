@@ -25,7 +25,7 @@ const SITES: SiteSeed[] = [
       "--theme-main": "#0a3d62",
       "--theme-accent": "#f6b93b",
     },
-    domains: ["muldoon.preview.anchorcorps.dev", "muldoon.localhost"],
+    domains: ["muldoon.sites.anchorcorps.com", "muldoon.localhost"],
     pages: [
       {
         slug: "home",
@@ -80,7 +80,7 @@ const SITES: SiteSeed[] = [
       "--theme-main": "#1f1f1f",
       "--theme-accent": "#22c55e",
     },
-    domains: ["demo.preview.anchorcorps.dev", "demo.localhost"],
+    domains: ["demo.sites.anchorcorps.com", "demo.localhost"],
     pages: [
       {
         slug: "home",
@@ -136,6 +136,12 @@ export async function seed(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // Sweep legacy hostnames from earlier seeds (we switched preview.anchorcorps.dev
+    // → sites.anchorcorps.com per D-025). Idempotent — no-op once the rows are gone.
+    await client.query(
+      `DELETE FROM site_domains WHERE hostname LIKE '%anchorcorps.dev'`,
+    );
 
     let pageCount = 0;
     let domainCount = 0;

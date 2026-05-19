@@ -28,7 +28,7 @@ after that.
 | Cloud SQL Postgres instance   | `anchor-postgres` in `us-central1`            |
 | Cloud SQL DB + user           | DB `anchor_prod`, user `anchor` (strong pw)   |
 | Artifact Registry repo (Docker) | `anchor` in `us-central1`                   |
-| Domain you control            | `anchorcorps.dev` (Route53 / Cloud DNS / etc) |
+| Domain you control            | `anchorcorps.com` (Route53 / Cloud DNS / etc) |
 | `gcloud auth login` + `gcloud config set project ...` done             |
 
 All commands below assume those are populated. Replace placeholders before pasting.
@@ -183,8 +183,8 @@ gcloud run jobs create anchor-sites-seed \
 gcloud run jobs execute anchor-sites-seed --region=us-central1 --wait
 ```
 
-The seed inserts `muldoon.preview.anchorcorps.dev` and
-`demo.preview.anchorcorps.dev` into `site_domains`, so once the wildcard
+The seed inserts `muldoon.sites.anchorcorps.com` and
+`demo.sites.anchorcorps.com` into `site_domains`, so once the wildcard
 domain is mapped (step 9) both hostnames will resolve.
 
 ## 9 — Wildcard domain mapping
@@ -196,7 +196,7 @@ domain is mapped (step 9) both hostnames will resolve.
 
 gcloud beta run domain-mappings create \
   --service=anchor-sites \
-  --domain='*.preview.anchorcorps.dev' \
+  --domain='*.sites.anchorcorps.com' \
   --region=us-central1
 ```
 
@@ -204,7 +204,7 @@ If wildcard mapping returns "not supported in region", fall back to
 per-subdomain mappings for the two seeded sites and log a blocker:
 
 ```bash
-for sub in muldoon.preview.anchorcorps.dev demo.preview.anchorcorps.dev; do
+for sub in muldoon.sites.anchorcorps.com demo.sites.anchorcorps.com; do
   gcloud beta run domain-mappings create \
     --service=anchor-sites --domain=$sub --region=us-central1
 done
@@ -217,8 +217,8 @@ automatically once DNS resolves.
 ## 10 — Confirm the demo URLs
 
 ```bash
-curl -s https://muldoon.preview.anchorcorps.dev/ | head -40
-curl -s https://demo.preview.anchorcorps.dev/   | head -40
+curl -s https://muldoon.sites.anchorcorps.com/ | head -40
+curl -s https://demo.sites.anchorcorps.com/   | head -40
 ```
 
 Both should return real HTML with the seeded hero / rich-text / cta

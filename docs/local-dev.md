@@ -39,9 +39,9 @@ The seed in `db/seed.ts` adds these dev hostnames:
 
 | Host                              | Site            |
 | --------------------------------- | --------------- |
-| `muldoon.preview.anchorcorps.dev` | `muldoon-dental`|
+| `muldoon.sites.anchorcorps.com` | `muldoon-dental`|
 | `muldoon.localhost`               | `muldoon-dental`|
-| `demo.preview.anchorcorps.dev`    | `demo-site`     |
+| `demo.sites.anchorcorps.com`    | `demo-site`     |
 | `demo.localhost`                  | `demo-site`     |
 
 `*.localhost` resolves to `127.0.0.1` automatically on macOS and most modern

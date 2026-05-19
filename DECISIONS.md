@@ -325,4 +325,29 @@
 - `docs/deploy.md` updated to reflect existing resources; only **new** resources are: the `anchor_sites` Cloud SQL user, the `anchor_sites_prod` database, the `ANCHOR_SITES_DATABASE_URL` + `ANCHOR_SITES_ADMIN_API_TOKEN` secrets, and the `anchor-sites` Cloud Run service. Everything else is reuse.
 - Phase 10 (domain provisioning) will still map `*.preview.anchorcorps.dev` and per-client domains to the `anchor-sites` Cloud Run service, not to anchor-hub.
 
+### D-025: Preview/builder URLs live under `*.sites.anchorcorps.com`, not `*.preview.anchorcorps.dev`
+
+**Context:** Earlier task drafts (and the first BLOCKERS.md entry B-002) referenced `*.preview.anchorcorps.dev` as the wildcard parent for Phase 1 sites. The operator does not own `anchorcorps.dev`; they own `anchorcorps.com` (matches the jmartin@anchorcorps.com account on gcloud). The domain placeholder needed to land on a domain they actually control.
+
+**Decision:** Builder preview / staging / production-tenant URLs live at `*.sites.anchorcorps.com`.
+- Seeded hostnames: `muldoon.sites.anchorcorps.com`, `demo.sites.anchorcorps.com` (plus `muldoon.localhost`, `demo.localhost` for local dev).
+- `resolveSite` subdomain-fallback regex narrowed to `^([a-z0-9][a-z0-9-]*)\.sites\.anchorcorps\.com$` so non-`sites.` subdomains under `anchorcorps.com` (mail, www, blog, etc.) never get mis-routed to the builder.
+- Phase 10 client-owned custom domains still flow through explicit `site_domains` rows — D-025 doesn't constrain them.
+
+**Rationale:**
+- **Real domain ownership.** `*.dev` cost money to acquire, requires HSTS preload, and provides zero advantage here. `*.sites.anchorcorps.com` is free, already controlled, and visually clearer ("the AnchorCorps sites layer").
+- **Layer-3 label `sites` keeps the apex free** for the main `anchorcorps.com` marketing site, plus any future ops subdomains.
+- **Narrow regex prevents accidental tenant resolution** on hostnames that exist for other reasons under `anchorcorps.com`.
+
+**How to apply:**
+- `db/seed.ts` UPSERTs the new hostnames and also DELETEs any `*anchorcorps.dev` legacy rows before inserting (idempotent — no-op once cleaned).
+- `cloudbuild.yaml` and `docs/deploy.md` reference `anchor-hub-480305` and `*.sites.anchorcorps.com` directly.
+- `BLOCKERS.md` B-002 updated: verification target is now `anchorcorps.com` (Search Console TXT at the apex), and the eventual `gcloud beta run domain-mappings create --domain='*.sites.anchorcorps.com'`.
+- Earlier PHASE-01 completion log entries and DEMO-LOG entries that mention `anchorcorps.dev` are left as-is (append-only history). The new completion log entry below this decision records the switch.
+
+**Alternatives considered:**
+- Buying `anchorcorps.dev` — rejected; no operational win, just calendar friction during Phase 1.
+- Using the apex `*.anchorcorps.com` with no layer-3 label — rejected; collides with future marketing site / mail / ops subdomains and forces the resolver to be careful about what it claims.
+- A different parent label (`preview.`, `apps.`, `builder.`) — `sites.` reads cleanest for the actual product surface (tenant sites). `preview.` was confusing because production tenant URLs aren't a "preview" of anything once a client is live.
+
 <!-- Routine appends future decisions below this line -->

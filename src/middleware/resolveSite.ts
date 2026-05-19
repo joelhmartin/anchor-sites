@@ -35,9 +35,11 @@ export function __clearResolveSiteCacheForTests(): void {
 }
 
 // Subdomain fallback for sites that don't have an explicit site_domains row
-// yet. `muldoon.preview.anchorcorps.dev` and `muldoon.anchorcorps.dev` both
-// map to whichever site has `slug = 'muldoon'`.
-const SUBDOMAIN_RE = /^([a-z0-9][a-z0-9-]*)\.(?:preview\.)?anchorcorps\.dev$/i;
+// yet. `muldoon.sites.anchorcorps.com` → whichever site has `slug = 'muldoon'`.
+// The regex is intentionally scoped to `*.sites.anchorcorps.com` so non-sites
+// subdomains under anchorcorps.com (mail, www, etc.) are never mis-routed —
+// Phase 10 client-owned domains go through explicit `site_domains` rows.
+const SUBDOMAIN_RE = /^([a-z0-9][a-z0-9-]*)\.sites\.anchorcorps\.com$/i;
 
 function stripPort(host: string): string {
   const portIdx = host.indexOf(":");

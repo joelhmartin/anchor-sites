@@ -119,10 +119,10 @@ describe("sendEmail modes", () => {
 
   it("api mode: real key + domain → POSTs to mailgun with Basic auth + form body", async () => {
     process.env.MAILGUN_API_KEY = "key-fake-test";
-    process.env.MAILGUN_DOMAIN = "mg.anchorcorps.dev";
-    process.env.MAILGUN_DEFAULT_FROM = "AnchorCorps Builder <builder@mg.anchorcorps.dev>";
+    process.env.MAILGUN_DOMAIN = "mg.anchorcorps.com";
+    process.env.MAILGUN_DEFAULT_FROM = "AnchorCorps Builder <builder@mg.anchorcorps.com>";
     const fetchSpy = vi.fn(async () =>
-      new Response(JSON.stringify({ id: "<20260518.abc@mg.anchorcorps.dev>", message: "Queued" }), {
+      new Response(JSON.stringify({ id: "<20260518.abc@mg.anchorcorps.com>", message: "Queued" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -134,7 +134,7 @@ describe("sendEmail modes", () => {
       template: "demo-milestone",
       vars: {
         demo_title: "First sites live",
-        demo_action: "Visit muldoon.preview.anchorcorps.dev",
+        demo_action: "Visit muldoon.sites.anchorcorps.com",
         demo_changes: "- multi-tenant rendering",
         demo_limitations: "- editor not built yet",
         next_milestone: "save endpoint",
@@ -144,14 +144,14 @@ describe("sendEmail modes", () => {
     });
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.id).toContain("@mg.anchorcorps.dev");
+      expect(res.id).toContain("@mg.anchorcorps.com");
       expect(res.mode).toBe("api");
     }
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     const call = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     const [url, init] = call;
-    expect(url).toBe("https://api.mailgun.net/v3/mg.anchorcorps.dev/messages");
+    expect(url).toBe("https://api.mailgun.net/v3/mg.anchorcorps.com/messages");
     expect(init.method).toBe("POST");
     const headers = init.headers as Record<string, string>;
     // HTTP Basic with `api:<key>` base64-encoded.
@@ -161,8 +161,8 @@ describe("sendEmail modes", () => {
     const body = new URLSearchParams(init.body as string);
     expect(body.get("to")).toBe("jmartin@anchorcorps.com");
     expect(body.get("subject")).toBe("[Builder] Demo ready: First sites live");
-    expect(body.get("from")).toContain("builder@mg.anchorcorps.dev");
-    expect(body.get("text")).toContain("Visit muldoon.preview.anchorcorps.dev");
+    expect(body.get("from")).toContain("builder@mg.anchorcorps.com");
+    expect(body.get("text")).toContain("Visit muldoon.sites.anchorcorps.com");
   });
 
   it("api mode: missing MAILGUN_DOMAIN → ok:false (no HTTP call)", async () => {
