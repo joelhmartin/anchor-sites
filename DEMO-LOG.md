@@ -27,6 +27,57 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-18 — Phase 1 foundation complete (production deploy pending)
+**Milestone ID:** phase1-complete-local
+**Phase/Task:** Phase 1 (foundation) — Tasks 1.0–1.7 + 1.9–1.10 done; 1.8 blocked
+**Commit:** <pending>
+
+**What to look at:**
+
+```bash
+# 1. The end-to-end multi-tenant pipeline:
+docker compose up -d postgres
+npm run migrate:up && npm run db:seed
+DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev npm run dev
+
+curl http://muldoon.localhost:3000/      # → muldoon home (hero+rich-text+cta)
+curl http://demo.localhost:3000/         # → demo site (different content + brand)
+
+# 2. The admin save + revision flow:
+export ADMIN_API_TOKEN=$(openssl rand -base64 24)
+DATABASE_URL=... ADMIN_API_TOKEN=$ADMIN_API_TOKEN npm run dev  # (in another terminal)
+
+SITE=$(psql "$DATABASE_URL" -tAc "SELECT id FROM sites WHERE slug='muldoon-dental'")
+PAGE=$(psql "$DATABASE_URL" -tAc "SELECT id FROM pages WHERE slug='home' AND site_id='$SITE'")
+
+curl -X POST "http://muldoon.localhost:3000/api/sites/$SITE/pages/$PAGE" \
+  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"blocks":[{"id":"h1","type":"hero","props":{"title":"From a save"}}]}'
+
+curl "http://muldoon.localhost:3000/api/sites/$SITE/pages/$PAGE/revisions" \
+  -H "X-Admin-Token: $ADMIN_API_TOKEN"
+```
+
+**What's new since last demo:**
+- Admin API: `POST /api/sites/:siteId/pages/:pageId` validates against the block registry, writes a `page_revisions` row atomically with the page update, returns `{ page, revision }`.
+- `GET .../revisions` — reverse-chronological list.
+- `POST .../revisions/:revId/restore` — non-destructive: appends a new revision tagged `source='restore:<id>'`.
+- 10/min rate limit per IP; `X-Admin-Token` gated (Phase 8 swaps to Better-auth sessions).
+- Resend email client wired (stub / dry-run / api modes). Templates live in `.routine/templates/`.
+- Atomic `STATE.json` read/write helper with concurrent-write tests.
+- Cloud Run deploy artifacts (`Dockerfile`, `cloudbuild.yaml`, `docs/deploy.md`); `vercel.json` removed per D-010.
+- `README.md`, `docs/blocks.md`, `docs/data-model.md` updated for Phase 2 handoff.
+
+**Known limitations / open work:**
+- B-001 — production Cloud Run deploy needs operator GCP access. Repo-side artifacts are ready; bootstrap is in `docs/deploy.md`.
+- Email "real send + receipt confirmation" sub-items in Task 1.9 stay open until a real Resend key lands during the deploy.
+- The existing SPA shell (`src/components/marketing/Navbar.jsx`, `Footer.jsx`) is not yet SSR-imported. Phase 5 (Puck + full SSR per D-014) handles this.
+
+**Next visible thing coming:**
+1. Operator resolves B-001 → production URLs (`https://muldoon.preview.anchorcorps.dev`, `https://demo.preview.anchorcorps.dev`) come online.
+2. Operator drops `.routine/NEXT-PHASE-APPROVED` → Phase 2 begins (versioned `@anchorcorps/components` package on GCP Artifact Registry per D-018).
+
 ### 2026-05-18 — First multi-tenant pages render from block JSON (local)
 **Milestone ID:** first-multi-tenant-page-local
 **Phase/Task:** Phase 1, Task 1.6

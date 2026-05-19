@@ -253,19 +253,14 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 
 ## Task 1.10 — Documentation pass + handoff prep for Phase 2
 
-- [ ] Update `README.md` with the new architecture overview (paste from PLAN.md anchors)
-- [ ] Write `docs/blocks.md` explaining how to add a new block type (the routine itself will use this in Phase 2)
-- [ ] Write `docs/data-model.md` finalized
-- [ ] Write `docs/local-dev.md` finalized
-- [ ] Write `docs/deploy.md` finalized
-- [ ] Append final entry to phase log
-- [ ] Update `PLAN.md` — check off Phase 1 box
-- [ ] **Email trigger:** Phase 1 complete summary email with:
-  - Demo URLs
-  - What changed in the codebase (high-level)
-  - Test coverage stats
-  - What Phase 2 will do
-  - Explicit ask: "Reply 'go' to start Phase 2, or reply with changes/concerns."
+- [x] Update `README.md` with the new architecture overview (paste from PLAN.md anchors) *(new file — repo had none previously; contains anchors, Phase-1-shipped table, quick start, repo layout, document index)*
+- [x] Write `docs/blocks.md` explaining how to add a new block type (the routine itself will use this in Phase 2) *(8-step walkthrough — schema, component, CSS, registry, master-index wire-up, client CSS bundle, test, optional seed)*
+- [x] Write `docs/data-model.md` finalized *(already comprehensive from Task 1.2; updated `site_domains` description to note Phase 1 seed coverage)*
+- [x] Write `docs/local-dev.md` finalized *(landed during Task 1.5; covers setup, hostnames, `/etc/hosts` notes, reset)*
+- [x] Write `docs/deploy.md` finalized *(landed during Task 1.8; full Cloud Run bootstrap)*
+- [x] Append final entry to phase log
+- [x] Update `PLAN.md` — check off Phase 1 box *(noted Task 1.8 production deploy still pending B-001)*
+- [x] **Email trigger:** Phase 1 complete summary email — deferred; routine is running interactively per user instruction. Equivalent message surfaced in chat at end of run. Email-style summary appended below this task and to `DEMO-LOG.md`.
 
 ---
 
@@ -316,6 +311,16 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **Server can't import block CSS.** tsx (Node ESM runtime) chokes on `.css` imports. Refactored each block's `index.ts` to be server-safe (no CSS imports), and added `src/blocks/styles.ts` as a client-only entry that imports all CSS. The SPA client bundle will pick this up; SSR doesn't need the CSS bytes (it emits class names only).
 - **React SSR gotcha:** rendering `<strong>Block error: {type}</strong>` produced `Block error: <!-- -->{type}` because React SSR inserts comment markers between adjacent text and expression children. Fixed by combining into a single template-literal expression.
 - **Wrap component** is a tiny indirection — in `editable` mode it emits `<div data-block-id data-block-type>`, otherwise a Fragment. Keeps production HTML free of editor noise while giving Puck a stable selector path in Phase 5.
+
+### 2026-05-18 23:40 UTC — Task 1.10 (docs pass + Phase 2 handoff)
+**Commit:** <pending>
+**Done:** Documentation pass that lets a human pick this codebase up cold. New `README.md` (repo had none) — architectural anchors verbatim from PLAN.md, a "what Phase 1 shipped" file-by-file table, quick-start commands, the repo layout, the index of docs. New `docs/blocks.md` — eight-step walkthrough of adding a block (schema, component, CSS, registry, master index, client CSS bundle, tests, optional seed) with Phase 1's rules of thumb (`.default()` on every field, `ac-` prefix, no `font-family`, no stateful hooks). Touch-up on `docs/data-model.md` to note that `site_domains` is now seeded in Phase 1 (Task 1.5 added the rows; only Phase 10 adds *client-owned* domains). `PLAN.md` Phase 1 box ticked with a note about B-001 holding the production deploy. Phase-1 complete summary surfaces in chat at end of run instead of email (per user's standing instruction for interactive runs).
+**Tests added:** 0 — docs-only commit. Suite still **80 passing, 0 skipped**, tsc clean.
+**Next:** **Phase 1 complete on the routine side.** Phase 2 will not start until two things happen: (1) operator resolves B-001 and drops `.routine/TASK-1.8-APPROVED` so the production deploy lands; (2) operator drops `.routine/NEXT-PHASE-APPROVED` so the routine expands Phase 2 (Global component library — see D-018 / D-019 for the shadcn + Embla foundation + pg-boss for jobs).
+**Notes:**
+- Documents the routine itself will lean on in Phase 2 are now in place — `docs/blocks.md` is the canonical "add a block" recipe.
+- The "Reply 'go' to start Phase 2" ask doesn't go out as email; user already standing in chat. Surfaced inline.
+- B-001 (Cloud Run deploy) is the only Phase 1 work still open. Everything else in Phase 1 — schema, registry, renderer, save endpoint, revision history, multi-tenant routing, brand-aware SSR, email wiring, atomic state, docs — landed in this routine pass.
 
 ### 2026-05-18 23:37 UTC — Task 1.9 (Resend wiring + atomic STATE.json helper)
 **Commit:** a78e350 (preceded by 8e4dac7)

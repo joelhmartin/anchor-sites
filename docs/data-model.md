@@ -17,7 +17,7 @@ The top-level multi-tenant entity.
 | `created_at` | `timestamptz` | |
 
 ### `site_domains`
-Schema defined in Phase 1; populated by Phase 10 (domain provisioning). Phase 1 renderer uses subdomain fallback when this is empty.
+Schema defined in Phase 1. The Phase 1 seed populates the four dev/preview hostnames (`muldoon.preview.anchorcorps.dev`, `muldoon.localhost`, `demo.preview.anchorcorps.dev`, `demo.localhost`); Phase 10 (domain provisioning) adds client-owned custom domains. The Phase 1 renderer falls back to subdomain → `sites.slug` resolution for `*.preview.anchorcorps.dev` and `*.anchorcorps.dev` when no `site_domains` row matches.
 
 | Column | Type | Notes |
 |---|---|---|
