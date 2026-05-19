@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 14:15 UTC — Task 3.5 (render-time brand-token merge + save-path acceptance) — DEMO MILESTONE
-**Commit:** (pending — same commit as this log entry)
+**Commit:** b3176b7
 **Done:** Brand-token override path is live end-to-end.
 - **`render-page.tsx`** imports `mergeBrandTokens` and calls it inside `shell(...)` so the `<style>` tag's `:root { ... }` reflects site default ⊕ page override (page wins per-key). `PageRecord` expands with `brand_tokens_override?: Record<string, unknown> | null`. The shell signature gains `pageOverride?` so `renderPage` + `renderNotFound` can pass through cleanly. `brandTokenCss` typing tightened to `Record<string, string>` to match the merged shape.
 - **`src/server/routes/page.ts`** SELECT now reads `brand_tokens_override` alongside `title, blocks, seo`.
