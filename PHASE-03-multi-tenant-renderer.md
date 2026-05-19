@@ -71,7 +71,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - `POST /api/sites/:siteId/media/:assetId/complete` (`requireAdmin` + `rateLimit`). Enqueues `media.process-upload` for `assetId`. Idempotent: if `variants_status` is already `processing` or `ready`, returns 202 with current state. 404 if asset doesn't exist or belongs to another site.
   - **Tests:** auth + rate-limit gates; idempotency (double-call); cross-site 404; correctly enqueues job.
 
-- [ ] **3.12 — `Image` block in `@anchorcorps/components` (bumps to 0.2.0)**
+- [x] **3.12 — `Image` block in `@anchorcorps/components` (bumps to 0.2.0)**
   - Schema: `{ asset_id, alt, focal_point: { x: 0-1, y: 0-1 }?, fit: "cover" | "contain" | "fill" (default "cover"), aspect_ratio?: number, sizes?: string }`. Component renders `<picture>` with WebP `<source srcset="…480w, …768w, …1280w, …2560w">` + JPG `<img>` fallback + `loading="lazy"` + `decoding="async"` + `style="object-position: ${focal_point.x*100}% ${focal_point.y*100}%"`. Resolves variant URLs from a renderer-provided context (the component doesn't query Postgres — the renderer hydrates per-block).
   - Manifest now has 7 entries.
   - Publish `0.2.0` to AR.
@@ -116,6 +116,19 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 16:40 UTC — Task 3.12 (`<Image>` block + `@anchorcorps/components@0.2.0`) — DEMO MILESTONE
+**Commit:** c6f9b0b
+**Done:** `@anchorcorps/components@0.2.0` published to GCP Artifact Registry (verified via `gcloud artifacts versions list`). New surface:
+- **`src/media-context.tsx`** — `MediaContext` + `MediaProvider` + `useMediaContext` + types. The renderer hydrates page-referenced assets and wraps `<BlockRenderer>` in `<MediaProvider>` (3.14); the Image block stays a pure function of `(asset_id, MediaContext)`.
+- **`src/blocks/image/{schema,component,index}.tsx`** — `<picture>` with WebP `<source srcSet>` + JPG `<img>` fallback, `loading="lazy"` + `decoding="async"` + width/height hints + `objectFit` + `objectPosition` from focal_point. Two placeholders: `ac-image--missing` (no asset) and `ac-image--missing-variants` (no JPG fallback).
+- **Manifest now 7 entries.** `VERSION = 0.2.0`. Package + root suites green.
+**Tests added:** 10 Image-block render tests in the package (srcset shape, lazy/async, focal point %, fit class, alt precedence, width/height, both placeholders, aspect_ratio style). Workspace total **217/217 across 33 files**. Typecheck clean.
+**Next:** 3.13 — hero-slider per-slide `image_asset_id` migration.
+**Notes:**
+- **Two test gotchas:** schema `asset_id` originally `.min(1).default("")` broke manifest contract — relaxed to `default("")`; jsdom doesn't expose `img.loading`/`decoding` as JS props — switched to `getAttribute`.
+- **Pin policy unchanged.** Root `package.json` has `"@anchorcorps/components": "*"` — workspace symlink picks up 0.2.0 automatically.
+- **Publish flow worked first try this time** (same `scripts/publish.sh` from 2.7). The 0.1.0 → 0.2.0 minor bump matches D-027's policy: new block = minor.
 
 ### 2026-05-19 16:10 UTC — Task 3.11 (upload-complete callback)
 **Commit:** dcaa5b2
