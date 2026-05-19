@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+!.routine/baseline-tests.log
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Routine local state — never commit
+.routine/PAUSE
+.routine/NEXT-PHASE-APPROVED
+# (DAILY-PROMPT.md, EMAIL-TRIGGERS.md, STATE.json, templates/, TASK-*-APPROVED, baseline-tests.log ARE committed.)

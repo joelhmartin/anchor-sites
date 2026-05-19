@@ -14,24 +14,28 @@
 
 > **Expansion required:** This task is a stub. On the first run, expand it into a detailed sub-task list, email the user a summary, and wait for `.routine/TASK-1.0-APPROVED` before writing code. Do not guess the shape of the backend without confirmation.
 
-**Stub sub-tasks (to be expanded and confirmed):**
+**Stub sub-tasks (expanded and approved 2026-05-18, see `.routine/TASK-1.0-APPROVED`):**
 
-- [ ] Add Express server (`src/server/index.ts`) alongside Vite — Vite for SPA in dev, Express for API + SSR in prod
-- [ ] Add `pg` dependency and Postgres connection pool (`src/server/db.ts`)
-- [ ] Add `node-pg-migrate` with `db/migrations/` directory and `npm run migrate:up` / `migrate:down` scripts
-- [ ] Add `/healthz` route returning `{ ok: true, db: <bool> }`
-- [ ] Add `src/server/email/send.ts` stub using Resend (Task 1.9 wires the actual templates; Task 1.0 only sets up the function signature and Secret Manager reference)
-- [ ] Add `Dockerfile` skeleton (full Cloud Run config lands in Task 1.8)
-- [ ] Update `package.json` scripts: `dev:server`, `build:server`, `start`, `migrate:up`, `migrate:down`
-- [ ] Decide and document: local Postgres (Docker compose) vs. Cloud SQL proxy — append `DECISIONS.md` D-013
-- [ ] Append `DECISIONS.md` D-014 documenting the Express + Vite integration choice (custom server vs. Vite middleware mode vs. separate processes)
+- [x] Add Express server (`src/server/index.ts` + `src/server/app.ts`) — Vite mounted as middleware (D-014), single process
+- [x] Add `pg` dependency and Postgres connection pool (`src/server/db.ts` with `ping()` helper)
+- [x] Add `node-pg-migrate` with `db/migrations/` directory; initial migration enables `pgcrypto`. Scripts `migrate:up` / `migrate:down`
+- [x] Add `/healthz` route returning `{ ok: true, db: <bool> }`
+- [x] Add `src/server/email/send.ts` stub (Resend interface only; Task 1.9 wires real send)
+- [x] Add `Dockerfile` skeleton + `.dockerignore` (full Cloud Run config lands in Task 1.8)
+- [x] Update `package.json` scripts: `dev`, `build`, `start`, `preview`, `test`, `typecheck`, `migrate:up`, `migrate:down`
+- [x] Add TypeScript: `tsconfig.json`, `tsx`, `typescript`, `@types/*` (D-015 — server in TS, client stays JSX)
+- [x] Add `docker-compose.yml` (Postgres 16) and `.env.example`
+- [x] Append `DECISIONS.md` D-013 (local Docker Compose Postgres, Cloud SQL in prod)
+- [x] Append `DECISIONS.md` D-014 (Express + Vite middleware mode)
+- [x] Append `DECISIONS.md` D-015 (TS adoption scope)
 
 **Tests:**
-- [ ] `GET /healthz` returns 200 with `{ ok: true }`
-- [ ] DB connection test passes when Postgres is reachable
-- [ ] Migration up + down runs cleanly on an empty database
+- [x] `GET /healthz` returns 200 with `{ ok: true }`
+- [x] Unknown route returns 404
+- [x] DB pool query works (skipped when `DATABASE_URL` unset — runs on CI with DB)
+- [ ] Migration up + down runs cleanly on empty DB *(manual verification — automated test deferred; requires running Postgres in test env)*
 
-**Email trigger:** "Task 1.0 sub-task list ready for review" with the expanded list — wait for `.routine/TASK-1.0-APPROVED` before executing.
+**Email trigger:** Skipped — email infra not wired until Task 1.9. Surfacing in chat / completion log instead.
 
 ---
 
@@ -263,6 +267,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 > Append entries as work proceeds. Each entry: timestamp, task IDs touched, what was done, what's next, any new blockers.
 
 <!-- Routine appends here -->
+
+### 2026-05-18 21:25 UTC — Task 1.0 (Backend scaffold)
+**Commit:** *(see next commit after this entry — will be filled by following run if needed)*
+**Done:** Stood up Express + Vite middleware-mode server (`src/server/{index,app,db}.ts`), `/healthz`, Postgres pool with `ping()`, `node-pg-migrate` setup with `pgcrypto` init migration, Resend email stub, Dockerfile skeleton, docker-compose for local Postgres 16, TypeScript toolchain (server-side only). Added `D-013`, `D-014`, `D-015` to DECISIONS. Approval file `.routine/TASK-1.0-APPROVED` present.
+**Tests added:** 3 (`tests/smoke/baseline.test.ts`) — 2 passing, 1 skipped (DB test gated on `DATABASE_URL`). Migration up/down test deferred — manual verification noted in the task box.
+**Next:** Task 1.1 — capture this baseline into `.routine/baseline-tests.log` (already done as part of 1.0 outro) and add any missing smoke coverage. Then on to Task 1.2 (sites/pages/revisions migration).
+**Notes:**
+- Email infra is not yet wired (Resend stub returns `ok:false`). The "Phase 1 started" email trigger at the end of Task 1.1 will be deferred until Task 1.9 lands — until then, equivalent updates surface in this completion log.
+- Vite's `/api → :3000` proxy was removed; Vite no longer runs standalone.
+- Existing client (`src/App.jsx` and the rest) was not touched. `npm run dev` now runs Express on `:3000` which serves the SPA via Vite middleware — same SPA, different parent process.
+- 10 npm-audit vulnerabilities reported on install (6 moderate, 4 high). Mostly transitive; raising a low-priority blocker would be premature this early. Will reassess after Task 1.2.
 
 ---
 

@@ -1,0 +1,12 @@
+2026-05-18 — baseline captured after Task 1.0
+Suite: vitest run
+Result: 2 passed, 1 skipped (DB-dependent test correctly gated on DATABASE_URL)
+
+Tests:
+  ✓ GET /healthz returns 200 with ok:true
+  ✓ unknown API route returns 404
+  ↓ DB pool connects when DATABASE_URL is set (skipped — no DATABASE_URL in routine env)
+
+The DB-pool test is the canary for migration sanity in Task 1.1 onward.
+When the routine has DATABASE_URL set, this test must pass before any task
+that touches the DB layer (Tasks 1.2, 1.6, 1.7).

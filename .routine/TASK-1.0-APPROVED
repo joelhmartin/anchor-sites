@@ -1,0 +1,7 @@
+Approved 2026-05-18 in conversation by jmartin@anchorcorps.com.
+
+Approved expansion: 13 sub-tasks per the proposal in the run-1 conversation.
+TS scope: new server code in .ts; existing client .jsx files untouched.
+Vite mode: middleware mode (single process, Express imports Vite, supports SSR in Task 1.6).
+Local DB: Docker Compose Postgres 16.
+Resend: stub interface only in 1.0; real wiring in 1.9.

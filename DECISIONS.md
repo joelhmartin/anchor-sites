@@ -86,6 +86,26 @@
 - **Deploy command:** `gcloud run deploy` driven by `cloudbuild.yaml` on push to `main`. Wired in Task 1.8.
 **How to apply:** When the daily prompt references "the email sending mechanism" / "run tests" / "run migrations", use these. If any turns out wrong on first run, the routine appends a corrective decision rather than guessing.
 
+### D-013: Local Postgres via Docker Compose; Cloud SQL in prod
+
+**Context:** D-011 introduced Task 1.0 (backend scaffold). The routine needs a Postgres instance for dev and a path to prod that doesn't require GCP credentials on every contributor's laptop.
+**Decision:** **Local dev:** `docker-compose.yml` runs Postgres 16-alpine on `localhost:5432` with user `anchor`, DB `anchor_dev`. Connection string lives in `.env` (gitignored), example in `.env.example`. **Prod:** Cloud SQL Postgres reached via Cloud SQL Auth Proxy from Cloud Run. The same `DATABASE_URL` env var is the only thing that changes between environments. The application code does not branch on environment.
+**Rationale:** Docker Compose gives zero-setup local DB with no GCP coupling. Cloud SQL is the obvious managed-Postgres choice on GCP and pairs cleanly with Cloud Run via the Auth Proxy sidecar. Same `DATABASE_URL` interface keeps the code free of environment-specific branches.
+**Alternatives considered:** Neon/Supabase (rejected — adds a non-GCP vendor for a workload that's clearly going to GCP); SQLite for dev (rejected — JSONB / GIN indexes / `gen_random_uuid()` need real Postgres parity).
+
+### D-014: Express + Vite in middleware mode (single process)
+
+**Context:** Task 1.6 needs SSR (server-rendered HTML from block JSON) for SEO (Phase 9) and CTM script ordering (anchor #5). Three options were on the table: (a) Vite middleware mode inside Express, (b) separate Vite dev server + Express with `/api` proxy, (c) Express-only with Vite as a build tool.
+**Decision:** **Vite middleware mode.** `src/server/index.ts` creates Express, imports Vite via `createServer({ middlewareMode: true, appType: "custom" })`, mounts `vite.middlewares` after API routes. One process, one port (`:3000`), HMR works in dev, SSR is natural in prod via `ssrLoadModule` (Task 1.6).
+**Rationale:** Middleware mode is Vite's officially supported SSR architecture. Separate processes (option b) make SSR awkward because the dev SPA and prod SSR diverge. Express-only (option c) loses HMR. The existing `vite.config.js` had a `/api → :3000` proxy implying option (b) — that proxy is now removed, since Vite no longer runs standalone.
+**How to apply:** All future server routes mount on the Express app created by `createApp()` in `src/server/app.ts`. The SSR entry for Task 1.6 will be `src/entry-server.tsx` and Express will call `vite.ssrLoadModule(...)` (dev) or import the prebuilt `dist/server/entry-server.js` (prod). Do not introduce a second port for Vite — keep one process.
+
+### D-015: Phase 1 testing language adoption
+
+**Context:** Existing client is `.jsx`; Phase 1 task list references `.ts`/`.tsx` everywhere (server, tests, future blocks).
+**Decision:** New server code, tests, and Phase 1 block schemas/components are written in **TypeScript**. Existing client files (`src/App.jsx`, `src/main.jsx`, `src/components/**/*.jsx`) stay `.jsx` and are only migrated piecemeal if a Phase 1 task touches them. No big-bang `.jsx → .tsx` rename.
+**Rationale:** Minimizes Task 1.0 surface area and risk of breaking the existing client during the foundation phase. Zod's inferred types (anchor #2) and AI prompt typing (Phase 6) require TS — but only on new code paths.
+
 ---
 
 <!-- Routine appends future decisions below this line -->
