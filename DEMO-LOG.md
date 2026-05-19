@@ -30,7 +30,7 @@
 ### 2026-05-18 — Phase 1 foundation complete (production deploy pending)
 **Milestone ID:** phase1-complete-local
 **Phase/Task:** Phase 1 (foundation) — Tasks 1.0–1.7 + 1.9–1.10 done; 1.8 blocked
-**Commit:** <pending>
+**Commit:** 7222b9d
 
 **What to look at:**
 
