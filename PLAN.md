@@ -30,18 +30,18 @@ The existing template's auth, blog, and events flows must **keep working at ever
 ## Phase checklist
 
 - [ ] **Phase 1 — Block schema + renderer + first live multi-tenant site** *(expanded — see `PHASE-01-foundation.md`)*
-- [ ] Phase 2 — Global component library (`@anchorcorps/components` v0.1)
-- [ ] Phase 3 — Multi-tenant renderer (host resolution, brand tokens, media)
+- [ ] Phase 2 — Global component library (`@anchorcorps/components` v0.1) *(see D-018: shadcn/ui + Radix primitives + Embla Carousel under opinionated `ac-` prefixed blocks)*
+- [ ] Phase 3 — Multi-tenant renderer (host resolution, brand tokens, media) *(see D-022: GCS + Cloud CDN + pre-generated variants via sharp + pg-boss; signed-URL direct uploads)*
 - [ ] Phase 4 — Admin UI shell (sites list, new-site wizard skeleton)
 - [ ] Phase 5 — Visual editor on Puck *(see D-017: Puck supplies drag-and-drop, side panel, undo/redo; we write a Zod→Puck-fields adapter and a `Block[]` ↔ Puck `Data` converter. Tiptap wraps as a custom Puck field for rich text. The "EditableWrapper / on-page" wording from earlier drafts is replaced by Puck's preview+side-panel UX.)*
 - [ ] Phase 6 — AI editing layer (Claude API, schema-validated edits)
 - [ ] Phase 7 — Template system (save-as-template, new-from-template)
 - [ ] Phase 7.5 — Plugin / integration framework *(see D-016: manifest contract, `site_plugins` table, plugin loader, admin enable/disable. Concrete plugins like Stripe / PayPal / booking are post-7.5 packages, not master-plan phases.)*
-- [ ] Phase 8 — Auth/blog/events copy-in pattern for provisioned sites
+- [ ] Phase 8 — Auth/blog/events copy-in pattern for provisioned sites *(see D-020: Better-auth as the auth library inside the per-site copy template)*
 - [ ] Phase 9 — SEO layer (meta, sitemap, JSON-LD, editor SEO panel)
 - [ ] Phase 10 — Domain provisioning (Cloud Run mapping, DNS, SSL)
 - [ ] Phase 11 — CRM integration + CTM install
-- [ ] Phase 12 — Hardening + first real client migration
+- [ ] Phase 12 — Hardening + first real client migration *(see D-021: install shared Plausible CE / Umami analytics instance; D-019 pg-boss workers; rate limiting, web-vitals, error tracking)*
 
 Phases 2–12 are intentionally one-liners. Detailed phase files will be expanded when each phase is greenlit. **Do not start Phase 2 until human approval.**
 

@@ -181,6 +181,99 @@
 - Phase 5 expansion will pick a Puck version to pin and freeze the data-shape conversion contract.
 - Phase 6 (AI editing) is unchanged — it operates on `Block[]`, not Puck's `Data`.
 
+### D-018: shadcn/ui + Radix as the foundation for `@anchorcorps/components`
+
+**Context:** Phase 2 builds the global component library. Writing accessible, keyboard-navigable, focus-managed UI primitives from scratch is weeks of work. shadcn/ui (MIT) provides copy-paste React component source code built on **Radix UI** primitives (a11y, keyboard, focus management) and styled with Tailwind. There is no paid tier — the CLI and all components are free forever. Third-party premium template galleries (shadcnui-blocks etc.) are unrelated and not used.
+
+**Decision:** `@anchorcorps/components` is composed of two layers:
+1. **Primitives layer:** shadcn/ui components copied into the package source (so we own the code and can edit freely). Radix UI under the hood for a11y/keyboard.
+2. **Opinionated blocks layer (the public API):** higher-level components like `<HeroSlider>`, `<TestimonialCarousel>`, `<LogoReel>`, `<FAQAccordion>`, `<CTABanner>` — built *on top of* the shadcn primitives and `Embla Carousel` (for sliders/carousels) — all wearing the `ac-` class prefix, consuming CSS custom properties (`--theme-main`, `--theme-accent`), no `font-family` declarations.
+
+**Carousels / sliders specifically:**
+- shadcn's `<Carousel>` (Embla Carousel under the hood) covers hero sliders, testimonial carousels, image galleries.
+- shadcn's `<Slider>` is a range input — different use case; available if needed.
+- For complex needs beyond Embla (parallax, multi-row, heavy gesture work), drop **Swiper.js** (MIT) into a specific block. Default to Embla; escalate to Swiper only when warranted.
+
+**Rationale:**
+- Free, MIT, no vendor lock-in. We own every line because shadcn is copy-paste, not a runtime dependency.
+- Radix solves a11y/keyboard/focus problems we'd otherwise solve badly.
+- Tailwind already in the stack.
+- Embla Carousel is the de-facto modern carousel: lightweight, accessible, no jQuery legacy.
+
+**Alternatives considered:** MUI (rejected — opinionated styling, harder to brand per-site, larger bundle); Headless UI (rejected — Radix has broader coverage); Ariakit (viable; chose Radix for community/ecosystem size); building from scratch (rejected — accessibility/keyboard work too costly for v1).
+
+### D-019: pg-boss for background jobs (no Redis)
+
+**Context:** Several phases need background work: Phase 7 (template materialization), Phase 10 (DNS verification polling), Phase 11 (CRM sync retries), Phase 5+ (Puck save → image variant generation per D-022). Bringing in Redis just for a job queue adds a service to run, monitor, and back up.
+
+**Decision:** Use **pg-boss** (MIT, free) for background jobs. It uses our existing Postgres as the queue backend — same DB connection pool, same backups, same observability. No Redis. Job definitions live under `src/server/jobs/`. The same Express process can act as the worker in v1; if throughput requires it, run a separate worker Cloud Run service later (same image, different `JOB_WORKER=true` env var).
+
+**Rationale:**
+- Zero new infrastructure.
+- ACID job state via Postgres — exactly-once semantics easier than Redis-based queues.
+- Backups already cover the queue.
+- Scaling out is a Cloud Run config change, not a re-architecture.
+
+**Alternatives considered:** BullMQ (rejected — needs Redis); RabbitMQ (rejected — operational overkill); Cloud Tasks (viable but adds GCP-specific lock-in and IAM complexity for a workload Postgres handles fine).
+
+**How to apply:** Phases 7, 10, 11 and the image pipeline (D-022) use pg-boss. New jobs register in a central `src/server/jobs/index.ts` so the worker boot sequence sees them all.
+
+### D-020: Better-auth for Phase 8 auth
+
+**Context:** Phase 8 copies auth into each provisioned site. Rolling our own session management, password hashing (Argon2), email verification, password reset, and OAuth providers is substantial work and a security-sensitive surface area to maintain.
+
+**Decision:** Use **Better-auth** (MIT, free) as the auth library inside the per-site auth copy-in template. Better-auth ships sessions, password hashing, email verification, password reset, OAuth (Google/GitHub/etc.), and optional 2FA out of the box. Per-site DB tables (`auth_users`, `auth_sessions`, etc.) — naturally fits per-site copy-in (D-008).
+
+**Rationale:**
+- Security-sensitive code is better borrowed from a maintained library than rolled.
+- Better-auth's drizzle/Prisma/raw-SQL adapters work with our `pg` setup.
+- Active maintenance, modern codebase, framework-agnostic (works with Express).
+- Per-site copy still works: each site owns its auth tables and Better-auth config.
+
+**Alternatives considered:** Lucia (rejected — discontinued, successor is fragmented across Oslo/Arctic packages); Auth.js / NextAuth (rejected — Next.js coupling); Passport.js (rejected — older, more glue code); rolling our own (rejected — security risk for marginal gain).
+
+**How to apply:** Phase 8 template copies a Better-auth config + the schema migrations + the route handlers. Per-client overrides (e.g., a client wanting only Google OAuth, no password) happen in the per-site copy without affecting other sites.
+
+### D-021: Self-hosted Plausible or Umami over Google Analytics
+
+**Context:** Provisioned sites need analytics. GA4 is free but requires a cookie banner under GDPR/CCPA (drags conversion rates) and ships data to Google. Privacy-first analytics is a market signal AnchorCorps clients increasingly care about.
+
+**Decision:** Default analytics for provisioned sites is **Plausible Community Edition** or **Umami** — both MIT, both self-hostable, both cookieless and exempt from cookie banner requirements in most jurisdictions. **Plausible CE** is the default unless a specific reason pushes Umami. One shared analytics instance serves all client sites (multi-tenant), one Cloud Run service with a small Postgres database (can share the existing instance).
+
+**Rationale:**
+- No cookie banner → better conversion rates → real client value.
+- Single shared instance means low marginal cost per new client site.
+- Open source means no per-site SaaS bill scaling with client count.
+- Clients can be offered a per-site dashboard if they want one (Plausible supports shared links + embed).
+
+**Alternatives considered:** GA4 (rejected for default — banner, data ownership concerns); Fathom (rejected — paid SaaS); PostHog (overkill for marketing-site analytics; useful later if product analytics on the builder itself is wanted); per-site SaaS subscriptions (rejected — cost scaling).
+
+**How to apply:** Phase 12 (hardening) installs the analytics instance. The site template includes a small `<AnalyticsScript siteId={…}>` block automatically injected into the HTML shell; admins can disable per-site if a client objects.
+
+### D-022: Image hosting on GCS with pre-generated variants + Cloud CDN
+
+**Context:** Multi-tenant site builder needs media (images primarily, video later). Already on GCP. Cloud Run has a 32MB request body limit, so direct-through-server uploads don't scale. Image transforms can be on-the-fly (imgproxy/Thumbor sidecar) or pre-generated (sharp at upload time). Phase 3 originally listed "media" as a one-liner; this decision concretizes it.
+
+**Decision:** **GCS + Cloud CDN + pre-generated variants.**
+- **One bucket** (`anchorcorps-media`) with per-site prefix (`<site_id>/<asset_id>.<ext>`). Public access on variants, private on originals.
+- **Cloud CDN** in front of the bucket. Cache-Control: `public, max-age=31536000, immutable` on variants (URLs are hash-suffixed so cache invalidation is free).
+- **Direct-to-GCS uploads via signed URLs:** admin UI requests a signed PUT URL from the server, browser uploads straight to GCS, server enqueues a pg-boss job (per D-019) that runs `sharp` to generate variants (thumbnail / sm / md / lg / 2x) and uploads them.
+- **Block-level rendering:** the `<Image>` block stores the canonical asset ID; the renderer emits `<picture>` with `srcset` pointing at the variant URLs.
+- **Lifecycle:** archive originals to Coldline after 30 days no-access; variants stay in Standard forever (they're small).
+
+**Rationale:**
+- Pre-generated variants → predictable cost, near-100% CDN cache hit rate, no transform service to run.
+- Signed-URL upload → no 32MB ceiling, no Express proxy CPU spent on bytes.
+- Cloud CDN edge cache → fast globally; pairs with GCS natively.
+- Lifecycle archiving → ~80% storage cost savings on cold originals.
+
+**Alternatives considered:**
+- Cloudflare R2 (viable — zero egress fees, S3-compatible; rejected for v1 because it adds a cross-cloud dependency; revisit if egress becomes the dominant cost).
+- On-the-fly transforms via imgproxy/Thumbor (rejected — adds an always-on service; pre-generation is simpler and cheaper for this access pattern).
+- Static folder on Cloud Run (rejected — immutable revisions and request size limits).
+
+**How to apply:** Phase 3 expansion will spec the upload signing endpoint, the pg-boss variant job, the `<Image>` block schema (canonical ID + alt text + focal point), and the renderer's `<picture>`-with-srcset output.
+
 ---
 
 <!-- Routine appends future decisions below this line -->
