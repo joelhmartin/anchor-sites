@@ -55,7 +55,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Each block ships: `schema.ts`, `component.tsx`, `index.ts` (exports `{ type, schema, component, label, description, aiHints?, category }`), `styles.css` (component-scoped, CSS custom props for colors, no `font-family`)
   - **Tests per block:** schema parses with defaults; component renders with `ac-<name>` root class; brand-token CSS vars referenced
 
-- [ ] **2.6 — Block manifest + registerAll export**
+- [x] **2.6 — Block manifest + registerAll export**
   - `packages/components/src/blocks/manifest.ts` exports `blockManifest: BlockManifestEntry[]` covering every block from 2.5
   - `BlockManifestEntry` shape matches renderer's `BlockRegistryEntry` (so the renderer can register without a shape adapter)
   - Export `registerAll(register: (type, entry) => void)` convenience — the renderer passes its own `registerBlock`; the package never imports the renderer
@@ -111,6 +111,17 @@ Every box above checked, AND:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 12:30 UTC — Task 2.6 (block manifest contract tests)
+**Commit:** (pending — same commit as this log entry)
+**Done:** The manifest shape, `BlockManifestEntry` type, `registerAll` helper, and per-block index files were already in place (2.2 + 2.5). 2.6 added formal **contract tests** that pin the manifest's invariants so future block additions can't break them silently.
+- `src/blocks/manifest.test.ts` — 8 cases covering: manifest length matches v0.1 expectation (6), every entry has every required field with a sensible value, every `type` is unique, every `schema` is a `z.ZodObject` instance (introspection guarantee per D-002), every schema accepts its declared defaults via `safeParse({})`, every `component` is a function, manifest contains the Phase 1 ports (`hero` + `cta`) so existing seed data renders, `registerAll` invokes the caller's register fn once per entry in declared order with `(type, rest)` argument shape where `rest` excludes `type`.
+**Tests added:** 8. Package suite: 46 passed.
+**Next:** Task 2.7 — publish workflow + first `0.1.0` publish to AR.
+**Notes:**
+- The contract tests intentionally check **structural** invariants (defaults parse, types unique, fields present) rather than asserting specific blocks exist by name. The `hero` + `cta` check is the one exception — it's load-bearing because Phase 1 seed data depends on those exact type keys. Other types can change between phases without breaking the test.
+- The `category` allow-set (`header / content / cta / layout`) is enforced here because the editor block picker in Phase 5 will group by category — a typo'd category would silently land in a "stray" bucket later. Adding a new category requires a single-line edit here.
+- `registerAll`'s arg shape (`type` separated from the rest) is asserted because the renderer's `registerBlock` signature is `(type, entry)` where `entry` does NOT contain `type` — a mismatch would silently double-encode `type` in the renderer's registry.
 
 ### 2026-05-19 12:20 UTC — Task 2.5 (opinionated blocks first wave)
 **Commit:** 65627e0
