@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { createApp } from "./app.js";
+import { mountViteDev } from "./vite-dev.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -17,29 +18,7 @@ async function main() {
       res.sendFile(path.join(ROOT, "dist", "index.html"));
     });
   } else {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      root: ROOT,
-      appType: "custom",
-      server: { middlewareMode: true },
-    });
-    app.use(vite.middlewares);
-    app.get(/.*/, async (req, res, next) => {
-      try {
-        const url = req.originalUrl;
-        const template = await vite.transformIndexHtml(
-          url,
-          await (await import("node:fs/promises")).readFile(
-            path.join(ROOT, "index.html"),
-            "utf-8",
-          ),
-        );
-        res.status(200).set({ "Content-Type": "text/html" }).end(template);
-      } catch (err) {
-        vite.ssrFixStacktrace(err as Error);
-        next(err);
-      }
-    });
+    await mountViteDev(app, ROOT);
   }
 
   app.listen(PORT, () => {

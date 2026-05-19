@@ -43,14 +43,14 @@
 
 > **Updated per D-011:** Original wording referenced auth/blog/events which do not exist in this repo. Baseline now covers what Task 1.0 produced.
 
-- [ ] Run the app locally (Express + Vite), confirm `/healthz` returns 200 and the SPA index loads
-- [ ] Run the test suite, capture passing baseline in `.routine/baseline-tests.log`
-- [ ] Create `tests/smoke/baseline.test.ts` with at minimum:
-  - [ ] `GET /healthz` returns 200
-  - [ ] SPA index returns 200 with non-empty HTML
-  - [ ] DB pool connects successfully
-- [ ] Commit baseline tests: `chore(P1-T1.1): baseline smoke tests before builder work`
-- [ ] **Email trigger:** "Phase 1 started — baseline captured" with passing test count
+- [x] Run the app locally (Express + Vite), confirm `/healthz` returns 200 and the SPA index loads
+- [x] Run the test suite, capture passing baseline in `.routine/baseline-tests.log`
+- [x] Create `tests/smoke/baseline.test.ts` with at minimum:
+  - [x] `GET /healthz` returns 200
+  - [x] SPA index returns 200 with non-empty HTML *(in `tests/smoke/spa.test.ts` — boots real Vite middleware)*
+  - [x] DB pool connects successfully *(skipped without `DATABASE_URL`, runs on CI with DB)*
+- [x] Commit baseline tests: `chore(P1-T1.1): baseline smoke tests before builder work`
+- [ ] **Email trigger:** Skipped — email infra not wired until Task 1.9. Surfacing in chat / completion log instead.
 
 **Why this matters:** Every subsequent task should keep these tests green. If a change breaks them, stop and either fix or escalate to `BLOCKERS.md`. Do not proceed with broken baselines.
 
@@ -278,6 +278,15 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - Vite's `/api → :3000` proxy was removed; Vite no longer runs standalone.
 - Existing client (`src/App.jsx` and the rest) was not touched. `npm run dev` now runs Express on `:3000` which serves the SPA via Vite middleware — same SPA, different parent process.
 - 10 npm-audit vulnerabilities reported on install (6 moderate, 4 high). Mostly transitive; raising a low-priority blocker would be premature this early. Will reassess after Task 1.2.
+
+### 2026-05-18 21:32 UTC — Task 1.1 (Pre-flight baseline)
+**Commit:** *(filled below)*
+**Done:** Verified `npm run dev` boots Express + Vite middleware cleanly. `curl :3000/healthz` → 200 `{ok:true,db:false}`, `curl :3000/` → 200 with Vite-transformed SPA index. Added `tests/smoke/spa.test.ts` covering SPA index render + route-order check (Vite middleware doesn't shadow `/healthz`). Refactored Vite-dev mount into `src/server/vite-dev.ts` so prod entry and test share one path. Updated `.routine/baseline-tests.log` with the captured baseline.
+**Tests added:** 2 (`tests/smoke/spa.test.ts`). Total suite now 4 passed, 1 skipped (DB), tsc clean.
+**Next:** Task 1.2 — migration for `sites`, `site_domains`, `pages`, `page_revisions`. First task that needs a live Postgres — will start docker-compose at the top of the run and verify the DB-pool test moves from skipped to passing.
+**Notes:**
+- The "Phase 1 started" email trigger still deferred (Task 1.9 carries it).
+- Vite teardown in tests emits some esbuild stderr noise but does not affect results. Worth investigating only if it becomes a CI signal problem.
 
 ---
 

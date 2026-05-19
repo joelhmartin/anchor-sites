@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 1,
   "current_phase_file": "PHASE-01-foundation.md",
-  "current_task": "1.0",
+  "current_task": "1.1",
   "phase_started_at": "2026-05-18T00:00:00Z",
   "last_commit_sha": "d42f143",
   "last_email_sent_at": null,
@@ -11,11 +11,11 @@
   "demo_milestones_sent": [],
   "blockers_open": 0,
   "tests": {
-    "baseline_count": 3,
-    "current_pass": 2,
+    "baseline_count": 5,
+    "current_pass": 4,
     "current_fail": 0,
     "current_skipped": 1,
-    "last_run_at": "2026-05-18T21:25:32Z"
+    "last_run_at": "2026-05-18T21:32:33Z"
   },
   "phase_2_approved": false
 }
