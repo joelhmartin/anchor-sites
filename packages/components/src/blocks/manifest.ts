@@ -38,13 +38,32 @@ export type RegisterBlockFn = (
   entry: Omit<BlockManifestEntry<any>, "type">,
 ) => void;
 
+import { heroEntry } from "./hero/index.js";
+import { heroSliderEntry } from "./hero-slider/index.js";
+import { ctaEntry } from "./cta/index.js";
+import { testimonialCarouselEntry } from "./testimonial-carousel/index.js";
+import { logoReelEntry } from "./logo-reel/index.js";
+import { faqAccordionEntry } from "./faq-accordion/index.js";
+
 /**
- * Block manifest — populated in Task 2.5. Empty in 0.1.0 skeleton so the
- * publish pipeline (Task 2.7) has something to ship, and so the
- * renderer's import of this module won't fail before the first block
- * lands.
+ * Block manifest — every opinionated block in v0.1. Order is the order
+ * shown in the editor's block picker (Phase 5 will decide whether to
+ * resort by category).
  */
-export const blockManifest: BlockManifestEntry[] = [];
+export const blockManifest: BlockManifestEntry[] = [
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  heroEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  heroSliderEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctaEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  testimonialCarouselEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  logoReelEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  faqAccordionEntry as BlockManifestEntry<any>,
+];
 
 /**
  * Registers every manifest entry against the caller-supplied register

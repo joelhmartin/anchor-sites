@@ -45,7 +45,7 @@ These are draft — they land in `DECISIONS.md` when their task lands. Listed he
   - Primitives are **not** exported from the package root. They are internal building blocks for the opinionated blocks layer.
   - **Tests:** render + a11y attr assertions per primitive; carousel keyboard nav (arrow keys advance); accordion `aria-expanded` toggles
 
-- [ ] **2.5 — Opinionated blocks first wave**
+- [x] **2.5 — Opinionated blocks first wave**
   - **2.5.a** `ac-hero` — direct port of Phase 1 inline `src/blocks/hero` schema (so existing seed renders unchanged)
   - **2.5.b** `ac-hero-slider` — multi-slide Embla, schema `{ slides: Slide[], autoplay?, interval? }`
   - **2.5.c** `ac-cta` — direct port of Phase 1 inline `src/blocks/cta` schema
@@ -111,6 +111,27 @@ Every box above checked, AND:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 12:20 UTC — Task 2.5 (opinionated blocks first wave)
+**Commit:** (pending — same commit as this log entry)
+**Done:** Six opinionated `ac-`-prefixed blocks landed in `packages/components/src/blocks/<name>/{schema.ts,component.tsx,index.ts}`. Each ships a Zod schema (every field has a `.default(...)`), a pure React component using `ac-<name>` root classes + brand-token Tailwind utilities + the primitives from 2.4, and an `index.ts` exporting a `BlockManifestEntry`.
+- **`hero`** — port of Phase 1 inline. Same schema (eyebrow / title / subtitle / cta_label / cta_href / align). Uses `<Button asChild>` so the CTA renders as `<a>` while keeping the variant styling. CSS class `ac-hero`. Category `header`.
+- **`hero-slider`** — Embla-backed multi-slide variant. Schema includes `slides: HeroSlide[]`, `autoplay`, `interval_ms`, `align`. Per-slide background image with a translucent overlay for legibility. Arrows hidden when only one slide. CSS class `ac-hero-slider`. Category `header`.
+- **`cta`** — port of Phase 1 inline. Same schema (heading / body / button_label / button_href / variant). Variant `primary` paints with `--theme-accent`; `muted` uses `--theme-muted`. Inverts the button variant so the CTA stands out against either background. CSS class `ac-cta`. Category `cta`.
+- **`testimonial-carousel`** — Embla-backed quote carousel. Schema includes heading + `items: Testimonial[]` (`quote, author, role?, avatar?`) + autoplay knobs. Each slide rendered inside a `Card` from the primitives layer. CSS class `ac-testimonial-carousel`. Category `content`.
+- **`logo-reel`** — CSS-only horizontal marquee (no JS, no Embla — keeps the bundle lean for a passive social-proof block). Schema includes heading + `logos: LogoEntry[]` + `speed_seconds`. Component duplicates the logo list once so a `translateX(-50%)` animation loops seamlessly. Speed knob via the `--ac-logo-reel-duration` CSS custom property (inline on the viewport). Honors `prefers-reduced-motion: reduce`. CSS class `ac-logo-reel`. Category `content`.
+- **`faq-accordion`** — Radix accordion via the primitives layer. Schema includes heading + `items: FaqItem[]` + `multiple` (allows more than one item open at once). CSS class `ac-faq-accordion`. Category `content`.
+**Manifest wired:** `src/blocks/manifest.ts` now imports all six entries and exposes them as `blockManifest: BlockManifestEntry[]`. The empty 0.1.0 skeleton from 2.2 is gone. `registerAll(register)` and the package's smoke test continue to pass against the new manifest (six entries, six register calls).
+**Tests added:** 15 (`src/blocks/__tests__/blocks.test.tsx`). 2-3 per block — root class present, brand-token class present, variant behavior (cta primary vs muted, hero-slider single-slide hides arrows, hero align swap), slot-as-anchor (cta), CSS custom property emission (logo-reel speed), accordion trigger rendering (faq). Package suite: 38 passed.
+**Next:** Task 2.6 — formal manifest contract tests (every entry has all required fields, every schema accepts its declared defaults, registerAll behavior across the populated manifest).
+**Notes:**
+- **Three caught issues mid-task**, all fixed in-commit:
+  1. The marquee `@import` from `src/styles.css` to `src/blocks/logo-reel/styles.css` produced an empty CSS bundle on the logo-reel side. The Tailwind CLI does **not** run `postcss-import` even when `postcss.config.js` is present (it bypasses postcss config). Tried adding `postcss-import` as a plugin first — no effect. Resolved by **inlining the keyframes + `prefers-reduced-motion` clause directly into `src/styles.css`** under a clearly-labelled "Block-specific CSS" section, then deleting the per-block CSS file. Documented in the styles.css header so future contributors don't recreate the broken pattern. `postcss-import` reverted from devDeps.
+  2. Initial manifest definition had a TypeScript variance issue assigning `BlockManifestEntry<typeof xSchema>` into `BlockManifestEntry<z.ZodTypeAny>[]`. Resolved by casting each entry through `BlockManifestEntry<any>` at the array boundary — same pattern shadcn uses, plus per-line eslint-disable to keep the noise local.
+  3. Initial logo-reel test asserted custom property via DOM `style.getPropertyValue` — works fine but only because jsdom returns the inline style as authored. If jsdom changes I'd need `getComputedStyle`. Documented in-line.
+- **Brand tokens used throughout via Tailwind classes** (`bg-theme-main`, `text-theme-on-surface`). The hero block uses `bg-theme-main` + `text-theme-on-main`; the cta block uses `bg-theme-accent`/`bg-theme-muted` based on variant. These resolve to CSS custom properties the renderer sets at `:root` per-site (already wired in Phase 1's `render-page.tsx`) — no per-block CSS variable wiring needed.
+- **Block `type` keys match Phase 1's inline blocks** (`hero`, `cta`) so the existing seed data in production renders unchanged after the 2.8 swap. The new blocks introduce new types (`hero-slider`, `testimonial-carousel`, `logo-reel`, `faq-accordion`) — no collision risk.
+- **CSS bundle** is now ~14KB minified, including utility classes for all six blocks + the marquee keyframes. Will grow with future blocks but still cheap.
 
 ### 2026-05-19 12:00 UTC — Task 2.4 (shadcn primitives copy-in)
 **Commit:** 834e13e

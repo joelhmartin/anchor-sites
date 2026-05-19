@@ -14,3 +14,22 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ---------- Block-specific CSS ----------
+   Most blocks rely entirely on Tailwind utilities. The keyframes /
+   animations that don't fit cleanly as utilities live below. Per-block
+   .css files are co-located with their block source but inlined here
+   because Tailwind's CLI does not run postcss-import. */
+
+/* ac-logo-reel — marquee. Speed knob via --ac-logo-reel-duration (set
+   as inline style on the viewport). */
+@keyframes ac-logo-reel-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.ac-logo-reel__track {
+  animation: ac-logo-reel-scroll var(--ac-logo-reel-duration, 30s) linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-logo-reel__track { animation: none; }
+}
