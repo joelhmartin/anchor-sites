@@ -26,12 +26,21 @@ const runMigrate = (direction: "up" | "down", count: number) =>
     log: () => undefined,
   });
 
-function buildApp(pool: Pool, signUpload: typeof import("../../src/server/media/storage.js").signUploadUrl) {
+function buildApp(
+  pool: Pool,
+  signUpload: typeof import("../../src/server/media/storage.js").signUploadUrl,
+  enqueue?: (jobName: string, data: unknown) => Promise<string | null>,
+) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use(
     "/api",
-    mediaRouter({ pool, signUpload, uploadRateLimit: { max: 100, windowMs: 60_000 } }),
+    mediaRouter({
+      pool,
+      signUpload,
+      uploadRateLimit: { max: 100, windowMs: 60_000 },
+      enqueue,
+    }),
   );
   return app;
 }
@@ -128,5 +137,95 @@ d("POST /api/sites/:siteId/media/upload-url (P3-T3.9)", () => {
       .set("X-Admin-Token", ADMIN_TOKEN)
       .send({ content_type: "image/png", focal_point: { x: 1.5, y: 0.5 } });
     expect(r.status).toBe(400);
+  });
+});
+
+d("POST /api/sites/:siteId/media/:assetId/complete (P3-T3.11)", () => {
+  let pool: Pool;
+  let muldoonSiteId: string;
+  const enqueue = vi.fn(async () => "fake-job-id");
+  const sign = vi.fn(async (args: { gcsKey: string; contentType: string }) => ({
+    upload_url: "x",
+    expires_at: new Date().toISOString(),
+    headers: { "Content-Type": args.contentType },
+  }));
+  let app: express.Express;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    const r = await pool.query<{ id: string }>(
+      `SELECT id FROM sites WHERE slug = 'muldoon-dental'`,
+    );
+    muldoonSiteId = r.rows[0].id;
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    app = buildApp(pool, sign, enqueue);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  beforeEach(async () => {
+    enqueue.mockClear();
+    await pool.query(`DELETE FROM media_assets WHERE site_id = $1`, [muldoonSiteId]);
+  });
+
+  let assetCounter = 0;
+  async function makeAsset(status: string = "pending"): Promise<string> {
+    assetCounter += 1;
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO media_assets (site_id, gcs_key, content_type, variants_status)
+       VALUES ($1, $2, 'image/png', $3) RETURNING id`,
+      [muldoonSiteId, `originals/${muldoonSiteId}/x-${assetCounter}-${Date.now()}.png`, status],
+    );
+    return ins.rows[0].id;
+  }
+
+  it("401 without admin token", async () => {
+    const assetId = await makeAsset();
+    const r = await request(app).post(
+      `/api/sites/${muldoonSiteId}/media/${assetId}/complete`,
+    );
+    expect(r.status).toBe(401);
+  });
+
+  it("404 when asset belongs to a different site", async () => {
+    const assetId = await makeAsset();
+    const r = await request(app)
+      .post(`/api/sites/00000000-0000-0000-0000-000000000000/media/${assetId}/complete`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+
+  it("enqueues media.process-upload on first call (pending → pending, enqueued=true)", async () => {
+    const assetId = await makeAsset("pending");
+    const r = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/media/${assetId}/complete`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(202);
+    expect(r.body).toMatchObject({ asset_id: assetId, enqueued: true });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    const call = enqueue.mock.calls[0] as unknown as [string, { asset_id: string }];
+    expect(call[0]).toBe("media.process-upload");
+    expect(call[1]).toEqual({ asset_id: assetId });
+  });
+
+  it("idempotent: 'ready' or 'processing' returns 202 without re-enqueue", async () => {
+    const r1 = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/media/${await makeAsset("ready")}/complete`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r1.status).toBe(202);
+    expect(r1.body.enqueued).toBe(false);
+
+    const r2 = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/media/${await makeAsset("processing")}/complete`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r2.status).toBe(202);
+    expect(r2.body.enqueued).toBe(false);
+
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });

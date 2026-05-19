@@ -9,6 +9,8 @@ import {
   signUploadUrl,
   type SignedUploadUrl,
 } from "../media/storage.js";
+import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
+import type { PgBoss } from "pg-boss";
 
 /**
  * Media admin API (P3-T3.9 + P3-T3.11).
@@ -42,11 +44,26 @@ export type MediaRouterOptions = {
   pool?: Pool;
   signUpload?: typeof signUploadUrl;
   uploadRateLimit?: RateLimitOptions;
+  /**
+   * Inject a pg-boss instance (or stub) so the upload-complete callback
+   * can enqueue media.process-upload. Defaults to the live `getBoss()`
+   * accessor. Tests pass a `{ send }` stub.
+   */
+  enqueue?: (jobName: string, data: unknown) => Promise<string | null>;
 };
 
 export function mediaRouter(opts: MediaRouterOptions = {}): Router {
   const pool = opts.pool ?? defaultPool;
   const sign = opts.signUpload ?? signUploadUrl;
+  // Default enqueue resolves the live pg-boss at call time so the router
+  // can be constructed before bootJobs completes.
+  const enqueue =
+    opts.enqueue ??
+    (async (name: string, data: unknown) => {
+      const { getBoss } = await import("../jobs/index.js");
+      const boss: PgBoss = getBoss();
+      return boss.send(name, data as Record<string, unknown>);
+    });
   const router = Router();
 
   const admin = requireAdmin();
@@ -110,6 +127,44 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
           gcs_key: gcsKey,
           ...signed,
         });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/media/:assetId/complete — P3-T3.11
+  //
+  // Enqueues media.process-upload after the browser PUTs to GCS.
+  // Idempotent: if the row is already processing or ready, returns 202 with
+  // current state (no re-enqueue). 404 if the asset isn't owned by the site.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/media/:assetId/complete",
+    admin,
+    limiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, assetId } = req.params;
+      try {
+        const row = await pool.query<{ variants_status: string }>(
+          `SELECT variants_status FROM media_assets
+            WHERE id = $1 AND site_id = $2`,
+          [assetId, siteId],
+        );
+        if (row.rowCount === 0) {
+          res.status(404).json({ error: "media asset not found for this site" });
+          return;
+        }
+
+        const status = row.rows[0].variants_status;
+        if (status === "processing" || status === "ready") {
+          res.status(202).json({ asset_id: assetId, variants_status: status, enqueued: false });
+          return;
+        }
+
+        await enqueue(MEDIA_PROCESS_UPLOAD, { asset_id: assetId });
+        res.status(202).json({ asset_id: assetId, variants_status: "pending", enqueued: true });
       } catch (err) {
         next(err);
       }

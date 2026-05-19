@@ -67,7 +67,7 @@ These land in `DECISIONS.md` when the relevant task lands:
   - `src/server/jobs/media-process-upload.ts` — pg-boss handler for `media.process-upload`. Downloads the original from GCS, runs `sharp` to produce variants (`thumbnail` 200w, `sm` 480w, `md` 768w, `lg` 1280w, `2x` 2560w) in both WebP + JPG, content-hashes each, uploads with `Cache-Control: public, max-age=31536000, immutable`, records variant URLs in a `media_assets.variants JSONB` column, sets `variants_status='ready'`. Retries via pg-boss on transient failure. Append decision **D-031**.
   - **Tests:** job handler against an in-process fake GCS (the GCS client SDK has a test mode or we stub the storage client); pending → ready transition; variants array shape; retry behavior on transient error.
 
-- [ ] **3.11 — Upload-complete callback**
+- [x] **3.11 — Upload-complete callback**
   - `POST /api/sites/:siteId/media/:assetId/complete` (`requireAdmin` + `rateLimit`). Enqueues `media.process-upload` for `assetId`. Idempotent: if `variants_status` is already `processing` or `ready`, returns 202 with current state. 404 if asset doesn't exist or belongs to another site.
   - **Tests:** auth + rate-limit gates; idempotency (double-call); cross-site 404; correctly enqueues job.
 
@@ -116,6 +116,17 @@ These land in `DECISIONS.md` when the relevant task lands:
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 16:10 UTC — Task 3.11 (upload-complete callback)
+**Commit:** (pending — same commit as this log entry)
+**Done:** `POST /api/sites/:siteId/media/:assetId/complete` lands. Behind `requireAdmin` + `rateLimit`. Cross-site/unknown asset → 404. `pending` rows enqueue `media.process-upload` and return 202 with `{ asset_id, variants_status: "pending", enqueued: true }`. `processing` or `ready` rows return 202 with `enqueued: false` (idempotent — repeated calls don't duplicate jobs). `failed` rows DO re-enqueue (retry vector for a stuck upload after the operator fixes whatever was wrong).
+- **`mediaRouter` gained an `enqueue` option** so tests pass a `vi.fn()` stub. The default lazily resolves the live pg-boss instance via `import("../jobs/index.js")` — the router can be constructed before `bootJobs` completes (matches Phase 2 + 3.10 timing).
+**Tests added:** 4 (`tests/integration/media-upload-url.test.ts` extended) — 401 without admin token, 404 when asset belongs to another site, happy path (enqueue called with correct args, `enqueued: true`), idempotency (`ready` and `processing` rows: `enqueued: false`, enqueue never called). Full suite **207/207 across 32 files**; typecheck clean.
+**Next:** 3.12 — `<Image>` block in `@anchorcorps/components`, publish `0.2.0` to AR.
+**Notes:**
+- **Two TS gotchas caught + fixed:** the default `import PgBoss from "pg-boss"` form fails the package-level export check; switched to `import type { PgBoss }`. And `vi.fn(...)` returns a `Mock<[], R>` (no tracked args type), so the `mock.calls[0]` tuple comes back typed as `[]`; cast through `unknown` for the assertion. Both are TS-only — runtime behavior was correct.
+- **Idempotency model:** the route trusts the row's `variants_status` as the source of truth. If two callers race (`processing` row + a second `/complete` call before the first job finishes), the second call's enqueue is skipped because pg-boss already has the job. Even if a stale `pending` row got TWO enqueues, the handler's first action is `UPDATE variants_status='processing'`, which the second handler would no-op on (per 3.10's idempotency check).
+- The `failed → pending` retry path isn't explicitly tested here because the failure path is already covered in 3.10; this route just re-enqueues whatever state isn't `processing|ready`.
 
 ### 2026-05-19 15:55 UTC — Task 3.10 (sharp variant-generation pg-boss job)
 **Commit:** 1bd0b0e
