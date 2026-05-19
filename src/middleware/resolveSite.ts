@@ -93,14 +93,25 @@ function toResolvedSite(row: SiteRow, matched_via: ResolvedSite["matched_via"]):
 
 export type ResolveSiteOptions = {
   pool?: Pool;
+  /**
+   * When true, an unknown host calls `next()` with no `req.site` attached
+   * instead of responding 404. Used by the catch-all page route so the SPA
+   * dev server (Vite) can still handle `localhost` requests downstream.
+   */
+  passThroughOnMiss?: boolean;
 };
 
 export function resolveSite(opts: ResolveSiteOptions = {}): RequestHandler {
   const pool = opts.pool ?? defaultPool;
+  const passThroughOnMiss = opts.passThroughOnMiss ?? false;
 
   return async (req: Request, res: Response, next: NextFunction) => {
     const hostHeader = req.headers.host;
     if (!hostHeader) {
+      if (passThroughOnMiss) {
+        next();
+        return;
+      }
       res.status(404).type("text/plain").send("Site not found");
       return;
     }
@@ -122,6 +133,10 @@ export function resolveSite(opts: ResolveSiteOptions = {}): RequestHandler {
     }
 
     if (!site) {
+      if (passThroughOnMiss) {
+        next();
+        return;
+      }
       res.status(404).type("text/plain").send("Site not found");
       return;
     }

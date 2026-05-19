@@ -136,6 +136,19 @@ d("resolveSite middleware (integration)", () => {
     expect(queryCount).toBe(1); // cache hit, no new query
   });
 
+  it("passThroughOnMiss: unknown host calls next() instead of 404", async () => {
+    const app = express();
+    app.use(resolveSite({ pool, passThroughOnMiss: true }));
+    // Downstream handler that runs only if middleware called next() without responding.
+    app.get("/whoami", (req, res) =>
+      res.status(200).json({ site: req.site ?? null, downstream: true }),
+    );
+
+    const res = await request(app).get("/whoami").set("Host", "nope.example.com");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ site: null, downstream: true });
+  });
+
   it("caches negative lookups too (404 host → no repeat query)", async () => {
     let queryCount = 0;
     const spyPool = {
