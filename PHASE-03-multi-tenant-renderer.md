@@ -117,6 +117,19 @@ These land in `DECISIONS.md` when the relevant task lands:
 
 <!-- Routine appends entries below this line, newest first -->
 
+### 2026-05-19 17:20 UTC — Task 3.14 (renderer block-data hydration for images) — DEMO MILESTONE
+**Commit:** (pending — same commit as this log entry)
+**Done:** Media references in `pages.blocks` are now hydrated into `MediaContext` at SSR time. End-to-end demo works: a `media_assets` row with `variants_status='ready'` referenced from an `image` block produces `<picture>` with WebP source + JPG fallback + width/height + alt in the SSR'd HTML.
+- **`src/server/render-hydration.ts`** — `collectAssetIds(blocks)` recursively walks blocks to pull every `props.asset_id` (Image block) + `props.slides[*].image_asset_id` (Hero Slider) + descendants via `block.children`. Returns deduped ids. `loadAssetsForBlocks(pool, siteId, blocks)` queries `media_assets` once (`SELECT … WHERE site_id = $1 AND id = ANY($2::uuid[]) AND variants_status = 'ready'`), filters out unready rows, projects to `MediaAssetData`.
+- **`src/server/render-page.tsx`** — `renderPage` now takes `{ assets: MediaAssetData[] }`. Wraps `<BlockRenderer>` in `<MediaProvider assets={...}>` (imported from `@anchorcorps/components`).
+- **`src/server/routes/page.ts`** — fetches the page, calls `loadAssetsForBlocks`, threads into `renderPage`.
+**Tests added:** 7 unit (`src/server/render-hydration.test.ts`) — pulls `asset_id`, walks `slides[]`, dedupes, recurses children, ignores empty/null/non-string, returns `[]` on null/undefined input. 1 integration (`tests/integration/page-render.test.ts`) — full end-to-end: insert ready `media_assets` row with variants → add image block referencing it to muldoon home → GET / → response HTML contains the WebP source srcset with sorted widths + JPG fallback uses the largest variant + prop alt overrides + width/height hints. Full suite **227/227 across 34 files**. Typecheck clean.
+**Next:** 3.15 — Phase 3 docs + plan tick.
+**Notes:**
+- **Single query for hydration** keeps the request fast — N image blocks become 1 SQL query, not N. With a future-Phase Redis/in-process cache for assets, this becomes 0 queries.
+- **`variants_status = 'ready'` gate** is critical — the Image block's `ac-image--missing` placeholder is the right UX while a variant job is in flight, not a broken `<picture>` with empty srcsets.
+- **No package re-publish needed.** Hydration is renderer-side; the package's API (3.12) was already correct. Workspace symlink picks up everything.
+
 ### 2026-05-19 17:00 UTC — Task 3.13 (hero-slider `image_asset_id` migration; @anchorcorps/components@0.3.0)
 **Commit:** 00ce262
 **Done:** Hero-slider per-slide schema now accepts **`image_asset_id`** alongside the legacy **`image`** URL string. Component resolves `image_asset_id` via `MediaContext`, picks the widest WebP variant for `background-image`, uses asset.focal_point for `backgroundPosition`. Missing-asset path falls back to the legacy `image` URL so editors can preview while uploads are in flight. Both fields default to empty — old payloads ride through unchanged. Package bumped to **`0.3.0`** and published to AR.

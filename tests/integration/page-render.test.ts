@@ -133,6 +133,62 @@ d("page renderer catch-all (integration)", () => {
     }
   });
 
+  it("media hydration: <picture> srcset + width/height land in HTML when an Image block references a ready media_asset (P3-T3.14)", async () => {
+    // Fixture asset that pretends 3.10's variant job already finished.
+    const muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    const variants = [
+      { name: "sm", format: "webp", width: 480, height: 270, url: "https://x/sm.webp" },
+      { name: "md", format: "webp", width: 768, height: 432, url: "https://x/md.webp" },
+      { name: "sm", format: "jpg", width: 480, height: 270, url: "https://x/sm.jpg" },
+      { name: "md", format: "jpg", width: 768, height: 432, url: "https://x/md.jpg" },
+    ];
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO media_assets (site_id, gcs_key, content_type, alt, variants_status, variants, width, height)
+       VALUES ($1, $2, 'image/png', 'Fixture image', 'ready', $3::jsonb, 1280, 720) RETURNING id`,
+      [muldoonId, `originals/${muldoonId}/hydration-fixture.png`, JSON.stringify(variants)],
+    );
+    const assetId = ins.rows[0].id;
+    // Snapshot the muldoon home blocks so we can restore later.
+    const before = await pool.query<{ blocks: unknown[] }>(
+      `SELECT blocks FROM pages WHERE site_id = $1 AND slug = 'home'`,
+      [muldoonId],
+    );
+    const originalBlocks = before.rows[0].blocks;
+    try {
+      const newBlocks = [
+        ...originalBlocks,
+        { id: "img-1", type: "image", props: { asset_id: assetId, alt: "Override alt" } },
+      ];
+      await pool.query(
+        `UPDATE pages SET blocks = $1::jsonb WHERE site_id = $2 AND slug = 'home'`,
+        [JSON.stringify(newBlocks), muldoonId],
+      );
+
+      const r = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(r.status).toBe(200);
+      expect(r.text).toContain("ac-image");
+      // WebP source with sorted srcset
+      expect(r.text).toMatch(
+        /<source[^>]*type="image\/webp"[^>]*srcSet="https:\/\/x\/sm\.webp 480w, https:\/\/x\/md\.webp 768w"/i,
+      );
+      // JPG fallback uses the largest variant.
+      expect(r.text).toMatch(/<img[^>]*src="https:\/\/x\/md\.jpg"/i);
+      // Prop alt wins.
+      expect(r.text).toMatch(/alt="Override alt"/);
+      // Width/height hints landed.
+      expect(r.text).toMatch(/width="1280"/);
+      expect(r.text).toMatch(/height="720"/);
+    } finally {
+      await pool.query(
+        `UPDATE pages SET blocks = $1::jsonb WHERE site_id = $2 AND slug = 'home'`,
+        [JSON.stringify(originalBlocks), muldoonId],
+      );
+      await pool.query(`DELETE FROM media_assets WHERE id = $1`, [assetId]);
+    }
+  });
+
   it("draft pages are not served", async () => {
     // flip muldoon home to draft, request it, then restore.
     await pool.query(

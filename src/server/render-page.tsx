@@ -8,6 +8,7 @@ import { BlockRenderer } from "../components/BlockRenderer.js";
 import type { Block } from "../blocks/types.js";
 import type { ResolvedSite } from "../middleware/resolveSite.js";
 import { mergeBrandTokens } from "../blocks/brand-tokens.js";
+import { MediaProvider, type MediaAssetData } from "@anchorcorps/components";
 
 /**
  * Inline the @anchorcorps/components prebuilt CSS bundle + the inline
@@ -123,10 +124,20 @@ function renderShellContent(site: ResolvedSite, inner: ReactElement): string {
 export function renderPage(
   site: ResolvedSite,
   page: PageRecord,
+  opts: { assets?: MediaAssetData[] } = {},
 ): { html: string; status: number } {
   const seo = (page.seo ?? {}) as SeoFields;
   const title = seo.title || page.title || site.display_name;
-  const bodyHtml = renderShellContent(site, <BlockRenderer blocks={page.blocks ?? []} />);
+  const bodyHtml = renderShellContent(
+    site,
+    // P3-T3.14 — wrap BlockRenderer in MediaProvider so the Image
+    // block + hero-slider can resolve `asset_id` / `image_asset_id`
+    // against the hydrated rows. Empty assets array is the no-image
+    // case and renders the placeholder cleanly.
+    <MediaProvider assets={opts.assets ?? []}>
+      <BlockRenderer blocks={page.blocks ?? []} />
+    </MediaProvider>,
+  );
   return shell({
     site,
     title,

@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
 import { renderNotFound, renderPage, type PageRecord } from "../render-page.js";
+import { loadAssetsForBlocks } from "../render-hydration.js";
 // Side-effect: register the three static block types so SSR can resolve them.
 import "../../blocks/index.js";
 
@@ -36,7 +37,14 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
         return;
       }
 
-      const { html, status } = renderPage(req.site, result.rows[0]);
+      // P3-T3.14 — hydrate media_assets referenced by the page's blocks
+      // before SSR so MediaProvider can resolve asset_ids.
+      const assets = await loadAssetsForBlocks(
+        pool,
+        req.site.id,
+        result.rows[0].blocks,
+      );
+      const { html, status } = renderPage(req.site, result.rows[0], { assets });
       res.status(status).type("text/html").send(html);
     } catch (err) {
       next(err);
