@@ -5,6 +5,7 @@ import pinoHttp from "pino-http";
 import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 import { pageRouter } from "./routes/page.js";
+import { adminPagesRouter } from "./routes/admin-pages.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
@@ -30,6 +31,11 @@ export function createApp(): Express {
       res.json({ site: req.site });
     });
   }
+
+  // Admin API: save, list revisions, restore. Gated by requireAdmin() inside
+  // the router (X-Admin-Token vs ADMIN_API_TOKEN env). Phase 8 replaces with
+  // Better-auth sessions per D-020.
+  app.use("/api", adminPagesRouter());
 
   // Tenant page renderer. Registered last so all named admin/probe routes
   // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
