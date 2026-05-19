@@ -118,7 +118,7 @@ These land in `DECISIONS.md` when the relevant task lands:
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-19 14:45 UTC — Task 3.7 (GCS bucket + IAM; Cloud CDN deferred)
-**Commit:** (pending — same commit as this log entry)
+**Commit:** df61e6b
 **Done:** GCS bucket `gs://anchorcorps-media` provisioned in `anchor-hub-480305/us-central1` with uniform bucket-level access. Lifecycle policy rolls `originals/<site_id>/...` from STANDARD → COLDLINE after 30 days no-access (variants stay STANDARD forever — they're hot + small). IAM: default Cloud Run compute SA (`333281424614-compute@developer.gserviceaccount.com`) granted `roles/storage.objectAdmin` on the bucket + `roles/iam.serviceAccountTokenCreator` self-impersonation so it can mint signed URLs without exporting a JSON key. `docs/media-pipeline.md` + `docs/_anchorcorps-media-lifecycle.json` committed; the doc covers GCS layout, lifecycle, IAM, the future Cloud CDN front, and the upload/process/render flow that 3.8–3.14 implement.
 **Cloud CDN deferred** to a Phase 12 hardening follow-up. v0.1 serves variants via `https://storage.googleapis.com/anchorcorps-media/variants/...` with `Cache-Control: public, max-age=31536000, immutable`. CDN requires a Global External HTTPS LB + backend bucket + DNS + managed SSL — multi-step infra that doesn't change the renderer's API. A `mediaUrl(asset, variant)` helper will make the eventual switch a one-function change.
 **Tests added:** 0 — pure infra. Verification: `gcloud storage buckets describe` confirms the bucket; gcloud IAM bindings return success.
