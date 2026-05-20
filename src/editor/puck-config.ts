@@ -4,7 +4,7 @@
 import "../blocks/index.js";
 import { listBlocks } from "../blocks/registry.js";
 import { zodToPuckFields, zodSchemaDefaults } from "./zod-fields.js";
-import { fieldOverridesFor } from "./field-overrides.js";
+import { applyFieldOverrides, type OverrideOpts } from "./field-overrides.js";
 // Type-only Puck imports keep this module free of a runtime Puck dependency.
 import type { ComponentConfig, Config } from "./index.js";
 
@@ -21,15 +21,16 @@ import type { ComponentConfig, Config } from "./index.js";
  * automatically with no editor changes. Purely a data assembly — builds a plain
  * object, so no Puck runtime is loaded here.
  */
-export function buildPuckConfig(): Config {
+export function buildPuckConfig(opts: OverrideOpts = {}): Config {
   const components: Record<string, ComponentConfig> = {};
 
   for (const { type, entry } of listBlocks()) {
     components[type] = {
       label: entry.label,
-      // Custom-field overrides (e.g. Tiptap for rich-text.html) win over the
-      // schema-derived field for the same prop.
-      fields: { ...zodToPuckFields(entry.schema), ...fieldOverridesFor(type) },
+      // Custom-field overrides (Tiptap rich-text, media picker) replace the
+      // schema-derived field for specific props; `siteId` lets the media
+      // picker fetch the right library.
+      fields: applyFieldOverrides(type, zodToPuckFields(entry.schema), opts),
       defaultProps: zodSchemaDefaults(entry.schema),
       render: entry.component as unknown as ComponentConfig["render"],
     } as ComponentConfig;

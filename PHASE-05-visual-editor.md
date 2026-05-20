@@ -58,7 +58,7 @@
   - Wrap Tiptap as a Puck custom field so the `rich-text` block edits inline-ish in the side panel (D-017). Reuse the existing `src/blocks/rich-text` rendering contract; store the same serialized shape the renderer expects.
   - **Tests:** field renders; edits flow into the block props; serialized output matches the renderer's expected shape.
 
-- [ ] **5.7 — Image-picker custom field (media library)**
+- [x] **5.7 — Image-picker custom field (media library)**
   - A Puck custom field that opens the Phase-3/4 media library (`GET …/media`) to pick an `image_asset_id` (used by hero-slider + the Image block). Shows ready-variant thumbnails; supports the upload flow or links to the Media tab.
   - **Tests:** field lists media; selecting sets the asset id on the block props.
 
@@ -101,6 +101,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 18:23 UTC — Task 5.7 (Image-picker custom field — media library)
+**Commit:** (this commit)
+**Done:** `src/editor/custom-fields/image-field.tsx` — `imageField(label, siteId)` Puck custom field: "Choose image" opens a thumbnail grid from `GET /api/sites/:siteId/media` (ready-variant thumbs via the MediaTab `pickThumb` logic), select → sets the asset-id string, Clear → "". Evolved the override registry to `applyFieldOverrides(type, fields, opts)` (a transform, so it reaches NESTED array sub-fields); threaded `siteId` through `buildPuckConfig(opts)` → `EditorPage`. Overrides: `image.asset_id` + `hero-slider.slides[].image_asset_id` → media picker. **No storage change** — still the asset-id string the renderer hydrates via MediaContext. Updated D-037.
+**Tests added:** 4 (image-field.test.tsx, fetch mocked: is custom field; lists media on open + select sets id; clear; no-site error) + 3 puck-config (cta untouched=schema; image.asset_id custom; hero-slider nested custom). Suite 332→339; cold-cache full run + typecheck + build green.
+**Next:** 5.8 — color / brand-token custom field (if needed).
+**Notes:** Editor→admin edge: image-field uses `admin/lib/apiFetch` (the editor is an admin route; D-017 only constrains Puck). FLAKE-RESOLVESITE now surfaces more often on cold runs (~1/3) because the growing test-file set shifted cold ordering — still the same pre-existing isolation flake (1 test, intermittent, recovers on rerun); all 6 Phase-5 CI builds were SUCCESS, but the rising frequency makes the dedicated isolation-hardening fix more worth prioritizing. Visual QA (picker UX) operator-run at studio.localhost:3000.
 
 ### 2026-05-20 18:14 UTC — Task 5.6 (Tiptap as a Puck custom field — rich text)
 **Commit:** 4e18ca2

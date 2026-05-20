@@ -616,8 +616,12 @@ So the precise state: the Cloud Build GitHub App **is** installed/configured on 
 - **The stored shape does NOT change.** `rich-text` keeps `props.html` as an HTML string (rendered by the prod `RichText` via `dangerouslySetInnerHTML`). Tiptap edits exactly that: `content: value` in, `editor.getHTML()` out (`onUpdate`). So the serialized output is precisely what the renderer consumes — no Tiptap-specific JSON, no migration. StarterKit extensions; toolbar = bold/italic/H2/H3/bullet+ordered lists.
 
 **Decision — custom-field override registry (`src/editor/field-overrides.ts`):**
-- `fieldOverridesFor(type)` returns a `{ propName → Field }` map merged OVER `zodToPuckFields(schema)` in `buildPuckConfig` (override wins for that prop). This is the general extension point for fields that need more than the Zod type implies: **5.6 rich-text→Tiptap, 5.7 image→media picker, 5.8 color** all register here. Schema-derived fields remain the default for every other prop.
-- The Tiptap field (`src/editor/custom-fields/tiptap-field.tsx`) is a Puck `{ type: "custom", render }`. It lives under `src/editor/` like all editor code; Tiptap imports stay inside that boundary.
+- `applyFieldOverrides(type, fields, opts)` mutates/returns the schema-derived `fields`, replacing specific props with richer custom fields (override wins). A transform (not a flat merge map) so it can reach **nested array sub-fields** too. `buildPuckConfig(opts)` calls it; `opts.siteId` threads through for the media picker. This is the general extension point for fields that need more than the Zod type implies — all register here:
+  - **5.6** `rich-text.html` → Tiptap.
+  - **5.7** `image.asset_id` → media picker; `hero-slider.slides[].image_asset_id` → media picker (nested in `arrayFields`).
+  - **5.8** color (if needed).
+  Schema-derived fields remain the default for every other prop; each override is guarded on the field existing so a schema change can't crash assembly.
+- Custom fields live under `src/editor/custom-fields/`: `tiptap-field.tsx` (HTML string), `image-field.tsx` (media picker — a Puck `{type:"custom"}` that fetches `GET /api/sites/:siteId/media` via the admin `apiFetch`, shows ready-variant thumbnails, sets the asset-id string). The editor importing `admin/lib/apiFetch` is an allowed editor→admin edge (the editor IS an admin route); D-017 only constrains Puck imports.
 
 **Testing:** Same gotcha as Puck (D-036) — booting a real ProseMirror `EditorView` in jsdom is fragile, so the field test **mocks `@tiptap/react`** and asserts the value↔`getHTML()` contract (content seeded from `value`; `onUpdate` → `onChange(html)`). Importing Tiptap transitively (via `buildPuckConfig`) does NOT crash on load (unlike dnd-kit's `ResizeObserver`), so it caused no dep-scan cascade. Real editing is operator-verified at `studio.localhost:3000`.
 

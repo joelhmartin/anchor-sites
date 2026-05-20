@@ -59,8 +59,9 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
     `/api/sites/${siteId}/pages/${pageId}`,
   );
 
-  // Config is derived from the shared block registry once per mount.
-  const config = useMemo(() => buildPuckConfig(), []);
+  // Config is derived from the shared block registry; siteId lets the media
+  // picker custom field fetch this site's library.
+  const config = useMemo(() => buildPuckConfig({ siteId }), [siteId]);
 
   const page = data?.page;
   const initialData = useMemo(

@@ -4,7 +4,7 @@ import { blockManifest } from "@anchorcorps/components";
 import { __resetRegistryForTests, listBlocks, registerBlock } from "../../blocks/registry.js";
 import { richTextBlock } from "../../blocks/rich-text/index.js";
 import { zodSchemaDefaults, zodToPuckFields } from "../zod-fields.js";
-import { fieldOverridesFor } from "../field-overrides.js";
+import { applyFieldOverrides } from "../field-overrides.js";
 import { buildPuckConfig } from "../puck-config.js";
 
 // The registry is process-global mutable state shared across the test fork
@@ -42,20 +42,16 @@ describe("buildPuckConfig (P5-T5.4)", () => {
     }
   });
 
-  it("derives fields, defaultProps, label, and render from each registry entry", () => {
-    const config = buildPuckConfig();
+  it("derives field types, label, defaultProps, and render from each registry entry", () => {
+    const config = buildPuckConfig({ siteId: "s1" });
     for (const { type, entry } of listBlocks()) {
       const component = config.components[type];
       expect(component.label).toBe(entry.label);
-      const schemaFields = zodToPuckFields(entry.schema);
-      const overrides = fieldOverridesFor(type);
+      // Expected = schema-derived fields with the same overrides applied. Custom
+      // fields carry a render fn (not deep-comparable), so compare by type.
+      const expected = applyFieldOverrides(type, zodToPuckFields(entry.schema), { siteId: "s1" });
       for (const [key, field] of Object.entries(component.fields ?? {})) {
-        if (key in overrides) {
-          // Custom-field override (render fn isn't deep-comparable) — assert shape.
-          expect(field.type).toBe(overrides[key].type);
-        } else {
-          expect(field).toEqual(schemaFields[key]);
-        }
+        expect(field.type).toBe(expected[key].type);
       }
       expect(component.defaultProps).toEqual(zodSchemaDefaults(entry.schema));
       // render is the SAME component the prod renderer uses (no editor fork).
@@ -63,14 +59,28 @@ describe("buildPuckConfig (P5-T5.4)", () => {
     }
   });
 
-  it("overrides rich-text.html with the Tiptap custom field (not a plain text input)", () => {
-    const config = buildPuckConfig();
-    const richText = config.components["rich-text"];
-    // Without the override, z.string() maps to a `text` field — the override
-    // makes it `custom` (Tiptap) instead.
-    expect(richText.fields?.html?.type).toBe("custom");
-    // Sibling props keep their schema-derived field.
+  it("leaves a block with no overrides exactly as the schema derives it (cta)", () => {
+    const cta = buildPuckConfig().components["cta"];
+    const ctaEntry = listBlocks().find((b) => b.type === "cta")!.entry;
+    expect(cta.fields).toEqual(zodToPuckFields(ctaEntry.schema));
+  });
+
+  it("overrides rich-text.html → Tiptap custom field; siblings keep schema fields", () => {
+    const richText = buildPuckConfig().components["rich-text"];
+    expect(richText.fields?.html?.type).toBe("custom"); // would be "text" without override
     expect(richText.fields?.max_width?.type).toBe("select");
+  });
+
+  it("overrides image.asset_id → media-picker custom field (P5-T5.7)", () => {
+    const image = buildPuckConfig({ siteId: "s1" }).components["image"];
+    expect(image.fields?.asset_id?.type).toBe("custom");
+  });
+
+  it("overrides hero-slider slides[].image_asset_id → media-picker (nested, P5-T5.7)", () => {
+    const slider = buildPuckConfig({ siteId: "s1" }).components["hero-slider"];
+    const slides = slider.fields?.slides as { type: string; arrayFields: Record<string, { type: string }> };
+    expect(slides.type).toBe("array");
+    expect(slides.arrayFields.image_asset_id.type).toBe("custom");
   });
 
   it("defaultProps parse cleanly against the block's own schema (valid starting props)", () => {
