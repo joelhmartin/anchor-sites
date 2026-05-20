@@ -1,0 +1,99 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { PagesTab } from "./PagesTab.js";
+import { EditorPlaceholder } from "../EditorPlaceholder.js";
+import { setAdminToken, clearAdminToken } from "../../lib/adminToken.js";
+
+const PAGE_A = { id: "p1", slug: "home", title: "Home", status: "published", updated_at: "2026-05-18T00:00:00Z" };
+const PAGE_B = { id: "p2", slug: "about", title: "About us", status: "draft", updated_at: "2026-05-19T00:00:00Z" };
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function renderTab() {
+  return render(
+    <MemoryRouter initialEntries={["/sites/acme"]}>
+      <Routes>
+        <Route path="/sites/:slug" element={<PagesTab siteId="s1" slug="acme" />} />
+        <Route path="/sites/:slug/pages/:pageId" element={<EditorPlaceholder />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe("PagesTab (P4-T4.13)", () => {
+  const realFetch = global.fetch;
+  beforeEach(() => setAdminToken("tok"));
+  afterEach(() => {
+    cleanup();
+    clearAdminToken();
+    global.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("lists pages with title, slug, and a status badge", async () => {
+    global.fetch = vi.fn(async () => json({ pages: [PAGE_A, PAGE_B] })) as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+    expect(screen.getByText("About us")).toBeTruthy();
+    expect(screen.getByText("published")).toBeTruthy();
+    expect(screen.getByText("draft")).toBeTruthy();
+  });
+
+  it("creates a page via POST and refreshes the list", async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/pages" && method === "POST") {
+        return json({ page: { id: "p2", slug: "about", title: "About us", status: "draft" } }, 201);
+      }
+      // GET: first load has only PAGE_A; after the create + reload, both.
+      getCount += 1;
+      return json({ pages: getCount === 1 ? [PAGE_A] : [PAGE_A, PAGE_B] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "+ New page" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "About us" } });
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "about" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create page" }));
+
+    await waitFor(() => expect(screen.getByText("About us")).toBeTruthy());
+    const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST");
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse((postCall![1] as RequestInit).body as string);
+    expect(body).toEqual({ slug: "about", title: "About us" });
+  });
+
+  it("routes Edit to the Phase-5 editor placeholder", async () => {
+    global.fetch = vi.fn(async () => json({ pages: [PAGE_A] })) as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByText(/Visual editor — coming in Phase 5/)).toBeTruthy();
+  });
+
+  it("surfaces a duplicate-slug 409 inline", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "POST") return json({ error: "slug already exists" }, 409);
+      return json({ pages: [PAGE_A] });
+    }) as unknown as typeof fetch;
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "+ New page" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Home again" } });
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "home" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create page" }));
+
+    await waitFor(() => expect(screen.getByText(/already exists/)).toBeTruthy());
+  });
+});

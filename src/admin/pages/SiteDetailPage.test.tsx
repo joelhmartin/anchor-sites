@@ -20,11 +20,12 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-/** Routes /api/sites -> list, /api/sites/:id -> detail. */
+/** Routes /api/sites -> list, /api/sites/:id -> detail, /api/sites/:id/pages -> pages. */
 function mockApi(list: unknown[], detail: typeof SITE | null) {
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/sites") return json({ sites: list });
+    if (detail && url === `/api/sites/${detail.id}/pages`) return json({ pages: [] });
     if (detail && url === `/api/sites/${detail.id}`) return json({ site: detail });
     return json({ error: "not found" }, 404);
   }) as unknown as typeof fetch;
@@ -63,13 +64,13 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     renderAt("acme");
     await waitFor(() => expect(screen.getByRole("tab", { name: "Pages" })).toBeTruthy());
 
-    // Pages is the default tab.
-    expect(screen.getByText(/arrive in Task 4.13/)).toBeTruthy();
+    // Pages is the default tab — the real PagesTab shows a "+ New page" affordance.
+    expect(screen.getByRole("button", { name: "+ New page" })).toBeTruthy();
     expect(screen.queryByText(/arrive in Task 4.14/)).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "Media" }));
     expect(screen.getByText(/arrive in Task 4.14/)).toBeTruthy();
-    expect(screen.queryByText(/arrive in Task 4.13/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New page" })).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     expect(screen.getByText(/arrive in Task 4.15/)).toBeTruthy();

@@ -77,7 +77,7 @@
   - Loads `GET /api/sites/:siteId` once. Tab bar: Pages · Media · Settings (default Pages). Tab content lazy-loads its list. Breadcrumb + "View live site" external link to the site's hostname.
   - **Tests:** tab switching; detail load; live-link href.
 
-- [ ] **4.13 — Pages tab + new-page form**
+- [x] **4.13 — Pages tab + new-page form**
   - List pages (4.3) with status badges + updated time. Each row has an "Edit" button → `/sites/:slug/pages/:pageId` (a Phase 5 placeholder screen: "Visual editor lands in Phase 5"). "+ New page" mini-form (slug + title) → `POST /api/sites/:siteId/pages` → refresh list.
   - **Tests:** renders pages; new-page submit; placeholder editor route renders.
 
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 10:50 UTC — Task 4.13 (Pages tab + new-page form)
+**Commit:** (pending)
+**Done:** `src/admin/pages/site-tabs/PagesTab.tsx` is now real (was a 4.12 stub). Loads `GET /api/sites/:siteId/pages` and renders a table — title, slug, status badge (`published`→success, `draft`→warning), last-updated date, and an "Edit" button that routes to `/sites/:slug/pages/:pageId` (the Phase-5 `EditorPlaceholder`). A toggleable "+ New page" mini-form (title + live-validated slug) submits `POST /api/sites/:siteId/pages`; on success it clears + closes the form and `reload()`s the list; a 409 (duplicate slug) surfaces inline. Empty/loading/error states all handled.
+**Tests added:** 4 (`PagesTab.test.tsx`, jsdom) — lists pages with status badges; create posts the assembled `{slug,title}` body then the refreshed list shows the new page; Edit routes to the Phase-5 placeholder (`Visual editor — coming in Phase 5`); duplicate-slug 409 inline. Also updated `SiteDetailPage.test.tsx` (4.12) — its tab-switching test asserted the old Pages **stub** text + didn't mock the pages endpoint; now mocks `/pages` and asserts on the real "+ New page" affordance. Full suite **290/290 across 43 files**; typecheck clean.
+**Next:** 4.14 — Media tab + upload flow.
+**Notes:**
+- Reused the `useApi` `reload()` from 4.10 for the post-create refresh — no manual list-state surgery.
+- **Lesson for 4.14/4.15:** fleshing out a tab stub breaks any earlier test that asserted the stub's placeholder text. When I replace `MediaTab`/`SettingsTab`, re-check `SiteDetailPage.test.tsx` (it asserts `arrive in Task 4.14`/`4.15`) and the tab's own mock coverage.
+- **Can't browser-verify** (operator hard rule). jsdom + typecheck only; eyeball at `studio.localhost:3000/sites/<slug>` → Pages tab.
 
 ### 2026-05-20 10:35 UTC — Task 4.12 (site detail shell + tabs)
 **Commit:** aecb2eb
