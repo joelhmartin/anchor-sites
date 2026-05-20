@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 18:36 UTC — Task 5.10 (Publish/draft status + viewport preview)
-**Commit:** (this commit)
+**Commit:** 252dcc2
 **Done:** **Backend:** extended the save endpoint (`POST .../pages/:pageId`) to accept an optional `status` (`draft`|`published`) → `status = COALESCE($7, status)` (omitting leaves it unchanged); response echoes `page.status`. **Frontend:** status badge + a Publish / Move-to-draft toggle in the editor header that persists status via the save endpoint, preserving live edits by tracking Puck's `onChange` data in a ref (falls back to the loaded blocks). **Viewport:** Puck's native viewport switcher (no code). **Preview parity:** Puck renders the SAME registered components (5.4); brand-token `:root` application inside Puck's preview iframe is best-effort and **left for operator visual QA** — not claimed here.
 **Tests added:** 2 backend (admin-pages.test.ts: save with status persists + omit leaves unchanged + toggle to draft; invalid status → 400) + 1 frontend (EditorPage: Publish toggle POSTs status:"published" and the control flips to "Move to draft"). Suite 341→344; cold-cache full run + typecheck + build green.
 **Next:** 5.11 — docs + plan tick (phase wrap).
