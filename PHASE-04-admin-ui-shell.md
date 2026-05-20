@@ -73,7 +73,7 @@
   - 2-step: (1) slug + display_name (live slug validation), (2) brand-token color pairs (main/accent/surface + on-* derived) with a live preview swatch + "reset to defaults". Submits `POST /api/sites`; on success → `/sites/:slug`. Surfaces 409 (duplicate slug) inline.
   - **Tests:** step nav; validation; submit calls POST with the assembled body; duplicate-slug error surfaced.
 
-- [ ] **4.12 — Site detail shell + tabs (`/sites/:slug`)**
+- [x] **4.12 — Site detail shell + tabs (`/sites/:slug`)**
   - Loads `GET /api/sites/:siteId` once. Tab bar: Pages · Media · Settings (default Pages). Tab content lazy-loads its list. Breadcrumb + "View live site" external link to the site's hostname.
   - **Tests:** tab switching; detail load; live-link href.
 
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 10:35 UTC — Task 4.12 (site detail shell + tabs)
+**Commit:** (pending)
+**Done:** `src/admin/pages/SiteDetailPage.tsx` is now the real detail shell. The URL routes by **slug** but the detail/pages/media endpoints key off the site **UUID**, so the page resolves slug → id from the (cheap) `GET /api/sites` list, then `<SiteDetailView>` loads the full detail via `GET /api/sites/:id`. Header: breadcrumb (`← Sites`), display_name + status badge, and a "View live site ↗" link to the canonical `<slug>.sites.anchorcorps.com` (new `lib/siteUrl.ts` helper mirroring the server `SITES_DOMAIN_BASE`; real domains are Phase 10). Tab bar (Pages · Media · Settings, default Pages) with `role=tab`/`aria-selected`; **only the active tab mounts**, so each tab's list fetch is lazy. Created stub tab components under `pages/site-tabs/` (`PagesTab`/`MediaTab`/`SettingsTab`) for 4.13–4.15 to flesh out — same staged-stub pattern 4.9 used for the page components. Shared `lib/siteTypes.ts` (`SiteListRow`/`SiteDetail`). Unknown slug → a "No site found" card with a back link.
+**Tests added:** 4 (`SiteDetailPage.test.tsx`, jsdom + a URL-routing fetch mock) — slug→detail resolution (name + status), tab switching mounts only the active panel, "View live site" href = `https://acme.sites.anchorcorps.com` + `target=_blank`, unknown-slug not-found card. Full suite **286/286 across 42 files**; typecheck clean.
+**Next:** 4.13 — Pages tab + new-page form.
+**Notes:**
+- **slug→id resolution chosen client-side (operator deferred to my judgment, "least error-prone").** The `:siteId` endpoints query a UUID column, so passing a slug would 500, not 404 — resolving to the id client-side from the list touches **zero** already-tested API code and matches the existing no-cache `useApi` philosophy. If the sites list ever gets large, swap to a by-id-or-slug endpoint behind the same call sites.
+- The three tab files take the props their real versions need (`siteId`, `slug`, `site`) so 4.13–4.15 only change internals, not the call sites in `SiteDetailView`.
+- **Can't browser-verify** (operator hard rule). Typecheck + jsdom-tested; eyeball at `studio.localhost:3000/sites/<slug>`.
 
 ### 2026-05-20 06:45 UTC — Task 4.11 (new-site wizard) — site creation end-to-end from the UI
 **Commit:** fcd3902

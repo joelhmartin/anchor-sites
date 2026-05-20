@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 4,
   "current_phase_file": "PHASE-04-admin-ui-shell.md",
-  "current_task": "4.12",
+  "current_task": "4.13",
   "phase_started_at": "2026-05-19T18:00:00Z",
   "last_commit_sha": "fcd3902",
   "last_email_sent_at": null,
@@ -33,18 +33,18 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 282,
+    "current_pass": 286,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 223,
+    "current_pass_root": 227,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-20T06:45:00Z",
-    "notes": "Phase 4 through 4.11. Root 223 + package 59 = 282 across 41 files. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-20T10:35:00Z",
+    "notes": "Phase 4 through 4.12. Root 227 + package 59 = 286 across 42 files. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: joelhmartin/anchor-sites NOT connected to Cloud Build GitHub App — operator must Connect Repository in console, then create ^main trigger on cloudbuild.yaml. Until then deploys are MANUAL (see D-033 for the exact manual steps).",
     "Tenant certs: muldoon-dental + demo-site mappings recreated 2026-05-20, were CertificatePending — verify they reached Ready=True and the sites serve HTTPS.",
-    "Phase 4 remaining: tasks 4.12-4.16 (site-detail tabs, pages tab, media upload UI, settings tab, docs). SitesListPage + NewSiteWizard are real; SiteDetailPage is still a placeholder stub. NOTE for 4.12: UI routes by slug (/sites/:slug) but GET /api/sites/:siteId is by UUID — 4.12 must resolve slug->siteId (e.g. add a by-slug lookup or fetch the list and map).",
+    "Phase 4 remaining: tasks 4.13-4.16 (pages tab + new-page form, media upload UI, settings tab, docs). SitesListPage + NewSiteWizard + SiteDetailPage (shell+tabs) are real; the three tab bodies are stubs under src/admin/pages/site-tabs/ awaiting 4.13/4.14/4.15. slug->siteId resolution settled: client-side via the sites list (the :siteId endpoints 500 on a non-UUID param, so never send a slug to them).",
     "Auth (D-034): control-hub Google OAuth via Better-auth is Phase 8 work, NOT now. X-Admin-Token is interim. Operator dislikes the token but accepted it as interim.",
     "/healthz returns GFE 404 externally (cosmetic; Cloud Run uses TCP startup probe). Revisit Phase 12.",
     "Prod runs commit 24a2ed3's image (Phases 2-4). Any new commits need a MANUAL deploy until the CI trigger is wired (D-033 steps)."
