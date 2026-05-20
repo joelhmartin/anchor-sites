@@ -120,7 +120,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 11:05 UTC — Task 4.16 (Phase 4 docs + plan tick) — PHASE 4 COMPLETE
-**Commit:** (pending)
+**Commit:** 30dab9e
 **Done:** Wrote `docs/admin-ui.md` — host model (D-032 three-layer table + `isAdminHost` enforcement points), interim `X-Admin-Token` auth + the D-034 Phase-8 Google-OAuth hand-off, route map, full admin-API table, the slug→id resolution note, the three-step media upload flow (incl. the raw-PUT/no-token caveat), how to run locally on `studio.localhost:3000`, the UI building blocks, and the Phase 5/8/10 hand-offs. Ticked the **PLAN.md Phase 4 row** with a completion parenthetical matching the Phase 1–3 style. Appended the Phase 4 entry to `.routine/baseline-tests.log`. D-032 is cross-referenced from `docs/admin-ui.md` (no DECISIONS.md edit needed — append-only, and D-032/D-034 already exist).
 **Tests added:** 0 (docs-only task). Full suite unchanged at **297/297 across 45 files**; typecheck clean.
 **Next:** phase complete — Phase 5 (Puck visual editor) awaits `.routine/NEXT-PHASE-APPROVED`.
