@@ -43,6 +43,29 @@ const PAGE = {
   seo: { title: "SEO" },
 };
 
+const BLOCKS_B = [{ id: "rb", type: "cta", props: { label: "Restored" } }];
+const REVS = [
+  { id: "r1", created_at: "2026-05-19T00:00:00Z", source: "manual", author_id: null },
+];
+
+// Stateful mock: GET page returns BLOCKS until r1 is restored, then BLOCKS_B.
+function mockApiWithRevisions() {
+  let restored = false;
+  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/sites") return json({ sites: [SITE] });
+    if (url === "/api/sites/s1/pages/p1/revisions") return json({ revisions: REVS });
+    if (url === "/api/sites/s1/pages/p1/revisions/r1/restore" && init?.method === "POST") {
+      restored = true;
+      return json({ restored_from: "r1", revision: { id: "r9", created_at: "2026-05-20T00:00:00Z" } });
+    }
+    if (url === "/api/sites/s1/pages/p1") {
+      return json({ page: { ...PAGE, blocks: restored ? BLOCKS_B : BLOCKS } });
+    }
+    return json({ error: "not found" }, 404);
+  }) as unknown as typeof fetch;
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -130,5 +153,33 @@ describe("EditorPage (P5-T5.5)", () => {
     renderAt();
     const link = await screen.findByRole("link", { name: /Back to acme/ });
     expect(link.getAttribute("href")).toBe("/sites/acme");
+  });
+
+  it("shows the revision history when History is opened (P5-T5.9)", async () => {
+    mockApiWithRevisions();
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    await screen.findByRole("button", { name: "Restore" });
+    expect(screen.getByText(/manual/)).toBeTruthy();
+  });
+
+  it("restoring a revision reloads the editor with the restored blocks (P5-T5.9)", async () => {
+    mockApiWithRevisions();
+    renderAt();
+    // Initial load shows BLOCKS.
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId("puck-data").textContent ?? "null")).toEqual(
+        toPuckData(BLOCKS),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    // After restore, the page re-fetch returns BLOCKS_B and Puck remounts with it.
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId("puck-data").textContent ?? "null")).toEqual(
+        toPuckData(BLOCKS_B),
+      ),
+    );
   });
 });

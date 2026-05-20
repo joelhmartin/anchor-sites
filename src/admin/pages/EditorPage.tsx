@@ -53,11 +53,83 @@ export function EditorPage() {
   return <EditorView siteId={row.id} slug={row.slug} />;
 }
 
+type Revision = { id: string; created_at: string; source: string | null; author_id: string | null };
+
+function RevisionsPanel({
+  siteId,
+  pageId,
+  onRestored,
+}: {
+  siteId: string;
+  pageId: string;
+  onRestored: () => void;
+}) {
+  const { data, loading, error, reload } = useApi<{ revisions: Revision[] }>(
+    `/api/sites/${siteId}/pages/${pageId}/revisions`,
+  );
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const revisions = data?.revisions ?? [];
+
+  async function restore(id: string) {
+    setRestoring(id);
+    setRestoreError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/pages/${pageId}/revisions/${id}/restore`, {
+        method: "POST",
+      });
+      reload(); // refresh the list (restore appends a new revision)
+      onRestored(); // re-fetch the page → editor remounts with restored blocks
+    } catch (err) {
+      setRestoreError(err instanceof ApiError ? err.message : "Restore failed.");
+    } finally {
+      setRestoring(null);
+    }
+  }
+
+  return (
+    <div className="rounded border border-zinc-200 p-3">
+      <h3 className="mb-2 text-sm font-medium">Revision history</h3>
+      {loading && (
+        <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <Spinner /> Loading revisions…
+        </div>
+      )}
+      {error && <p className="text-xs text-red-600">Couldn’t load revisions: {error}</p>}
+      {restoreError && <p className="text-xs text-red-600">{restoreError}</p>}
+      {!loading && !error && revisions.length === 0 && (
+        <p className="text-xs text-zinc-500">No revisions yet.</p>
+      )}
+      {revisions.length > 0 && (
+        <ul className="flex flex-col gap-1" aria-label="Revisions">
+          {revisions.map((r) => (
+            <li key={r.id} className="flex items-center justify-between gap-3 text-xs">
+              <span className="text-zinc-600">
+                {new Date(r.created_at).toLocaleString()}
+                {r.source ? ` · ${r.source}` : ""}
+              </span>
+              <button
+                type="button"
+                onClick={() => restore(r.id)}
+                disabled={restoring !== null}
+                className="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                {restoring === r.id ? "Restoring…" : "Restore"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const { pageId } = useParams();
-  const { data, loading, error } = useApi<{ page: PageDetail }>(
+  const { data, loading, error, reload } = useApi<{ page: PageDetail }>(
     `/api/sites/${siteId}/pages/${pageId}`,
   );
+  const [showRevisions, setShowRevisions] = useState(false);
 
   // Config is derived from the shared block registry; siteId lets the media
   // picker custom field fetch this site's library.
@@ -118,6 +190,14 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
           {!saving && !saveError && savedAt && (
             <span className="text-green-600">Saved ✓</span>
           )}
+          <button
+            type="button"
+            onClick={() => setShowRevisions((v) => !v)}
+            aria-pressed={showRevisions}
+            className="font-medium text-zinc-600 hover:text-zinc-800"
+          >
+            History
+          </button>
           <a
             href={`${liveSiteUrl(slug)}/${page.slug}`}
             target="_blank"
@@ -128,6 +208,10 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
           </a>
         </div>
       </div>
+
+      {showRevisions && pageId && (
+        <RevisionsPanel siteId={siteId} pageId={pageId} onRestored={reload} />
+      )}
 
       <Puck config={config} data={initialData} onPublish={handlePublish} />
     </div>
