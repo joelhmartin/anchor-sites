@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 17:39 UTC — Task 5.3 (`zodToPuckFields(schema)`)
-**Commit:** (this commit)
+**Commit:** 79ac610
 **Done:** `src/editor/zod-fields.ts` — `zodToPuckFields(schema): Fields` + `humanizeLabel`. string→text, number(+min/max)→number, boolean→radio(Yes/No), enum/nativeEnum→select, object→object(recursive), array-of-object→array(recursive); Default/Optional/Nullable/Effects unwrapped; everything else→textarea fallback. Structural `_def` introspection → no zod/Puck runtime import (runs in node). Documented coverage + fallback in D-036.
 **Tests added:** 8 (`src/editor/__tests__/zod-fields.test.ts`): primitives, enum, nested object, array-of-object, wrapper-unwrapping, unsupported→textarea fallback (array-of-primitive/union/record), non-object top-level→{}, humanizeLabel cases. Suite 306→314, cold-cache full run + typecheck green.
 **Next:** 5.4 — assemble Puck `Config` from the block registry.
