@@ -8,6 +8,7 @@ import { pageRouter } from "./routes/page.js";
 import { adminPagesRouter } from "./routes/admin-pages.js";
 import { siteResolveRouter } from "./routes/site-resolve.js";
 import { mediaRouter } from "./routes/media.js";
+import { adminSitesRouter } from "./routes/admin-sites.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
@@ -41,6 +42,9 @@ export function createApp(): Express {
 
   // P3-T3.9: media upload-url + complete callback under /api.
   app.use("/api", mediaRouter());
+
+  // P4: admin sites API (list/detail/create/update + child resources).
+  app.use("/api", adminSitesRouter());
 
   // Admin-only debug endpoint for tenant resolution. P3-T3.2.
   app.use(siteResolveRouter());
