@@ -120,7 +120,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 10:50 UTC — Task 4.13 (Pages tab + new-page form)
-**Commit:** (pending)
+**Commit:** 7fe3e68
 **Done:** `src/admin/pages/site-tabs/PagesTab.tsx` is now real (was a 4.12 stub). Loads `GET /api/sites/:siteId/pages` and renders a table — title, slug, status badge (`published`→success, `draft`→warning), last-updated date, and an "Edit" button that routes to `/sites/:slug/pages/:pageId` (the Phase-5 `EditorPlaceholder`). A toggleable "+ New page" mini-form (title + live-validated slug) submits `POST /api/sites/:siteId/pages`; on success it clears + closes the form and `reload()`s the list; a 409 (duplicate slug) surfaces inline. Empty/loading/error states all handled.
 **Tests added:** 4 (`PagesTab.test.tsx`, jsdom) — lists pages with status badges; create posts the assembled `{slug,title}` body then the refreshed list shows the new page; Edit routes to the Phase-5 placeholder (`Visual editor — coming in Phase 5`); duplicate-slug 409 inline. Also updated `SiteDetailPage.test.tsx` (4.12) — its tab-switching test asserted the old Pages **stub** text + didn't mock the pages endpoint; now mocks `/pages` and asserts on the real "+ New page" affordance. Full suite **290/290 across 43 files**; typecheck clean.
 **Next:** 4.14 — Media tab + upload flow.
