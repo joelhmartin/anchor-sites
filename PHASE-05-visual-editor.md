@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 18:14 UTC — Task 5.6 (Tiptap as a Puck custom field — rich text)
-**Commit:** (this commit)
+**Commit:** 4e18ca2
 **Done:** Pinned `@tiptap/react`+`@tiptap/starter-kit`+`@tiptap/pm` exactly `3.23.5`. `src/editor/custom-fields/tiptap-field.tsx` — `tiptapField()` returns a Puck `{type:"custom"}` field editing an HTML string (content←value, getHTML()→onChange; toolbar B/I/H2/H3/bullet+ordered). `src/editor/field-overrides.ts` — `fieldOverridesFor(type)` registry merged OVER schema-derived fields in `buildPuckConfig`; `rich-text.html` now uses Tiptap instead of a text input. **No storage change** — still `props.html` HTML string the renderer injects. Recorded D-037 (pin + contract + override registry).
 **Tests added:** 4 (tiptap-field.test.tsx, @tiptap mocked: is custom field; seeds content from value; onUpdate→onChange(html); non-string→""), +1 puck-config (rich-text.html is custom, max_width still select); updated the config "derives fields" test for overrides. Suite 327→332; **3 cold-cache full runs all 332/0** + typecheck + build green.
 **Next:** 5.7 — image-picker custom field (media library).
