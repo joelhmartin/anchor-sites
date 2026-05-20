@@ -55,7 +55,7 @@
   - Broaden `tailwind.config.js` `content` glob + ensure Vite scans `src/admin/**/*.tsx`.
   - **Tests:** a render smoke test for Button + Card (jsdom). (Admin tests run in the root vitest suite — may need a jsdom-env carve-out for `src/admin/**`.)
 
-- [ ] **4.8 — Admin auth: token + fetcher + guard + login**
+- [x] **4.8 — Admin auth: token + fetcher + guard + login**
   - `src/admin/lib/useAdminToken.ts` (localStorage get/set/clear). `src/admin/lib/apiFetch.ts` attaches `X-Admin-Token`, throws typed errors on 401/4xx. `<RequireAdmin>` redirects to `/login` when no token; a `/login` screen pastes the token and verifies it against a lightweight `GET /api/sites` probe.
   - **Tests:** token hook roundtrip; apiFetch attaches header + maps 401; guard redirect logic (unit).
 
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 19:55 UTC — Task 4.8 (admin auth: token + fetcher + guard + login)
+**Commit:** (pending)
+**Done:** `src/admin/lib/adminToken.ts` — localStorage get/set/clear + a `useAdminToken` hook backed by `useSyncExternalStore` (re-renders on token change, including the 401-clear). `src/admin/lib/apiFetch.ts` — JSON fetch wrapper that attaches `X-Admin-Token`, encodes the body, parses JSON, maps non-2xx to a typed `ApiError`, and clears the token on 401. `src/admin/auth/RequireAdmin.tsx` — route guard redirecting to `/login` (preserves attempted path in location state). `src/admin/auth/LoginPage.tsx` — token paste screen that probes `GET /api/sites` before persisting, so a bad token errors at login rather than on first action.
+**Tests added:** 6 (`src/admin/lib/adminApi.test.ts`, jsdom) — token roundtrip, header attach + body encode, header omitted when no token, JSON parse on 200, 401→ApiError + token cleared, non-2xx→ApiError with server message + status. Full suite **270/270 across 38 files**; typecheck clean.
+**Next:** 4.9 — admin app shell + routing (mounts these under the admin host).
+**Notes:**
+- `useSyncExternalStore` keeps every `useAdminToken` consumer in sync without a context provider — a 401 anywhere clears the token and the guard reacts.
+- `LoginPage` form is the admin auth gate, not a CRM form (no PHI, no CTM) — noted in a comment so the "no `<form>` in React" anchor (which is about CRM embeds) isn't misread here.
+- Guard + LoginPage are wired into the router in 4.9; 4.8 lands the logic + the lib tests.
 
 ### 2026-05-19 19:40 UTC — Task 4.7 (admin UI primitives + Tailwind/Vite wiring)
 **Commit:** (pending)
