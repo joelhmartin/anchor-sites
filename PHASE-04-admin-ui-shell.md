@@ -120,7 +120,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 10:35 UTC — Task 4.12 (site detail shell + tabs)
-**Commit:** (pending)
+**Commit:** aecb2eb
 **Done:** `src/admin/pages/SiteDetailPage.tsx` is now the real detail shell. The URL routes by **slug** but the detail/pages/media endpoints key off the site **UUID**, so the page resolves slug → id from the (cheap) `GET /api/sites` list, then `<SiteDetailView>` loads the full detail via `GET /api/sites/:id`. Header: breadcrumb (`← Sites`), display_name + status badge, and a "View live site ↗" link to the canonical `<slug>.sites.anchorcorps.com` (new `lib/siteUrl.ts` helper mirroring the server `SITES_DOMAIN_BASE`; real domains are Phase 10). Tab bar (Pages · Media · Settings, default Pages) with `role=tab`/`aria-selected`; **only the active tab mounts**, so each tab's list fetch is lazy. Created stub tab components under `pages/site-tabs/` (`PagesTab`/`MediaTab`/`SettingsTab`) for 4.13–4.15 to flesh out — same staged-stub pattern 4.9 used for the page components. Shared `lib/siteTypes.ts` (`SiteListRow`/`SiteDetail`). Unknown slug → a "No site found" card with a back link.
 **Tests added:** 4 (`SiteDetailPage.test.tsx`, jsdom + a URL-routing fetch mock) — slug→detail resolution (name + status), tab switching mounts only the active panel, "View live site" href = `https://acme.sites.anchorcorps.com` + `target=_blank`, unknown-slug not-found card. Full suite **286/286 across 42 files**; typecheck clean.
 **Next:** 4.13 — Pages tab + new-page form.
