@@ -30,7 +30,7 @@
   - Returns `[{ id, slug, display_name, status, created_at, pages_count }]`, newest first. `requireAdmin`.
   - **Tests:** auth gate; returns seeded sites with correct page counts.
 
-- [ ] **4.3 — `GET /api/sites/:siteId` + `GET /api/sites/:siteId/pages`**
+- [x] **4.3 — `GET /api/sites/:siteId` + `GET /api/sites/:siteId/pages`**
   - Detail: `{ id, slug, display_name, status, default_brand_tokens, created_at, pages_count, media_count }`. 404 on unknown.
   - Pages list: `[{ id, slug, title, status, updated_at }]`, ordered by `updated_at desc`.
   - **Tests:** auth gates; detail counts; 404; pages ordering.
@@ -118,6 +118,12 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 18:50 UTC — Task 4.3 (site detail + pages list)
+**Commit:** (pending)
+**Done:** `GET /api/sites/:siteId` → `{ site: { id, slug, display_name, status, default_brand_tokens, created_at, pages_count, media_count } }` (counts via correlated subqueries), 404 on unknown. `GET /api/sites/:siteId/pages` → `{ pages: [{ id, slug, title, status, updated_at }] }` ordered `updated_at desc`, 404 if the site doesn't exist.
+**Tests added:** 5 (`admin-sites.test.ts`) — detail 401/200-with-counts-and-brand-tokens/404, pages list, pages 404. Full suite **242/242 across 36 files**; typecheck clean.
+**Next:** 4.4 — media list endpoint.
 
 ### 2026-05-19 18:40 UTC — Task 4.2 (`GET /api/sites` list)
 **Commit:** 902468a

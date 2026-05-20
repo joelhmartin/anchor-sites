@@ -80,3 +80,68 @@ d("admin sites API — GET /api/sites (P4-T4.2)", () => {
     expect(times).toEqual(sorted);
   });
 });
+
+d("admin sites API — detail + pages (P4-T4.3)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let muldoonId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  it("GET /api/sites/:id 401 without token", async () => {
+    const r = await request(app).get(`/api/sites/${muldoonId}`);
+    expect(r.status).toBe(401);
+  });
+
+  it("GET /api/sites/:id returns detail with counts + brand tokens", async () => {
+    const r = await request(app).get(`/api/sites/${muldoonId}`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.site).toMatchObject({
+      id: muldoonId,
+      slug: "muldoon-dental",
+      status: "active",
+    });
+    expect(r.body.site.default_brand_tokens).toMatchObject({ "--theme-main": "#0a3d62" });
+    expect(typeof r.body.site.pages_count).toBe("number");
+    expect(typeof r.body.site.media_count).toBe("number");
+  });
+
+  it("GET /api/sites/:id 404 for unknown site", async () => {
+    const r = await request(app)
+      .get(`/api/sites/00000000-0000-0000-0000-000000000000`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+
+  it("GET /api/sites/:id/pages lists pages (updated_at desc)", async () => {
+    const r = await request(app)
+      .get(`/api/sites/${muldoonId}/pages`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(Array.isArray(r.body.pages)).toBe(true);
+    const home = r.body.pages.find((p: { slug: string }) => p.slug === "home");
+    expect(home).toMatchObject({ slug: "home", status: "published" });
+    expect(home.title).toBeTruthy();
+  });
+
+  it("GET /api/sites/:id/pages 404 for unknown site", async () => {
+    const r = await request(app)
+      .get(`/api/sites/00000000-0000-0000-0000-000000000000/pages`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+});

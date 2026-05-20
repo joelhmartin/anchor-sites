@@ -40,5 +40,58 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
     },
   );
 
+  // GET /api/sites/:siteId — detail with page + media counts. P4-T4.3.
+  router.get(
+    "/sites/:siteId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        const result = await pool.query(
+          `SELECT s.id, s.slug, s.display_name, s.status,
+                  s.default_brand_tokens, s.created_at,
+                  (SELECT COUNT(*)::int FROM pages WHERE site_id = s.id) AS pages_count,
+                  (SELECT COUNT(*)::int FROM media_assets WHERE site_id = s.id) AS media_count
+             FROM sites s
+            WHERE s.id = $1`,
+          [siteId],
+        );
+        if (result.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        res.json({ site: result.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // GET /api/sites/:siteId/pages — pages list, most-recently-updated first. P4-T4.3.
+  router.get(
+    "/sites/:siteId/pages",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        const siteOk = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const result = await pool.query(
+          `SELECT id, slug, title, status, updated_at
+             FROM pages
+            WHERE site_id = $1
+            ORDER BY updated_at DESC`,
+          [siteId],
+        );
+        res.json({ pages: result.rows });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   return router;
 }
