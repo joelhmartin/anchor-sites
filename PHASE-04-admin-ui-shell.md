@@ -69,7 +69,7 @@
   - Table: display_name, slug, status badge, page count, created. Row click → `/sites/:slug`. "+ New site" button → `/sites/new`. Empty state with a create CTA when no sites.
   - **Tests:** renders rows from a mocked `GET /api/sites`; empty state.
 
-- [ ] **4.11 — New-site wizard (`/sites/new`)**
+- [x] **4.11 — New-site wizard (`/sites/new`)**
   - 2-step: (1) slug + display_name (live slug validation), (2) brand-token color pairs (main/accent/surface + on-* derived) with a live preview swatch + "reset to defaults". Submits `POST /api/sites`; on success → `/sites/:slug`. Surfaces 409 (duplicate slug) inline.
   - **Tests:** step nav; validation; submit calls POST with the assembled body; duplicate-slug error surfaced.
 
@@ -118,6 +118,17 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 06:45 UTC — Task 4.11 (new-site wizard) — site creation end-to-end from the UI
+**Commit:** (pending)
+**Done:** `src/admin/pages/NewSiteWizard.tsx` is now real — a 2-step wizard at `/sites/new`. Step 1: display_name + slug with live slug validation (regex mirrors the server `createSitePayload` exactly) — "Next" stays disabled until the name is non-empty and the slug is valid, with an inline error + a live `<slug>.sites.anchorcorps.com` hint. Step 2: three brand-color pairs (Main/Accent/Surface, each with a "text on …" companion) rendered as native `<input type="color">` pickers, a live preview swatch (surface card with Main/Accent chips), and a "Reset to defaults" button. Submits `POST /api/sites` with `{ slug, display_name, default_brand_tokens }`; on 201 → `navigate('/sites/:slug')`; a 409 surfaces inline ("slug already in use") instead of navigating. **An operator can now create a site entirely from the UI.**
+**Tests added:** 4 (`NewSiteWizard.test.tsx`, jsdom + mocked fetch) — step nav (Next gated then advances to step 2), invalid-slug validation message + disabled Next, submit posts the assembled body to `/api/sites` (slug/display_name/`--theme-*` tokens asserted), duplicate-slug 409 surfaced inline. Full suite **282/282 across 41 files**; typecheck clean.
+**Next:** 4.12 — site detail shell + tabs.
+**Notes:**
+- **Color pickers, not free-text hex.** `<input type="color">` always emits 6-digit hex, so the assembled `default_brand_tokens` is `brandTokensSchema`-valid by construction (D-029) — the only server error the wizard has to handle is the 409 duplicate slug. Free-text hex/`var()` editing can come with the Settings tab if needed.
+- **Default tokens** seed all six `--theme-{main,accent,surface}` + `--theme-on-*` keys (D-029 kebab convention) so a new site renders with a complete palette, not just the two keys the seed sites carry.
+- Follows the LoginPage precedent for the `<form>` element (admin auth/chrome, not a CRM embed or editor preview — the no-`<form>` anchor governs those surfaces).
+- **Can't browser-verify** (operator hard rule — no Chrome automation here). Wizard is typecheck- + jsdom-tested; operator should eyeball at `studio.localhost:3000/sites/new`.
 
 ### 2026-05-19 20:30 UTC — Task 4.10 (sites list page) — first data-driven screen
 **Commit:** (pending)
