@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Puck } from "../../editor/index.js";
+import type { Data } from "../../editor/index.js";
 import "@measured/puck/puck.css";
 import { buildPuckConfig } from "../../editor/puck-config.js";
 import { fromPuckData, toPuckData } from "../../editor/puck-adapter.js";
@@ -144,6 +145,32 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [statusOverride, setStatusOverride] = useState<string | null>(null);
+  // Latest Puck data (updated on every edit) so toggling status saves current
+  // edits, not just the loaded blocks.
+  const liveData = useRef<Data | null>(null);
+
+  const togglePublish = useCallback(async () => {
+    if (!page || !initialData) return;
+    const current = statusOverride ?? page.status;
+    const next = current === "published" ? "draft" : "published";
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const blocks = fromPuckData(liveData.current ?? initialData);
+      const res = await apiFetch<{ page: { status: string } }>(
+        `/api/sites/${siteId}/pages/${pageId}`,
+        { method: "POST", body: { blocks, seo: page.seo ?? {}, status: next, source: "editor" } },
+      );
+      setStatusOverride(res.page.status);
+      setSavedAt(new Date().toISOString());
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : "Couldn’t update status.");
+    } finally {
+      setSaving(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId, pageId, page, initialData, statusOverride]);
 
   const handlePublish = useCallback(
     async (puckData: Parameters<typeof fromPuckData>[0]) => {
@@ -171,6 +198,9 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
   if (error) return <ErrorCard message={`Couldn’t load this page: ${error}`} />;
   if (!page || !initialData) return null;
 
+  const currentStatus = statusOverride ?? page.status;
+  const published = currentStatus === "published";
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -190,6 +220,21 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
           {!saving && !saveError && savedAt && (
             <span className="text-green-600">Saved ✓</span>
           )}
+          <span
+            className={`rounded px-2 py-0.5 text-xs ${
+              published ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+            }`}
+          >
+            {currentStatus}
+          </span>
+          <button
+            type="button"
+            onClick={togglePublish}
+            disabled={saving}
+            className="font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+          >
+            {published ? "Move to draft" : "Publish"}
+          </button>
           <button
             type="button"
             onClick={() => setShowRevisions((v) => !v)}
@@ -213,7 +258,14 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
         <RevisionsPanel siteId={siteId} pageId={pageId} onRestored={reload} />
       )}
 
-      <Puck config={config} data={initialData} onPublish={handlePublish} />
+      <Puck
+        config={config}
+        data={initialData}
+        onChange={(d) => {
+          liveData.current = d;
+        }}
+        onPublish={handlePublish}
+      />
     </div>
   );
 }

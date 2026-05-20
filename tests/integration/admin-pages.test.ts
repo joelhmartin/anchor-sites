@@ -142,6 +142,51 @@ d("admin pages API (integration)", () => {
     expect(res.status).toBe(401);
   });
 
+  // ---------- STATUS (publish/draft toggle) ----------
+
+  it("save with `status` updates the page status; omitting leaves it unchanged (P5-T5.10)", async () => {
+    const before = await pool.query<{ status: string }>(
+      `SELECT status FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    const original = before.rows[0].status;
+    try {
+      const pub = await request(app)
+        .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+        .set("X-Admin-Token", ADMIN_TOKEN)
+        .send({ blocks: validBlocks("-pub"), status: "published" });
+      expect(pub.status).toBe(200);
+      expect(pub.body.page.status).toBe("published");
+      const db1 = await pool.query<{ status: string }>(`SELECT status FROM pages WHERE id = $1`, [muldoonPageId]);
+      expect(db1.rows[0].status).toBe("published");
+
+      // Omitting status leaves it unchanged.
+      await request(app)
+        .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+        .set("X-Admin-Token", ADMIN_TOKEN)
+        .send({ blocks: validBlocks("-keep") });
+      const db2 = await pool.query<{ status: string }>(`SELECT status FROM pages WHERE id = $1`, [muldoonPageId]);
+      expect(db2.rows[0].status).toBe("published");
+
+      // Toggle back to draft.
+      const draft = await request(app)
+        .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+        .set("X-Admin-Token", ADMIN_TOKEN)
+        .send({ blocks: validBlocks("-draft"), status: "draft" });
+      expect(draft.body.page.status).toBe("draft");
+    } finally {
+      await pool.query(`UPDATE pages SET status = $2 WHERE id = $1`, [muldoonPageId, original]);
+    }
+  });
+
+  it("rejects an invalid status value (P5-T5.10)", async () => {
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks(), status: "live" });
+    expect(res.status).toBe(400);
+  });
+
   // ---------- SAVE ----------
 
   it("saving valid blocks creates a revision and returns it", async () => {

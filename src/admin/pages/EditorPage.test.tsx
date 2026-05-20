@@ -83,9 +83,13 @@ function mockApi(opts: { savePost?: () => Response } = {}) {
     if (url === "/api/sites/s1/pages/p1") {
       if (init?.method === "POST") {
         lastPost = { url, body: JSON.parse(String(init.body)) };
-        return opts.savePost
-          ? opts.savePost()
-          : json({ page: PAGE, revision: { id: "r1", created_at: "2026-05-20T00:00:00Z" } });
+        if (opts.savePost) return opts.savePost();
+        // Echo the requested status so the publish/draft toggle reflects it.
+        const status = (lastPost.body.status as string) ?? PAGE.status;
+        return json({
+          page: { ...PAGE, status },
+          revision: { id: "r1", created_at: "2026-05-20T00:00:00Z" },
+        });
       }
       return json({ page: PAGE });
     }
@@ -153,6 +157,18 @@ describe("EditorPage (P5-T5.5)", () => {
     renderAt();
     const link = await screen.findByRole("link", { name: /Back to acme/ });
     expect(link.getAttribute("href")).toBe("/sites/acme");
+  });
+
+  it("toggles publish status and persists it via the save endpoint (P5-T5.10)", async () => {
+    mockApi();
+    renderAt();
+    await screen.findByTestId("puck-data");
+    // PAGE starts as draft → button offers to Publish.
+    const toggle = screen.getByRole("button", { name: "Publish" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(lastPost?.body.status).toBe("published"));
+    // Status reflects the persisted value; the toggle now offers draft.
+    await screen.findByRole("button", { name: "Move to draft" });
   });
 
   it("shows the revision history when History is opened (P5-T5.9)", async () => {

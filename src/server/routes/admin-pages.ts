@@ -24,6 +24,8 @@ const savePayload = z.object({
   // P3-T3.5: per-page brand-token override. `null` clears any existing
   // override; omitting the key leaves the column unchanged.
   brand_tokens_override: brandTokensSchema.nullable().optional(),
+  // P5-T5.10: publish/draft toggle. Omitting leaves status unchanged.
+  status: z.enum(["draft", "published"]).optional(),
 });
 
 type SavePayload = z.infer<typeof savePayload>;
@@ -126,7 +128,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             ? JSON.stringify(payload.brand_tokens_override)
             : null;
 
-        const pageRes = await client.query<{ id: string }>(
+        const pageRes = await client.query<{ id: string; status: string }>(
           `UPDATE pages
               SET blocks = $1::jsonb,
                   seo = COALESCE($2::jsonb, seo),
@@ -134,9 +136,10 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
                     WHEN 'unchanged' THEN brand_tokens_override
                     WHEN 'clear'     THEN NULL
                     WHEN 'set'       THEN $6::jsonb
-                  END
+                  END,
+                  status = COALESCE($7, status)
             WHERE id = $3 AND site_id = $4
-            RETURNING id`,
+            RETURNING id, status`,
           [
             JSON.stringify(payload.blocks),
             payload.seo ? JSON.stringify(payload.seo) : null,
@@ -144,6 +147,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             siteId,
             btoMode,
             btoValue,
+            payload.status ?? null,
           ],
         );
 
@@ -168,7 +172,13 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         await client.query("COMMIT");
 
         res.status(200).json({
-          page: { id: pageId, site_id: siteId, blocks: payload.blocks, seo: payload.seo ?? {} },
+          page: {
+            id: pageId,
+            site_id: siteId,
+            blocks: payload.blocks,
+            seo: payload.seo ?? {},
+            status: pageRes.rows[0].status,
+          },
           revision: { id: revRes.rows[0].id, created_at: revRes.rows[0].created_at },
         });
       } catch (err) {
