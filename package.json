@@ -25,6 +25,7 @@
     "@anchorcorps/components": "*",
     "@google-cloud/storage": "^7.19.0",
     "@hookform/resolvers": "^3.9.0",
+    "@measured/puck": "0.20.2",
     "@radix-ui/react-dialog": "^1.1.15",
     "axios": "^1.7.0",
     "class-variance-authority": "^0.7.1",

@@ -3,9 +3,9 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 5,
   "current_phase_file": "PHASE-05-visual-editor.md",
-  "current_task": "5.1",
+  "current_task": "5.2",
   "phase_started_at": "2026-05-20T17:03:00Z",
-  "last_commit_sha": "727b144",
+  "last_commit_sha": "338c2b0",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 297,
+    "current_pass": 299,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 238,
+    "current_pass_root": 240,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-20T17:30:00Z",
-    "notes": "Phase 5 baseline re-verified GREEN at 297 (root 238 + package 59, 45 files) — 3 cold-cache runs all 297/0. NOTE: a pre-existing ORDER-DEPENDENT FLAKE exists (see open_followups FLAKE-RESOLVESITE) — warm-cache full `npm test` rarely (~1/3 only in a transient cache state) fails `resolveSite.test.ts > /healthz` with 403; self-heals as the duration cache converges, and cold cache (= CI order) is deterministically green. Treated as known latent test-isolation issue, NOT a regression. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-20T17:31:00Z",
+    "notes": "P5-T5.1 done: 299 across 46 files (root 240 = +2 editor smoke tests, package 59). Cold-cache full run + `npm run build` + `npm run typecheck` all green. NOTE: a pre-existing ORDER-DEPENDENT FLAKE exists (see open_followups FLAKE-RESOLVESITE) — warm-cache full `npm test` rarely (~1/3 only in a transient cache state) fails `resolveSite.test.ts > /healthz` with 403; self-heals as the duration cache converges, and cold cache (= CI order) is deterministically green. Treated as known latent test-isolation issue, NOT a regression. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",

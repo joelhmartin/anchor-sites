@@ -576,3 +576,22 @@ So the precise state: the Cloud Build GitHub App **is** installed/configured on 
 **Verification (2026-05-20, post-deploy):** service image now `…/anchor-sites:c0b0c83` (digest `sha256:a18c94c0…`), revision `anchor-sites-00007-7pm` serving 100%. `https://studio.anchorcorps.com/` → 200; `…/api/sites` → 401 (auth gate intact). Shipped JS bundle (`/assets/index-JH5o-DYO.js`) contains all five 4.11–4.16 strings — "Reset to defaults", "View live site", "Brand colors", "Upload image", "Save changes" — confirming the new wizard/tabs/settings code is live, not just a redeploy.
 
 <!-- Routine appends future decisions below this line -->
+
+### D-036: Puck pinned at `0.20.2`; editor barrel is the sole Puck boundary; `Block[]`↔`Data` contract (P5-T5.1; contract frozen in 5.2)
+
+**Context:** Phase 5 (D-017) builds the visual editor on Puck. The PHASE-05 note requires pinning a specific `@measured/puck` version and recording the data-shape conversion contract. This entry records the pin + boundary now (5.1); the exact `toPuckData`/`fromPuckData` mapping is appended/frozen when 5.2 lands.
+
+**Decision — version + compatibility:**
+- Pin **`@measured/puck` exactly `0.20.2`** (no caret, via `--save-exact`) — current stable. Bump deliberately and re-verify the round-trip invariant on any change.
+- React peer is `^18 || ^19`; repo runs React `18.3.1` — compatible.
+- A version-drift smoke test asserts the exported `PUCK_VERSION` constant equals the installed `@measured/puck/package.json` version, so the documented pin can't silently diverge.
+
+**Decision — boundary (enforces D-017):**
+- `src/editor/index.ts` is the **only** module that imports `@measured/puck`. Everything under `src/editor/` imports Puck values/types from this barrel; nothing outside `src/editor/` imports Puck at all. Puck stays a swappable *view*; canonical `Block[]` (D-001) remains the source of truth and the prod renderer never touches Puck.
+- Build wiring needed **no** changes: the Tailwind content glob (`./src/**/*.{js,jsx,ts,tsx}`) and tsconfig `include` (`src/**/*`) already cover `src/editor/**`, and Vite bundles it on import. Puck's stylesheet (`@measured/puck/puck.css`) is imported at the editor route (5.5), not globally.
+
+**Decision — jsdom test harness:** Puck's drag layer (`@dnd-kit`) references `ResizeObserver` at module-load time, which jsdom v29 lacks. `src/editor/__tests__/puck-jsdom.ts` installs a `ResizeObserver` stub and must be imported before the Puck barrel in any editor jsdom test. Extend this shim (e.g. `matchMedia`, `IntersectionObserver`) as later tasks render `<Puck>`. UI still can't be browser-verified on the operator's machine — adapter/field/route logic is unit-tested in jsdom; visual QA is operator-run at `studio.localhost:3000`.
+
+**Conversion contract (placeholder — FROZEN IN 5.2):** `toPuckData(blocks: Block[]): Data` / `fromPuckData(data: Data): Block[]` will live in `src/editor/puck-adapter.ts` and preserve block `id`/`type`/`props`/nested `children`, with `fromPuckData(toPuckData(x))` deep-equal to `x` as a tested invariant. The exact field-by-field mapping (esp. how `children`/zones and block `id`s round-trip, and unknown-type passthrough) is recorded here once 5.2 lands.
+
+**Rationale:** Exact pin keeps the conversion contract reproducible. A single-barrel boundary makes "nothing outside `src/editor/` imports Puck" mechanically checkable and keeps Puck swappable. No build-config churn because the existing globs already cover the new directory.
