@@ -42,7 +42,7 @@
   - Generate Puck field config from a block's Zod schema: string→text, number→number, boolean→radio/switch, enum→select, nested object→object fields, array→array fields, with labels/defaults. Document which Zod constructs are supported; unsupported ones fall back to a JSON/textarea field (and are candidates for custom fields in 5.6–5.8).
   - **Tests:** field generation per Zod type; unsupported-type fallback.
 
-- [ ] **5.4 — Assemble Puck `Config` from the block registry**
+- [x] **5.4 — Assemble Puck `Config` from the block registry**
   - Build `Config.components` from `listBlocks()`: each registered type → `{ fields: zodToPuckFields(schema), render: component, defaultProps }`. Covers the inline `rich-text` block + the `@anchorcorps/components` blocks (hero, hero-slider, cta, testimonial-carousel, logo-reel, faq-accordion, image). Plugin-registered blocks (D-016) ride the same registry, so they appear automatically.
   - **Tests:** config includes every registered block; a block's fields match its schema; render maps to the shared component.
 
@@ -101,6 +101,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 17:47 UTC — Task 5.4 (Assemble Puck `Config` from the block registry)
+**Commit:** (this commit)
+**Done:** `src/editor/puck-config.ts` — `buildPuckConfig(): Config` maps every `listBlocks()` entry → `{ label, fields: zodToPuckFields(schema), defaultProps: zodSchemaDefaults(schema), render: entry.component }`. Side-effect imports `../blocks/index.js` so the editor uses the SAME registry/components as the prod renderer (D-018). Plugin blocks (D-016) appear automatically. Added `zodSchemaDefaults` to `zod-fields.ts` (the deferred 5.3 defaults extraction). Exported `richTextBlock` from `src/blocks/rich-text/index.ts` (additive — self-registration unchanged) so tests re-register it without duplicating metadata.
+**Tests added:** 5 (`src/editor/__tests__/puck-config.test.ts`): every registered block present; rich-text + all 7 package blocks covered; fields/defaultProps/label/render derive from each entry; defaultProps parse against their own schema; plugin-registered block picked up automatically. Order-robust via beforeEach reset+re-register from blockManifest + richTextBlock. Suite 314→319, cold-cache full run + typecheck green.
+**Next:** 5.5 — editor route replaces `EditorPlaceholder` (needs jsdom @testing-library; first browser-ish surface — visual QA stays operator-run).
+**Notes:** Categories (block-picker grouping from `entry.category`) intentionally deferred — not required for a working Config. Render is mapped by identity (no editor fork); full preview parity (MediaContext + brand-token `:root`) is 5.10.
 
 ### 2026-05-20 17:39 UTC — Task 5.3 (`zodToPuckFields(schema)`)
 **Commit:** 79ac610

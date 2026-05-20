@@ -35,6 +35,7 @@ type ZodDef = {
   values?: unknown;
   checks?: Array<{ kind: string; value?: number }>;
   shape?: () => Record<string, ZodLike>;
+  defaultValue?: () => unknown;
 };
 
 const def = (s: ZodLike): ZodDef => s?._def ?? {};
@@ -149,4 +150,41 @@ export function zodToPuckFields(schema: z.ZodTypeAny): Fields {
   if (def(core).typeName !== "ZodObject") return {} as Fields;
   const shape = def(core).shape?.() ?? {};
   return objectFieldsOf(shape) as Fields;
+}
+
+/** Resolve a field's `.default(...)` value, seeing through Optional/Nullable/Effects. */
+function defaultValueOf(schema: ZodLike): { has: boolean; value?: unknown } {
+  let cur = schema;
+  for (let i = 0; i < 20 && cur?._def; i++) {
+    const d = def(cur);
+    if (d.typeName === "ZodDefault") {
+      return { has: true, value: d.defaultValue?.() };
+    }
+    if (d.typeName === "ZodOptional" || d.typeName === "ZodNullable") {
+      cur = d.innerType as ZodLike;
+    } else if (d.typeName === "ZodEffects") {
+      cur = d.schema as ZodLike;
+    } else {
+      break;
+    }
+  }
+  return { has: false };
+}
+
+/**
+ * Extract the top-level `.default(...)` values from a block's ZodObject schema,
+ * for use as Puck `defaultProps` (the props a freshly-added block starts with).
+ * D-002 requires every block field to declare a default, so this is the full
+ * starting prop set. Excludes the Puck-reserved `id` (Puck assigns that).
+ */
+export function zodSchemaDefaults(schema: z.ZodTypeAny): Record<string, unknown> {
+  const core = coreType(schema as unknown as ZodLike);
+  if (def(core).typeName !== "ZodObject") return {};
+  const shape = def(core).shape?.() ?? {};
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(shape)) {
+    const resolved = defaultValueOf(child);
+    if (resolved.has) out[key] = resolved.value;
+  }
+  return out;
 }
