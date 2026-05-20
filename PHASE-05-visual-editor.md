@@ -62,7 +62,7 @@
   - A Puck custom field that opens the Phase-3/4 media library (`GET …/media`) to pick an `image_asset_id` (used by hero-slider + the Image block). Shows ready-variant thumbnails; supports the upload flow or links to the Media tab.
   - **Tests:** field lists media; selecting sets the asset id on the block props.
 
-- [ ] **5.8 — Color / brand-token custom field (if needed)**
+- [x] **5.8 — Color / brand-token custom field (if needed)** — SKIPPED by design (see log; no block has a per-block color prop)
   - For any block color props, a color field (reuse the Phase-4 `<input type=color>` + preview pattern from `BrandTokenFields`). Only build if a block actually needs per-block color props beyond site/page brand tokens; otherwise skip + note why.
   - **Tests:** field sets a valid color value on props.
 
@@ -101,6 +101,12 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 18:26 UTC — Task 5.8 (Color / brand-token custom field) — SKIPPED by design
+**Commit:** (this commit)
+**Done:** Evaluated the conditional ("only build if a block actually needs per-block color props beyond site/page brand tokens; otherwise skip + note why"). Audited every registered block schema (hero, hero-slider, cta, testimonial-carousel, logo-reel, faq-accordion, image, rich-text + nested item schemas): **none declare a per-block color prop.** Color is governed entirely by site/page **brand tokens** (D-029, `--theme-*` CSS custom properties) edited via the Phase-4 `BrandTokenFields` (Settings tab); blocks that vary appearance use semantic enums (e.g. cta `variant: primary|muted`) which `zodToPuckFields` already maps to a `select`. So a per-block color field would have nothing to bind to. **Skipped — no code.** `applyFieldOverrides` (5.7) is the ready home: if a block ever adds a raw color prop, drop in a color custom field (Phase-4 `<input type=color>` + preview pattern) keyed by that block/prop. No tests added (nothing built); suite unchanged at 339.
+**Next:** 5.9 — revisions panel in the editor.
+**Notes:** This is the correct outcome of the task's own gate, not an omission.
 
 ### 2026-05-20 18:23 UTC — Task 5.7 (Image-picker custom field — media library)
 **Commit:** 7a1c1d2
