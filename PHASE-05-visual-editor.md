@@ -34,7 +34,7 @@
   - Add `@measured/puck` (pin the current stable version; record it). Ensure the admin Vite build + Tailwind content glob cover `src/editor/**`. Create `src/editor/` with a barrel. No editor route wired yet.
   - **Tests:** an import/smoke test that Puck loads in jsdom; build/typecheck clean.
 
-- [ ] **5.2 — `puck-adapter.ts`: `Block[]` ↔ Puck `Data` (lossless)**
+- [x] **5.2 — `puck-adapter.ts`: `Block[]` ↔ Puck `Data` (lossless)**
   - `toPuckData(blocks: Block[]): Data` and `fromPuckData(data: Data): Block[]` in `src/editor/puck-adapter.ts`. Preserve block `id`, `type`, `props`, and nested `children`. Round-trip is a **tested invariant** (`fromPuckData(toPuckData(x))` deep-equals `x`).
   - **Tests:** round-trip for flat blocks, nested children, empty page; unknown-type passthrough behavior decided + tested.
 
@@ -101,6 +101,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 17:34 UTC — Task 5.2 (`puck-adapter.ts` — `Block[]` ↔ Puck `Data`, lossless)
+**Commit:** (this commit)
+**Done:** `src/editor/puck-adapter.ts` with `toPuckData`/`fromPuckData`. Block `id`→`props.id`; `props` spread; nested `children`→flat `zones` map keyed `${id}:children` (recursive); `root` always `{}`. Purely structural (no registry) → unknown types pass through. Imports Puck **types only** ⇒ no runtime Puck load, runs in plain node. Froze the conversion contract in D-036.
+**Tests added:** 7 (`src/editor/__tests__/puck-adapter.test.ts`): empty page, flat blocks (assorted prop types), deep nesting, empty-vs-absent `children` distinction, unknown-type passthrough, id↔props.id + zones structure, id-strip on return. Round-trip is `toStrictEqual`. Suite 299→306, cold-cache full run + typecheck green.
+**Next:** 5.3 — `zodToPuckFields(schema)`.
+**Notes:** Only Block→Data→Block is lossless (Data→Block→Data isn't — `root` is dropped). `block.props` must not use a reserved `id` key. Editor-side rendering of nested zones (DropZone/slots) deferred to 5.4/5.5; current blocks are all leaf blocks.
 
 ### 2026-05-20 17:30 UTC — Task 5.1 (Add & pin Puck; `src/editor/` scaffolding)
 **Commit:** 90d798d

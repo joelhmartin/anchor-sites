@@ -592,6 +592,15 @@ So the precise state: the Cloud Build GitHub App **is** installed/configured on 
 
 **Decision — jsdom test harness:** Puck's drag layer (`@dnd-kit`) references `ResizeObserver` at module-load time, which jsdom v29 lacks. `src/editor/__tests__/puck-jsdom.ts` installs a `ResizeObserver` stub and must be imported before the Puck barrel in any editor jsdom test. Extend this shim (e.g. `matchMedia`, `IntersectionObserver`) as later tasks render `<Puck>`. UI still can't be browser-verified on the operator's machine — adapter/field/route logic is unit-tested in jsdom; visual QA is operator-run at `studio.localhost:3000`.
 
-**Conversion contract (placeholder — FROZEN IN 5.2):** `toPuckData(blocks: Block[]): Data` / `fromPuckData(data: Data): Block[]` will live in `src/editor/puck-adapter.ts` and preserve block `id`/`type`/`props`/nested `children`, with `fromPuckData(toPuckData(x))` deep-equal to `x` as a tested invariant. The exact field-by-field mapping (esp. how `children`/zones and block `id`s round-trip, and unknown-type passthrough) is recorded here once 5.2 lands.
+**Conversion contract (FROZEN 2026-05-20, P5-T5.2 — `src/editor/puck-adapter.ts`):**
+- `toPuckData(blocks: Block[]): Data` / `fromPuckData(data: Data): Block[]`. Round-trip `fromPuckData(toPuckData(x))` deep-equals `x` (`toStrictEqual`) is a tested invariant; only Block→Data→Block is required to be lossless (Data→Block→Data is not, since `data.root` is dropped).
+- **Top-level blocks** ↔ `data.content` (one `ComponentData` per block, order preserved).
+- **`block.id`** is stored INSIDE `ComponentData.props.id` (Puck's `WithId` convention) and stripped back out on return. ⇒ a block's own `props` MUST NOT contain a reserved `id` key.
+- **`block.props`** spread into `ComponentData.props` alongside `id`.
+- **`block.children`** flattened into Puck's `zones` map under key **`${block.id}:children`** (`CHILDREN_ZONE = "children"`), recursively at every depth. nanoid ids never contain ":" so keys are unambiguous. `zones` is omitted entirely when nothing is nested. An **empty `children: []` is preserved distinctly** from absent `children` (a block with no children has no `children` key after round-trip).
+- **`data.root`** is always `{}` (Block[] carries no page-level root props; page seo/status live outside the blocks array).
+- **Structural only — never consults the registry**, so unknown block `type`s round-trip unchanged. (Rendering an unknown type is a separate concern: Config assembly in 5.4 / renderer fallback.)
+- **No runtime Puck dependency:** the adapter imports Puck **types only** (`import type { Data, ComponentData }` via the barrel), so it and its tests run in plain node with no `@measured/puck` load (and no `ResizeObserver` shim).
+- **Nesting note:** the data round-trip uses Puck's flat `zones` map. Wiring the *editor* to render/edit nested zones (DropZone/slots) is deferred to 5.4/5.5; current registered blocks are all leaf blocks, so nesting isn't exercised in the UI yet.
 
 **Rationale:** Exact pin keeps the conversion contract reproducible. A single-barrel boundary makes "nothing outside `src/editor/` imports Puck" mechanically checkable and keeps Puck swappable. No build-config churn because the existing globs already cover the new directory.
