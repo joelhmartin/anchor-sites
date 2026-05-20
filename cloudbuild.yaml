@@ -27,7 +27,10 @@ substitutions:
   _SERVICE: anchor-sites
   _AR_REPO: cloud-run-source-deploy
   _SQL_INSTANCE: anchor-hub-480305:us-central1:anchor
-  _IMAGE: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
+  # NOTE: don't reintroduce an `_IMAGE` substitution composed from $PROJECT_ID /
+  # $SHORT_SHA — Cloud Build does NOT recursively expand built-ins nested inside
+  # another substitution's value, so the image name shipped literal "$SHORT_SHA"
+  # and the build failed validation (2026-05-20). Built-ins must be used inline.
 
 steps:
   # 1. Build the image.
@@ -35,14 +38,14 @@ steps:
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --tag=${_IMAGE}
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
       - --file=Dockerfile
       - .
 
   # 2. Push.
   - id: push
     name: gcr.io/cloud-builders/docker
-    args: [push, "${_IMAGE}"]
+    args: [push, "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA"]
 
   # 3a. Point the migrate job at the freshly-built image FIRST, otherwise
   #     `jobs execute` would run the migration files baked into whatever
@@ -56,7 +59,7 @@ steps:
       - jobs
       - update
       - ${_SERVICE}-migrate
-      - --image=${_IMAGE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
       - --region=${_REGION}
 
   # 3b. Run DB migrations as a one-off job before swapping traffic.
@@ -81,7 +84,7 @@ steps:
       - run
       - deploy
       - ${_SERVICE}
-      - --image=${_IMAGE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
@@ -97,7 +100,7 @@ steps:
       - --concurrency=80
 
 images:
-  - ${_IMAGE}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
 
 options:
   logging: CLOUD_LOGGING_ONLY
