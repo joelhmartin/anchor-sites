@@ -91,7 +91,7 @@
 
 ### Wrap
 
-- [ ] **4.16 — Phase 4 docs + plan tick**
+- [x] **4.16 — Phase 4 docs + plan tick**
   - `docs/admin-ui.md`: host model, auth, route map, how to run locally (`studio.localhost`), the Phase 5/8/10 hand-offs.
   - `DECISIONS.md` D-032 cross-referenced.
   - `PLAN.md` Phase 4 row ticked.
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 11:05 UTC — Task 4.16 (Phase 4 docs + plan tick) — PHASE 4 COMPLETE
+**Commit:** (pending)
+**Done:** Wrote `docs/admin-ui.md` — host model (D-032 three-layer table + `isAdminHost` enforcement points), interim `X-Admin-Token` auth + the D-034 Phase-8 Google-OAuth hand-off, route map, full admin-API table, the slug→id resolution note, the three-step media upload flow (incl. the raw-PUT/no-token caveat), how to run locally on `studio.localhost:3000`, the UI building blocks, and the Phase 5/8/10 hand-offs. Ticked the **PLAN.md Phase 4 row** with a completion parenthetical matching the Phase 1–3 style. Appended the Phase 4 entry to `.routine/baseline-tests.log`. D-032 is cross-referenced from `docs/admin-ui.md` (no DECISIONS.md edit needed — append-only, and D-032/D-034 already exist).
+**Tests added:** 0 (docs-only task). Full suite unchanged at **297/297 across 45 files**; typecheck clean.
+**Next:** phase complete — Phase 5 (Puck visual editor) awaits `.routine/NEXT-PHASE-APPROVED`.
+**Notes:**
+- **Phase 4 definition of done met:** an operator can log in with the token, see all sites, create a site, open a site, create a page, upload media, and edit brand tokens — all from the UI. The editor is a labeled Phase-5 placeholder. Auth is still `X-Admin-Token`.
+- **Prod is still behind:** prod runs commit `24a2ed3`'s image (Phases 2–4.10). 4.11–4.16 are on `main` but **not deployed** — the CI trigger is still unwired (operator follow-up; D-033 has the manual steps). No deploy attempted (hard rule #9 — needs operator approval).
+- **PLAN.md prose note:** rule #5 says tick checkboxes only; I added a completion parenthetical to the Phase 4 row to match how Phases 1–3 are recorded. Flagging here per the rule.
 
 ### 2026-05-20 11:00 UTC — Task 4.15 (Settings tab) — admin can now do everything Phase 4 set out
 **Commit:** 6eb970f

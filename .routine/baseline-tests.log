@@ -95,3 +95,30 @@ Single command runs both:
 Phase 3 also added pg-boss to the dev DB schema (pgboss.* tables
 created automatically by bootJobs on first run). The schema-migration
 test counts 5 tables including media_assets.
+
+---
+
+2026-05-20 — Phase 4 baseline update (Task 4.16 — phase complete)
+Suite: vitest run with vitest.workspace.ts
+Result: 297 passed, 0 skipped, 0 failed across 45 test files
+
+Breakdown:
+  Root suite: 238 (was 227 at Phase 3 close; +71 across Phase 4)
+    Admin API (admin-sites.ts integration): list (3), detail+pages (5),
+      media list (4), create site (5), patch + create-page (8)
+    Admin host (admin-host unit + page passthrough): 8
+    Admin UI (jsdom, @testing-library/react):
+      ui primitives (5), admin api lib (6), AdminApp routing (5),
+      SitesListPage (3), NewSiteWizard (4), SiteDetailPage (4),
+      PagesTab (4), MediaTab (3), SettingsTab (4)
+  @anchorcorps/components suite: 59 (unchanged in Phase 4)
+
+Notes:
+  - Admin UI tests are jsdom via per-file `// @vitest-environment jsdom`
+    + explicit `afterEach(cleanup)` (RTL auto-cleanup wasn't firing
+    reliably between tests in a file).
+  - No browser/e2e verification on this machine (operator hard rule —
+    no Chrome automation). UI is typecheck- + jsdom-tested only.
+
+Single command runs both:
+  DATABASE_URL=... TEST_DATABASE_URL=... npm test

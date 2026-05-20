@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 4,
   "current_phase_file": "PHASE-04-admin-ui-shell.md",
-  "current_task": "4.16",
+  "current_task": null,
   "phase_started_at": "2026-05-19T18:00:00Z",
   "last_commit_sha": "6eb970f",
   "last_email_sent_at": null,
@@ -29,7 +29,8 @@
     "phase4-admin-shell-demoable",
     "phase4-prod-deploy-phases2-4-live",
     "phase4-new-site-wizard-creates-site",
-    "phase4-media-upload-from-ui"
+    "phase4-media-upload-from-ui",
+    "phase4-complete"
   ],
   "blockers_open": 0,
   "tests": {
@@ -45,7 +46,8 @@
   "open_followups": [
     "CI trigger: joelhmartin/anchor-sites NOT connected to Cloud Build GitHub App — operator must Connect Repository in console, then create ^main trigger on cloudbuild.yaml. Until then deploys are MANUAL (see D-033 for the exact manual steps).",
     "Tenant certs: muldoon-dental + demo-site mappings recreated 2026-05-20, were CertificatePending — verify they reached Ready=True and the sites serve HTTPS.",
-    "Phase 4 remaining: only 4.16 (docs/admin-ui.md + PLAN.md Phase 4 tick + baseline-tests.log append). All admin screens are real: SitesListPage, NewSiteWizard, SiteDetailPage (shell+tabs), and the three tab bodies PagesTab/MediaTab/SettingsTab. Shared color editor at src/admin/components/BrandTokenFields.tsx. slug->siteId resolution = client-side via the sites list (the :siteId endpoints 500 on a non-UUID param). After 4.16, Phase 4 is COMPLETE — do NOT start Phase 5 without .routine/NEXT-PHASE-APPROVED.",
+    "PHASE 4 COMPLETE (4.1-4.16 all done, 2026-05-20). current_task=null. Do NOT start Phase 5 (Puck visual editor) without .routine/NEXT-PHASE-APPROVED. When approved: expand PHASE-05 task file, confirm task list with operator, then begin. Phase 5 wires Puck at /sites/:slug/pages/:pageId (replaces EditorPlaceholder, D-017).",
+    "DEPLOY GAP: prod runs commit 24a2ed3's image (Phases 2-4.10). Tasks 4.11-4.16 (new-site wizard, detail tabs, pages/media/settings, docs) are on main but NOT in prod. Needs a MANUAL deploy (D-033 steps) until the CI trigger is wired — and operator approval per hard rule #9.",
     "Auth (D-034): control-hub Google OAuth via Better-auth is Phase 8 work, NOT now. X-Admin-Token is interim. Operator dislikes the token but accepted it as interim.",
     "/healthz returns GFE 404 externally (cosmetic; Cloud Run uses TCP startup probe). Revisit Phase 12.",
     "Prod runs commit 24a2ed3's image (Phases 2-4). Any new commits need a MANUAL deploy until the CI trigger is wired (D-033 steps)."
