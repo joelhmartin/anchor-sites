@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 17:30 UTC — Task 5.1 (Add & pin Puck; `src/editor/` scaffolding)
-**Commit:** (this commit)
+**Commit:** 90d798d
 **Done:** Pinned `@measured/puck` exactly `0.20.2` (`--save-exact`); created `src/editor/index.ts` — the sole Puck import boundary (D-017) re-exporting `Puck` + the `Config`/`Data`/`ComponentConfig`/`ComponentData`/`Field`/`Fields`/`Metadata` types + a `PUCK_VERSION` constant. No editor route wired yet. Recorded D-036 (pin + boundary + contract placeholder).
 **Tests added:** 2 (`src/editor/__tests__/editor-smoke.test.tsx`): "loads Puck in jsdom and re-exports the editor component", "pins a Puck version that matches the installed package (no drift)". Suite 297→299, all green (cold-cache full run; `npm run build` + `npm run typecheck` clean).
 **Next:** 5.2 — `puck-adapter.ts` `Block[]`↔Puck `Data` lossless round-trip.
