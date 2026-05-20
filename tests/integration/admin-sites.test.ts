@@ -28,7 +28,7 @@ const runMigrate = (direction: "up" | "down", count: number) =>
 function buildApp(pool: Pool) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
-  app.use("/api", adminSitesRouter({ pool }));
+  app.use("/api", adminSitesRouter({ pool, createRateLimit: { max: 1000, windowMs: 60_000 } }));
   return app;
 }
 
@@ -209,5 +209,86 @@ d("admin sites API — media list (P4-T4.4)", () => {
       .get(`/api/sites/00000000-0000-0000-0000-000000000000/media`)
       .set("X-Admin-Token", ADMIN_TOKEN);
     expect(r.status).toBe(404);
+  });
+});
+
+d("admin sites API — POST /api/sites create (P4-T4.5)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  const createdSlugs: string[] = [];
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const slug of createdSlugs) {
+      await pool.query(`DELETE FROM sites WHERE slug = $1`, [slug]).catch(() => {});
+    }
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  it("401 without token", async () => {
+    const r = await request(app).post("/api/sites").send({ slug: "x", display_name: "X" });
+    expect(r.status).toBe(401);
+  });
+
+  it("creates a site + canonical + localhost site_domains rows", async () => {
+    const slug = `acme-${Date.now()}`;
+    createdSlugs.push(slug);
+    const r = await request(app)
+      .post("/api/sites")
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({
+        slug,
+        display_name: "Acme Co",
+        default_brand_tokens: { "--theme-main": "#112233", "--theme-accent": "#445566" },
+      });
+    expect(r.status).toBe(201);
+    expect(r.body.site).toMatchObject({ slug, display_name: "Acme Co", status: "active" });
+    expect(r.body.site.canonical_hostname).toBe(`${slug}.sites.anchorcorps.com`);
+
+    const domains = await pool.query<{ hostname: string; is_primary: boolean }>(
+      `SELECT hostname, is_primary FROM site_domains WHERE site_id = $1 ORDER BY is_primary DESC`,
+      [r.body.site.id],
+    );
+    const hostnames = domains.rows.map((d) => d.hostname);
+    expect(hostnames).toContain(`${slug}.sites.anchorcorps.com`);
+    expect(hostnames).toContain(`${slug}.localhost`);
+  });
+
+  it("409 on duplicate slug", async () => {
+    const slug = `dup-${Date.now()}`;
+    createdSlugs.push(slug);
+    await request(app)
+      .post("/api/sites")
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug, display_name: "First" });
+    const r = await request(app)
+      .post("/api/sites")
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug, display_name: "Second" });
+    expect(r.status).toBe(409);
+  });
+
+  it("400 on bad slug", async () => {
+    const r = await request(app)
+      .post("/api/sites")
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug: "Bad Slug!", display_name: "X" });
+    expect(r.status).toBe(400);
+  });
+
+  it("400 on invalid brand tokens", async () => {
+    const r = await request(app)
+      .post("/api/sites")
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug: `bt-${Date.now()}`, display_name: "X", default_brand_tokens: { "--brand-x": "#fff" } });
+    expect(r.status).toBe(400);
   });
 });

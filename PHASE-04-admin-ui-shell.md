@@ -39,7 +39,7 @@
   - `[{ id, alt, content_type, variants_status, variants, width, height, created_at }]`, newest first, `?limit&offset`. `requireAdmin`.
   - **Tests:** auth gate; returns ready + pending rows; pagination.
 
-- [ ] **4.5 — `POST /api/sites` (create)**
+- [x] **4.5 — `POST /api/sites` (create)**
   - Body `{ slug, display_name, default_brand_tokens? }`. Slug validated (`^[a-z0-9][a-z0-9-]*$`, unique). Brand tokens via D-029. Inserts `sites` + the canonical `<slug>.<SITES_DOMAIN_BASE>` and `<slug>.localhost` `site_domains` rows (matches the seed). Returns the created site. `requireAdmin` + `rateLimit`.
   - **Tests:** auth gate; happy path (rows created + canonical hostname); duplicate slug 409; bad slug 400; bad brand tokens 400.
 
@@ -118,6 +118,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 19:10 UTC — Task 4.5 (POST /api/sites create)
+**Commit:** (pending)
+**Done:** `POST /api/sites` (requireAdmin + rateLimit 10/min). Zod-validated `{ slug, display_name, default_brand_tokens? }` — slug `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`, brand tokens via D-029. In one transaction: inserts the `sites` row + two `site_domains` rows (canonical `<slug>.sites.anchorcorps.com` primary, `<slug>.localhost` for dev). Duplicate slug → 409 (checked inside the txn). Returns 201 with the created site + `canonical_hostname`.
+**Tests added:** 5 (`admin-sites.test.ts`) — 401, happy path (site + both domain rows), 409 duplicate, 400 bad slug, 400 bad brand tokens. Full suite **251/251 across 36 files**; typecheck clean.
+**Next:** 4.6 — PATCH site + create page.
+**Notes:** Reuses `hostnameForSlug` + `getDomainConfig` from the domain config so the canonical hostname matches the seed + provisioning paths exactly. Does NOT run DNS/Cloud Run provisioning (that's Phase 10's `provisionSiteHostname`) — create just lands the DB rows; the site is reachable on `<slug>.localhost` immediately and on the canonical host once Phase 10 maps it.
 
 ### 2026-05-19 19:00 UTC — Task 4.4 (media list endpoint)
 **Commit:** (pending)
