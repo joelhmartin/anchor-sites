@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 18:05 UTC — Task 5.5 (Editor route replaces `EditorPlaceholder`)
-**Commit:** (this commit)
+**Commit:** 24c2a85
 **Done:** Real Puck editor at `/sites/:slug/pages/:pageId`. **Backend:** new `GET /api/sites/:siteId/pages/:pageId` (admin-pages.ts) returns a page's blocks+seo+meta (the pages-list omits blocks). **Frontend:** `src/admin/pages/EditorPage.tsx` resolves slug→site (Phase-4 `/api/sites` pattern), loads the page, `toPuckData`, renders `<Puck config data onPublish>`; publish → `fromPuckData` → `POST …/pages/:pageId` ({blocks, seo, source:"editor"}) with saving/saved/error status; "Back to site" breadcrumb + "View live". Wired in `AdminApp`; deleted `EditorPlaceholder.tsx`; imports Puck CSS. Recorded the Puck-in-jsdom mock-vs-shim gotcha in D-036.
 **Tests added:** 8 (3 backend GET in admin-pages.test.ts: returns page/404/401; 5 EditorPage.test.tsx: load→Puck gets toPuckData, publish→fromPuckData POST, save error surfaced, site-not-found, breadcrumb). Updated PagesTab + AdminApp tests off the deleted placeholder (Puck mocked there). Suite 319→327, **3 cold-cache full runs all 327/0** + typecheck + build green.
 **Next:** 5.6 — Tiptap as a Puck custom field (rich text).
