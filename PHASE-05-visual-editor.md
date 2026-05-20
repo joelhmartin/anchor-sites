@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 18:30 UTC — Task 5.9 (Revisions panel in the editor)
-**Commit:** (this commit)
+**Commit:** ca6efa0
 **Done:** `RevisionsPanel` in EditorPage — a "History" toggle in the editor header opens a list from `GET …/pages/:pageId/revisions` (timestamp · source, reverse-chrono). "Restore" → `POST …/revisions/:id/restore`, then refreshes the list AND re-fetches the page via the page `useApi.reload()` — the load cycle remounts Puck with the restored blocks (`toPuckData`), so cross-session restore reflects immediately. (Puck's native undo/redo covers in-session.) No backend change — uses the existing Phase-4 revision endpoints.
 **Tests added:** 2 (EditorPage.test.tsx, stateful mock: history list renders with source; restoring r1 reloads the editor so puck-data flips from toPuckData(BLOCKS)→toPuckData(BLOCKS_B)). Suite 339→341; cold-cache full run + typecheck + build green.
 **Next:** 5.10 — publish/draft status toggle + viewport preview.
