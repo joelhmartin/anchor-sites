@@ -5,6 +5,11 @@
  */
 const SITES_DOMAIN_BASE = "sites.anchorcorps.com";
 
+/** Canonical tenant hostname for a slug, e.g. `acme.sites.anchorcorps.com`. */
+export function tenantHostname(slug: string): string {
+  return `${slug}.${SITES_DOMAIN_BASE}`;
+}
+
 export function liveSiteUrl(slug: string): string {
-  return `https://${slug}.${SITES_DOMAIN_BASE}`;
+  return `https://${tenantHostname(slug)}`;
 }

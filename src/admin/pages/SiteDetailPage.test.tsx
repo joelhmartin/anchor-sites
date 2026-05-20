@@ -74,7 +74,7 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     expect(screen.queryByRole("button", { name: "+ New page" })).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
-    expect(screen.getByText(/arrive in Task 4.15/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeTruthy();
   });
 
   it("links 'View live site' to the canonical tenant hostname", async () => {

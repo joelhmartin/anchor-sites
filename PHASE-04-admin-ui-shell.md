@@ -85,7 +85,7 @@
   - Grid of media_assets (4.4) with thumbnail (smallest ready variant) + status. Upload widget: pick file → `POST /media/upload-url` → browser `PUT` to GCS → `POST /media/:id/complete` → optimistic "processing" card that flips to ready on refresh/poll. Shows alt + dimensions on hover.
   - **Tests:** renders grid; upload orchestration calls the three endpoints in order (mocked fetch + a stub PUT).
 
-- [ ] **4.15 — Settings tab**
+- [x] **4.15 — Settings tab**
   - Edit display_name + brand tokens (same color-pair UI as the wizard step 2, pre-filled from `default_brand_tokens`). Save → `PATCH /api/sites/:siteId`. Success toast. Shows the site's hostnames (read-only; domain management is Phase 10).
   - **Tests:** loads current values; save calls PATCH with the diff; validation error surfaced.
 
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 11:00 UTC — Task 4.15 (Settings tab) — admin can now do everything Phase 4 set out
+**Commit:** (pending)
+**Done:** `src/admin/pages/site-tabs/SettingsTab.tsx` is now real (last tab stub retired). Edits `display_name` + brand tokens, pre-filled from `default_brand_tokens` **merged over the defaults** so the whole palette is editable even for sites that only stored a couple of keys. Save computes a **diff** and `PATCH`es only the changed fields to `/api/sites/:siteId` (Save disabled until something changes / name non-empty); a green "Saved." confirmation appears on success; errors surface inline. A read-only card shows the canonical hostname (`tenantHostname(slug)`) with a "Phase 10" note. **Refactor:** extracted the wizard's color editor into a shared `src/admin/components/BrandTokenFields.tsx` (+ `DEFAULT_BRAND_TOKENS`) now used by both the wizard (4.11) and settings — single source for the color-pair UI + preview. Added `tenantHostname()` to `lib/siteUrl.ts` (and `liveSiteUrl` now builds on it).
+**Tests added:** 4 (`SettingsTab.test.tsx`, jsdom) — loads current name + the site's `--theme-main` into the picker + shows the hostname; Save disabled until a change, then PATCHes **only** the changed field (display_name diff, colors untouched); a color change includes `default_brand_tokens` in the diff (and not display_name); a 400 surfaces inline. Re-ran `NewSiteWizard.test.tsx` after the extraction (still 4/4 — same labels/behavior) and updated `SiteDetailPage.test.tsx`'s Settings assertion to the real "Save changes" button. Full suite **297/297 across 45 files**; typecheck clean.
+**Next:** 4.16 — Phase 4 docs + plan tick (the wrap task).
+**Notes:**
+- **Diff baseline = the merged initial tokens**, not the site's raw sparse tokens — so editing only the name doesn't spuriously also PATCH a full palette. A color edit (or name edit) is what puts that field in the body.
+- `BrandTokenFields` is a controlled component (parent owns `tokens` + `onChange`); reset-to-defaults stays in each parent so the wizard (footer) and settings (inline) can place it differently.
+- **Can't browser-verify** (operator hard rule). jsdom + typecheck only; eyeball at `studio.localhost:3000/sites/<slug>` → Settings.
 
 ### 2026-05-20 10:55 UTC — Task 4.14 (Media tab + upload flow) — media upload works from the UI
 **Commit:** 0e64f0d

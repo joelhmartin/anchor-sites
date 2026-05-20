@@ -6,6 +6,7 @@ import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
 import { Spinner } from "../ui/spinner.js";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
+import { BrandTokenFields, DEFAULT_BRAND_TOKENS } from "../components/BrandTokenFields.js";
 
 /**
  * New-site wizard (P4-T4.11). Two steps: (1) slug + display name with live
@@ -17,60 +18,12 @@ import { ApiError, apiFetch } from "../lib/apiFetch.js";
  */
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
-/**
- * Default brand tokens for a fresh site. Keys follow the D-029 `--theme-<kebab>`
- * convention; all values are 6-digit hex, which the color picker always
- * produces, so the assembled payload is brandTokensSchema-valid by construction.
- */
-const DEFAULT_TOKENS: Record<string, string> = {
-  "--theme-main": "#0a3d62",
-  "--theme-on-main": "#ffffff",
-  "--theme-accent": "#f6b93b",
-  "--theme-on-accent": "#1f1f1f",
-  "--theme-surface": "#ffffff",
-  "--theme-on-surface": "#1f1f1f",
-};
-
-const PAIRS: { label: string; bg: string; on: string }[] = [
-  { label: "Main", bg: "--theme-main", on: "--theme-on-main" },
-  { label: "Accent", bg: "--theme-accent", on: "--theme-on-accent" },
-  { label: "Surface", bg: "--theme-surface", on: "--theme-on-surface" },
-];
-
-function ColorField({
-  id,
-  label,
-  value,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor={id}>{label}</Label>
-      <div className="flex items-center gap-2">
-        <input
-          id={id}
-          type="color"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-9 w-10 cursor-pointer rounded-md border border-zinc-300 bg-white p-0.5"
-        />
-        <span className="font-mono text-xs text-zinc-500">{value}</span>
-      </div>
-    </div>
-  );
-}
-
 export function NewSiteWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2>(1);
   const [displayName, setDisplayName] = useState("");
   const [slug, setSlug] = useState("");
-  const [tokens, setTokens] = useState<Record<string, string>>({ ...DEFAULT_TOKENS });
+  const [tokens, setTokens] = useState<Record<string, string>>({ ...DEFAULT_BRAND_TOKENS });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -173,57 +126,18 @@ export function NewSiteWizard() {
                 </p>
               </CardHeader>
               <CardContent className="flex flex-col gap-5">
-                <div className="grid grid-cols-2 gap-4">
-                  {PAIRS.map((p) => (
-                    <div key={p.bg} className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3">
-                      <ColorField
-                        id={p.bg}
-                        label={p.label}
-                        value={tokens[p.bg]}
-                        onChange={(v) => setToken(p.bg, v)}
-                      />
-                      <ColorField
-                        id={p.on}
-                        label={`Text on ${p.label.toLowerCase()}`}
-                        value={tokens[p.on]}
-                        onChange={(v) => setToken(p.on, v)}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label>Preview</Label>
-                  <div
-                    className="flex flex-col gap-3 rounded-md border border-zinc-200 p-4"
-                    style={{ background: tokens["--theme-surface"], color: tokens["--theme-on-surface"] }}
-                    data-testid="brand-preview"
-                  >
-                    <span className="text-sm font-medium">{displayName || "Your site"}</span>
-                    <div className="flex gap-2">
-                      <span
-                        className="rounded-md px-3 py-1 text-sm font-medium"
-                        style={{ background: tokens["--theme-main"], color: tokens["--theme-on-main"] }}
-                      >
-                        Main
-                      </span>
-                      <span
-                        className="rounded-md px-3 py-1 text-sm font-medium"
-                        style={{ background: tokens["--theme-accent"], color: tokens["--theme-on-accent"] }}
-                      >
-                        Accent
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
+                <BrandTokenFields
+                  tokens={tokens}
+                  onChange={setToken}
+                  previewLabel={displayName || "Your site"}
+                />
                 {error && <p className="text-sm text-red-600">{error}</p>}
               </CardContent>
               <div className="flex items-center justify-between px-6 pb-6">
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => setTokens({ ...DEFAULT_TOKENS })}
+                  onClick={() => setTokens({ ...DEFAULT_BRAND_TOKENS })}
                 >
                   Reset to defaults
                 </Button>
