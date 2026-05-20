@@ -4,6 +4,7 @@ import { blockManifest } from "@anchorcorps/components";
 import { __resetRegistryForTests, listBlocks, registerBlock } from "../../blocks/registry.js";
 import { richTextBlock } from "../../blocks/rich-text/index.js";
 import { zodSchemaDefaults, zodToPuckFields } from "../zod-fields.js";
+import { fieldOverridesFor } from "../field-overrides.js";
 import { buildPuckConfig } from "../puck-config.js";
 
 // The registry is process-global mutable state shared across the test fork
@@ -46,11 +47,30 @@ describe("buildPuckConfig (P5-T5.4)", () => {
     for (const { type, entry } of listBlocks()) {
       const component = config.components[type];
       expect(component.label).toBe(entry.label);
-      expect(component.fields).toEqual(zodToPuckFields(entry.schema));
+      const schemaFields = zodToPuckFields(entry.schema);
+      const overrides = fieldOverridesFor(type);
+      for (const [key, field] of Object.entries(component.fields ?? {})) {
+        if (key in overrides) {
+          // Custom-field override (render fn isn't deep-comparable) — assert shape.
+          expect(field.type).toBe(overrides[key].type);
+        } else {
+          expect(field).toEqual(schemaFields[key]);
+        }
+      }
       expect(component.defaultProps).toEqual(zodSchemaDefaults(entry.schema));
       // render is the SAME component the prod renderer uses (no editor fork).
       expect(component.render).toBe(entry.component);
     }
+  });
+
+  it("overrides rich-text.html with the Tiptap custom field (not a plain text input)", () => {
+    const config = buildPuckConfig();
+    const richText = config.components["rich-text"];
+    // Without the override, z.string() maps to a `text` field — the override
+    // makes it `custom` (Tiptap) instead.
+    expect(richText.fields?.html?.type).toBe("custom");
+    // Sibling props keep their schema-derived field.
+    expect(richText.fields?.max_width?.type).toBe("select");
   });
 
   it("defaultProps parse cleanly against the block's own schema (valid starting props)", () => {

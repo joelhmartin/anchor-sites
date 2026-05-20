@@ -606,3 +606,19 @@ So the precise state: the Cloud Build GitHub App **is** installed/configured on 
 **Field DSL coverage (FROZEN 2026-05-20, P5-T5.3 — `src/editor/zod-fields.ts`):** `zodToPuckFields(schema)` derives Puck `Fields` from a block's Zod schema (D-002 — fields are never defined twice). Supported: `ZodString`→`text`; `ZodNumber`(+`min`/`max`)→`number`; `ZodBoolean`→`radio` (Yes/No); `ZodEnum`/`ZodNativeEnum`→`select` (humanized labels); `ZodObject`→`object` (recursive `objectFields`); `ZodArray<ZodObject>`→`array` (recursive `arrayFields`). Wrappers `ZodDefault`/`ZodOptional`/`ZodNullable`/`ZodEffects` are unwrapped to the core type. **Field-DSL gaps → `textarea` fallback** (placeholder, never throws): array-of-primitive, `ZodUnion`, `ZodLiteral`, `ZodRecord`, `ZodTuple`, `ZodAny`/`Unknown`, `ZodDate`, etc. These are the candidates for **custom fields in 5.6–5.8** (rich text, image picker, color). Introspection is structural via `_def` so the module imports neither zod nor Puck at runtime (runs in node). Field VALUES/defaults are extracted as `defaultProps` during Config assembly (5.4), not here.
 
 **Rationale:** Exact pin keeps the conversion contract reproducible. A single-barrel boundary makes "nothing outside `src/editor/` imports Puck" mechanically checkable and keeps Puck swappable. No build-config churn because the existing globs already cover the new directory.
+
+### D-037: Tiptap pinned at `3.23.5`; rich-text edits an HTML string; custom-field override registry (P5-T5.6)
+
+**Context:** PHASE-05 5.6 + the standing convention "Tiptap for any rich text field (Phase 5+)" (ROUTINE-README) call for editing the `rich-text` block with Tiptap inside the Puck side panel. `zodToPuckFields` maps `rich-text.html` (`z.string()`) to a plain `text` input — wrong for rich text — so the editor needs a way to override a schema-derived field with a richer custom field.
+
+**Decision — Tiptap pin + serialization contract:**
+- Pin **`@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/pm` all exactly `3.23.5`** (`--save-exact`). React `18.3.1` satisfies the peer (`^17||^18||^19`).
+- **The stored shape does NOT change.** `rich-text` keeps `props.html` as an HTML string (rendered by the prod `RichText` via `dangerouslySetInnerHTML`). Tiptap edits exactly that: `content: value` in, `editor.getHTML()` out (`onUpdate`). So the serialized output is precisely what the renderer consumes — no Tiptap-specific JSON, no migration. StarterKit extensions; toolbar = bold/italic/H2/H3/bullet+ordered lists.
+
+**Decision — custom-field override registry (`src/editor/field-overrides.ts`):**
+- `fieldOverridesFor(type)` returns a `{ propName → Field }` map merged OVER `zodToPuckFields(schema)` in `buildPuckConfig` (override wins for that prop). This is the general extension point for fields that need more than the Zod type implies: **5.6 rich-text→Tiptap, 5.7 image→media picker, 5.8 color** all register here. Schema-derived fields remain the default for every other prop.
+- The Tiptap field (`src/editor/custom-fields/tiptap-field.tsx`) is a Puck `{ type: "custom", render }`. It lives under `src/editor/` like all editor code; Tiptap imports stay inside that boundary.
+
+**Testing:** Same gotcha as Puck (D-036) — booting a real ProseMirror `EditorView` in jsdom is fragile, so the field test **mocks `@tiptap/react`** and asserts the value↔`getHTML()` contract (content seeded from `value`; `onUpdate` → `onChange(html)`). Importing Tiptap transitively (via `buildPuckConfig`) does NOT crash on load (unlike dnd-kit's `ResizeObserver`), so it caused no dep-scan cascade. Real editing is operator-verified at `studio.localhost:3000`.
+
+**Rationale:** Keeping `html`-string storage means the renderer, AI editor (Phase 6), and revisions are all unchanged — Tiptap is purely an editing surface. A declarative override registry keeps `buildPuckConfig` generic and gives 5.7/5.8 a ready home.

@@ -54,7 +54,7 @@
 
 ### Custom fields
 
-- [ ] **5.6 — Tiptap as a Puck custom field (rich text)**
+- [x] **5.6 — Tiptap as a Puck custom field (rich text)**
   - Wrap Tiptap as a Puck custom field so the `rich-text` block edits inline-ish in the side panel (D-017). Reuse the existing `src/blocks/rich-text` rendering contract; store the same serialized shape the renderer expects.
   - **Tests:** field renders; edits flow into the block props; serialized output matches the renderer's expected shape.
 
@@ -101,6 +101,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 18:14 UTC — Task 5.6 (Tiptap as a Puck custom field — rich text)
+**Commit:** (this commit)
+**Done:** Pinned `@tiptap/react`+`@tiptap/starter-kit`+`@tiptap/pm` exactly `3.23.5`. `src/editor/custom-fields/tiptap-field.tsx` — `tiptapField()` returns a Puck `{type:"custom"}` field editing an HTML string (content←value, getHTML()→onChange; toolbar B/I/H2/H3/bullet+ordered). `src/editor/field-overrides.ts` — `fieldOverridesFor(type)` registry merged OVER schema-derived fields in `buildPuckConfig`; `rich-text.html` now uses Tiptap instead of a text input. **No storage change** — still `props.html` HTML string the renderer injects. Recorded D-037 (pin + contract + override registry).
+**Tests added:** 4 (tiptap-field.test.tsx, @tiptap mocked: is custom field; seeds content from value; onUpdate→onChange(html); non-string→""), +1 puck-config (rich-text.html is custom, max_width still select); updated the config "derives fields" test for overrides. Suite 327→332; **3 cold-cache full runs all 332/0** + typecheck + build green.
+**Next:** 5.7 — image-picker custom field (media library).
+**Notes:** Same jsdom approach as Puck (D-036) — mock the heavy editor lib; ProseMirror not booted in tests. Importing Tiptap transitively (buildPuckConfig) does NOT crash on load, so no dep-scan cascade. Build now bundles Tiptap (admin JS 2.03MB→2.41MB). Real rich-text editing is operator-verified at studio.localhost:3000.
 
 ### 2026-05-20 18:05 UTC — Task 5.5 (Editor route replaces `EditorPlaceholder`)
 **Commit:** 24c2a85

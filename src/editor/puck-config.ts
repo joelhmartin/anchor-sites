@@ -4,6 +4,7 @@
 import "../blocks/index.js";
 import { listBlocks } from "../blocks/registry.js";
 import { zodToPuckFields, zodSchemaDefaults } from "./zod-fields.js";
+import { fieldOverridesFor } from "./field-overrides.js";
 // Type-only Puck imports keep this module free of a runtime Puck dependency.
 import type { ComponentConfig, Config } from "./index.js";
 
@@ -26,7 +27,9 @@ export function buildPuckConfig(): Config {
   for (const { type, entry } of listBlocks()) {
     components[type] = {
       label: entry.label,
-      fields: zodToPuckFields(entry.schema),
+      // Custom-field overrides (e.g. Tiptap for rich-text.html) win over the
+      // schema-derived field for the same prop.
+      fields: { ...zodToPuckFields(entry.schema), ...fieldOverridesFor(type) },
       defaultProps: zodSchemaDefaults(entry.schema),
       render: entry.component as unknown as ComponentConfig["render"],
     } as ComponentConfig;
