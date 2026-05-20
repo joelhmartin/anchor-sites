@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 18:40 UTC — Task 5.11 (Phase 5 docs + plan tick) — PHASE 5 COMPLETE
-**Commit:** (this commit)
+**Commit:** 3d98639
 **Done:** Wrote `docs/visual-editor.md` (the `Block[]`↔Puck boundary, `zodToPuckFields` + custom fields, the editor route, how AI editing in Phase 6 stays decoupled). Ticked the `PLAN.md` Phase 5 row with a completion summary (matching prior phases). Appended the Phase-5 entry to `.routine/baseline-tests.log` (344 across 52 files). The Puck/Tiptap version + contract decisions were already recorded (D-036, D-037).
 **Tests added:** none (docs only). Suite unchanged at 344, green.
 **Next:** PHASE COMPLETE — STOP. Phase 6 (AI editing) requires a fresh `.routine/NEXT-PHASE-APPROVED` (hard rule #1).
