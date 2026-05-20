@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 17:34 UTC — Task 5.2 (`puck-adapter.ts` — `Block[]` ↔ Puck `Data`, lossless)
-**Commit:** (this commit)
+**Commit:** 43d0e87
 **Done:** `src/editor/puck-adapter.ts` with `toPuckData`/`fromPuckData`. Block `id`→`props.id`; `props` spread; nested `children`→flat `zones` map keyed `${id}:children` (recursive); `root` always `{}`. Purely structural (no registry) → unknown types pass through. Imports Puck **types only** ⇒ no runtime Puck load, runs in plain node. Froze the conversion contract in D-036.
 **Tests added:** 7 (`src/editor/__tests__/puck-adapter.test.ts`): empty page, flat blocks (assorted prop types), deep nesting, empty-vs-absent `children` distinction, unknown-type passthrough, id↔props.id + zones structure, id-strip on return. Round-trip is `toStrictEqual`. Suite 299→306, cold-cache full run + typecheck green.
 **Next:** 5.3 — `zodToPuckFields(schema)`.
