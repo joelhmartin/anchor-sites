@@ -78,7 +78,7 @@
 
 ### Wrap
 
-- [ ] **5.11 — Phase 5 docs + plan tick**
+- [x] **5.11 — Phase 5 docs + plan tick**
   - `docs/visual-editor.md`: the `Block[]`↔Puck boundary, `zodToPuckFields` coverage + custom fields, the editor route, how AI editing (Phase 6) stays decoupled. Record the Puck-version/contract decision in `DECISIONS.md`. Tick the `PLAN.md` Phase 5 row. Append `.routine/baseline-tests.log`.
 
 ## Demo milestones (chat-only)
@@ -101,6 +101,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 18:40 UTC — Task 5.11 (Phase 5 docs + plan tick) — PHASE 5 COMPLETE
+**Commit:** (this commit)
+**Done:** Wrote `docs/visual-editor.md` (the `Block[]`↔Puck boundary, `zodToPuckFields` + custom fields, the editor route, how AI editing in Phase 6 stays decoupled). Ticked the `PLAN.md` Phase 5 row with a completion summary (matching prior phases). Appended the Phase-5 entry to `.routine/baseline-tests.log` (344 across 52 files). The Puck/Tiptap version + contract decisions were already recorded (D-036, D-037).
+**Tests added:** none (docs only). Suite unchanged at 344, green.
+**Next:** PHASE COMPLETE — STOP. Phase 6 (AI editing) requires a fresh `.routine/NEXT-PHASE-APPROVED` (hard rule #1).
+**Notes:** Definition of done met: working Puck editor at the route (not a placeholder); edits publish via the existing save+revision API; `Block[]` remains the stored source of truth; prod renderer unchanged; lossless round-trip + field generation + config assembly + route are tested; nothing outside `src/editor/` imports Puck. Visual QA (drag/drop, viewport, preview parity) is operator-run — flagged, not claimed.
 
 ### 2026-05-20 18:36 UTC — Task 5.10 (Publish/draft status + viewport preview)
 **Commit:** 252dcc2

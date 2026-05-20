@@ -98,6 +98,45 @@ test counts 5 tables including media_assets.
 
 ---
 
+2026-05-20 — Phase 5 baseline update (Task 5.11 — phase complete)
+Suite: vitest run with vitest.workspace.ts
+Result: 344 passed, 0 skipped, 0 failed across 52 test files
+
+Breakdown:
+  Root suite: 285 (was 238 at Phase 4 close; +47 across Phase 5)
+    Editor unit (src/editor, node + jsdom):
+      editor-smoke (2 — Puck loads in jsdom + version-pin drift guard),
+      puck-adapter round-trip (7), zodToPuckFields (8 + humanizeLabel),
+      buildPuckConfig (9 incl. override + plugin-block + nested),
+      tiptap-field (4, @tiptap mocked), image-field (4, fetch mocked)
+    Editor route (src/admin/pages/EditorPage.test.tsx, Puck stubbed): 8
+      (load→toPuckData, publish→fromPuckData save, save error, not-found,
+       breadcrumb, status toggle, revisions render, restore reloads)
+    Backend (admin-pages.ts integration): +5 — single-page GET (3),
+      save-with-status (1), invalid-status 400 (1)
+  @anchorcorps/components suite: 59 (unchanged in Phase 5)
+
+Notes:
+  - @measured/puck 0.20.2 + @tiptap/{react,starter-kit,pm} 3.23.5 added
+    (pinned exact). Editor bundles into the admin SPA (admin JS ~2.4MB).
+  - Puck-in-jsdom: editor-smoke loads real Puck (with a ResizeObserver
+    shim, src/editor/__tests__/puck-jsdom.ts); EditorPage/AdminApp tests
+    MOCK Puck (an unshimmed real-Puck load crashes and cascades into a
+    Vite dep-scan abort that fails other files' collection — D-036).
+  - No browser/e2e on this machine (operator hard rule). Drag/drop,
+    custom-field UX, viewport switcher, and preview visual parity are
+    operator-verified at studio.localhost:3000.
+  - KNOWN FLAKE (pre-existing, not Phase 5): resolveSite.test.ts
+    "/healthz" intermittently returns 403 (~1/3 on cold runs now that the
+    file set grew) — a singleFork cross-file global-state leak (see
+    STATE.json open_followups FLAKE-RESOLVESITE). Recovers on rerun; all
+    Phase-5 CI builds were SUCCESS. Recommend a dedicated isolation fix.
+
+Single command runs both:
+  DATABASE_URL=... TEST_DATABASE_URL=... npm test
+
+---
+
 2026-05-20 — Phase 4 baseline update (Task 4.16 — phase complete)
 Suite: vitest run with vitest.workspace.ts
 Result: 297 passed, 0 skipped, 0 failed across 45 test files
