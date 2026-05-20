@@ -65,7 +65,7 @@
 
 ### Admin SPA — flows
 
-- [ ] **4.10 — Sites list (`/`)**
+- [x] **4.10 — Sites list (`/`)**
   - Table: display_name, slug, status badge, page count, created. Row click → `/sites/:slug`. "+ New site" button → `/sites/new`. Empty state with a create CTA when no sites.
   - **Tests:** renders rows from a mocked `GET /api/sites`; empty state.
 
@@ -118,6 +118,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 20:30 UTC — Task 4.10 (sites list page) — first data-driven screen
+**Commit:** (pending)
+**Done:** `src/admin/lib/useApi.ts` — minimal GET hook (`{ data, loading, error, reload }`, fetch on mount + `reload()`). `SitesListPage` is now real: loads `GET /api/sites`, renders a table (name → links to detail, slug, status badge, page count, created date), "+ New site" → `/sites/new`, row-click → detail, an empty state with a CTA, a loading spinner, and an error card. **The control hub is now demoable end-to-end:** log in at `studio.localhost:3000/login` → land on the sites list rendering real data.
+**Tests added:** 3 (`SitesListPage.test.tsx`, jsdom + mocked fetch) — rows render with counts, empty state + CTA, load-error surfaced. Full suite **278/278 across 40 files**; typecheck clean.
+**Next:** 4.11 — new-site wizard.
+**Notes:** `useApi` deliberately has no cache (admin is low-traffic; correctness over cleverness). A heavier client (react-query) can swap in behind the same call sites later. **Can't browser-verify** — the table/spinner/empty-state are typecheck + jsdom-tested; the operator should run `studio.localhost:3000` to eyeball.
 
 ### 2026-05-19 20:15 UTC — Task 4.9 (admin app shell + routing)
 **Commit:** (pending)
