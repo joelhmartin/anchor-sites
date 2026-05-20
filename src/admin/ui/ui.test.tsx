@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { Button } from "./button.js";
+
+afterEach(cleanup);
 import { Card, CardTitle } from "./card.js";
 import { Badge } from "./badge.js";
 import { Spinner } from "./spinner.js";

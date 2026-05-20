@@ -41,6 +41,8 @@ import { Navbar } from "./components/marketing/Navbar.jsx";
 import { Footer } from "./components/marketing/Footer.jsx";
 import { CONTENT } from "./config/site.js";
 import { BreakpointProvider } from "./hooks/useBreakpoint.jsx";
+import { isAdminHost } from "./config/admin-host.ts";
+import { AdminApp } from "./admin/AdminApp.tsx";
 
 /* Marketing layout: Navbar + page + Footer */
 function MarketingLayout() {
@@ -152,6 +154,19 @@ function OAuthCallback() {
 }
 
 export default function App() {
+  // Control hub (studio.anchorcorps.com / studio.localhost) gets the admin
+  // SPA; every other host gets the marketing/app routes (P4-T4.9 / D-032).
+  const onAdminHost =
+    typeof window !== "undefined" && isAdminHost(window.location.host);
+
+  if (onAdminHost) {
+    return (
+      <BrowserRouter>
+        <AdminApp />
+      </BrowserRouter>
+    );
+  }
+
   return (
     <BreakpointProvider>
       <BrowserRouter>

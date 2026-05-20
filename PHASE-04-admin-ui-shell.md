@@ -59,7 +59,7 @@
   - `src/admin/lib/useAdminToken.ts` (localStorage get/set/clear). `src/admin/lib/apiFetch.ts` attaches `X-Admin-Token`, throws typed errors on 401/4xx. `<RequireAdmin>` redirects to `/login` when no token; a `/login` screen pastes the token and verifies it against a lightweight `GET /api/sites` probe.
   - **Tests:** token hook roundtrip; apiFetch attaches header + maps 401; guard redirect logic (unit).
 
-- [ ] **4.9 — Admin app shell + routing**
+- [x] **4.9 — Admin app shell + routing**
   - `src/admin/AdminApp.tsx` with its own `react-router` route table under the admin host. `src/App.jsx` dispatches to `<AdminApp />` when running on the admin host (detected client-side via `window.location.host`, matched against the same `isAdminHost` logic shared from `src/config/admin-host.ts`). Sidebar layout: brand, Sites nav, current-site breadcrumb, Sign out.
   - **Tests:** route table renders the sites list at `/`; unknown route → not-found.
 
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 20:15 UTC — Task 4.9 (admin app shell + routing)
+**Commit:** (pending)
+**Done:** `src/admin/AdminApp.tsx` — the admin route tree: public `/login`, everything else behind `<RequireAdmin>` + `<AdminLayout>` (`/`, `/sites/new`, `/sites/:slug`, `/sites/:slug/pages/:pageId`, `*`). `src/admin/AdminLayout.tsx` — sidebar (brand, Sites nav, Sign out) + content outlet. `EditorPlaceholder` (Phase-5 landing per D-017) + `NotFound`. `src/App.jsx` dispatches to `<AdminApp />` when `isAdminHost(window.location.host)` (shared logic from `src/config/admin-host.ts`), else the legacy marketing/app routes. Stub page components (`SitesListPage`/`NewSiteWizard`/`SiteDetailPage`) land here for routing to resolve; 4.10–4.12 flesh them out.
+**Tests added:** 5 (`src/admin/AdminApp.test.tsx`, jsdom + MemoryRouter) — no-token → login, authed → sites list + layout chrome, page-edit route → editor placeholder, unknown route → NotFound, `/login` always renders.
+**Next:** 4.10 — real sites list page.
+**Notes:**
+- **Test-isolation fix:** RTL auto-cleanup wasn't firing between tests in a file (multiple-button leak). Added explicit `afterEach(cleanup)` to the RTL test files (`ui.test.tsx`, `AdminApp.test.tsx`). All admin component tests now isolate cleanly.
+- Admin host detected client-side via `window.location.host` against the same `isAdminHost` the server uses — one source of truth for "is this the studio host."
+- Full suite **275/275 across 39 files**; typecheck clean.
 
 ### 2026-05-19 19:55 UTC — Task 4.8 (admin auth: token + fetcher + guard + login)
 **Commit:** (pending)
