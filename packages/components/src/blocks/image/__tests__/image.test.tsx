@@ -121,6 +121,7 @@ describe("ac-image (P3-T3.12)", () => {
       </MediaProvider>,
     );
     const p = container.querySelector("picture") as HTMLElement;
-    expect(p.style.aspectRatio).toBe("1.5");
+    // jsdom normalizes "1.5" → "1.5 / 1" in newer versions; accept either.
+    expect(p.style.aspectRatio.replace(/\s*\/\s*1$/, "")).toBe("1.5");
   });
 });

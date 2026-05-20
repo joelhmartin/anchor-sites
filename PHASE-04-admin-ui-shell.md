@@ -50,7 +50,7 @@
 
 ### Admin SPA — structure
 
-- [ ] **4.7 — Admin UI primitives + Tailwind/Vite wiring**
+- [x] **4.7 — Admin UI primitives + Tailwind/Vite wiring**
   - Vendor a small shadcn set into `src/admin/ui/`: `Button`, `Card`, `Input`, `Label`, `Dialog`, `Table`, `Badge`, `Spinner`. `cn` helper (`clsx` + `tailwind-merge` — add as root deps if not hoisted reliably).
   - Broaden `tailwind.config.js` `content` glob + ensure Vite scans `src/admin/**/*.tsx`.
   - **Tests:** a render smoke test for Button + Card (jsdom). (Admin tests run in the root vitest suite — may need a jsdom-env carve-out for `src/admin/**`.)
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 19:40 UTC — Task 4.7 (admin UI primitives + Tailwind/Vite wiring)
+**Commit:** (pending)
+**Done:** Vendored a small shadcn-style primitive set into `src/admin/ui/` — `cn`, `Button` (cva variants primary/secondary/outline/ghost/danger × sizes), `Card`+`CardHeader`+`CardTitle`+`CardContent`, `Input`, `Label`, `Badge` (tone variants), `Spinner` (CSS-only, role=status), `Table` family, `Dialog` (Radix). Indigo/zinc palette (admin chrome, distinct from the brand-token-driven public blocks). Barrel export at `src/admin/ui/index.ts`. Added root deps `@radix-ui/react-dialog`, `tailwind-merge`, `class-variance-authority` (clsx already present) + root devDeps `@testing-library/react`, `@testing-library/jest-dom`, `jsdom`. Broadened `tailwind.config.js` content glob to `./src/**/*.{js,jsx,ts,tsx}`.
+**Tests added:** 5 (`src/admin/ui/ui.test.tsx`, `// @vitest-environment jsdom` per-file override) — Button element/type/variant, danger variant, Card composition, Badge tone, Spinner role. Full suite **264/264 across 37 files**; typecheck clean.
+**Next:** 4.8 — admin auth (token + fetcher + guard + login).
+**Notes:**
+- **Vendored, not re-exported from `@anchorcorps/components`.** Admin chrome is renderer-internal; the package is for the public *site* surface (D-005). The duplication is small + the palettes differ (admin = indigo/zinc, blocks = brand tokens).
+- **Caught a jsdom version drift:** installing `jsdom` at the root bumped the version the package's image test resolves, changing `aspect-ratio` normalization (`"1.5"` → `"1.5 / 1"`). Fixed the Task-3.12 assertion to strip the `/ 1` suffix — robust to both jsdom versions.
+- **Can't browser-verify on this machine** (operator hard rule — no Chrome automation). UI is typecheck- + jsdom-tested; visual verification is the operator running `studio.localhost:3000`. Flagged in chat.
 
 ### 2026-05-19 19:20 UTC — Task 4.6 (PATCH site + create page) — ADMIN API COMPLETE
 **Commit:** (pending)
