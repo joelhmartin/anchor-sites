@@ -43,7 +43,7 @@
   - Body `{ slug, display_name, default_brand_tokens? }`. Slug validated (`^[a-z0-9][a-z0-9-]*$`, unique). Brand tokens via D-029. Inserts `sites` + the canonical `<slug>.<SITES_DOMAIN_BASE>` and `<slug>.localhost` `site_domains` rows (matches the seed). Returns the created site. `requireAdmin` + `rateLimit`.
   - **Tests:** auth gate; happy path (rows created + canonical hostname); duplicate slug 409; bad slug 400; bad brand tokens 400.
 
-- [ ] **4.6 — `PATCH /api/sites/:siteId` + `POST /api/sites/:siteId/pages`**
+- [x] **4.6 — `PATCH /api/sites/:siteId` + `POST /api/sites/:siteId/pages`**
   - PATCH: update `display_name` and/or `default_brand_tokens` (D-029); evict resolveSite cache for the site's hostnames. 404 on unknown.
   - Create page: `{ slug, title }` → inserts a `pages` row with empty blocks + an initial `page_revisions` entry. Duplicate `(site_id, slug)` → 409.
   - **Tests:** auth gates; PATCH updates + cache eviction; create page; duplicate slug 409; 404s.
@@ -118,6 +118,12 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 19:20 UTC — Task 4.6 (PATCH site + create page) — ADMIN API COMPLETE
+**Commit:** (pending)
+**Done:** `PATCH /api/sites/:siteId` updates `display_name` and/or `default_brand_tokens` (D-029 validated; at-least-one required); after commit it evicts the resolveSite cache for every `site_domains` hostname so brand-token edits show up immediately (P3-T3.1 helper). `POST /api/sites/:siteId/pages` creates an empty `pages` row (`blocks=[]`, `status='draft'`) + an initial `page_revisions` row tagged `source='create'`, in one transaction. Duplicate `(site_id, slug)` → 409; unknown site → 404. **The admin API (4.2–4.6) is now complete** — the SPA can be built against it.
+**Tests added:** 8 (`admin-sites.test.ts`) — PATCH 401/200/400-empty/400-bad-tokens/404; create-page 201-with-revision/409-dup/404. Full suite **259/259 across 36 files**; typecheck clean.
+**Next:** 4.7 — vendored admin UI primitives + Tailwind/Vite wiring (the SPA build begins).
 
 ### 2026-05-19 19:10 UTC — Task 4.5 (POST /api/sites create)
 **Commit:** (pending)

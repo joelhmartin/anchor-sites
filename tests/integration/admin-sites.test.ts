@@ -292,3 +292,103 @@ d("admin sites API — POST /api/sites create (P4-T4.5)", () => {
     expect(r.status).toBe(400);
   });
 });
+
+d("admin sites API — PATCH site + create page (P4-T4.6)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let siteId: string;
+  let slug: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    slug = `patchtest-${Date.now()}`;
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name, default_brand_tokens)
+       VALUES ($1, 'Patch Test', '{"--theme-main":"#000000"}'::jsonb) RETURNING id`,
+      [slug],
+    );
+    siteId = ins.rows[0].id;
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => {});
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  it("PATCH 401 without token", async () => {
+    const r = await request(app).patch(`/api/sites/${siteId}`).send({ display_name: "X" });
+    expect(r.status).toBe(401);
+  });
+
+  it("PATCH updates display_name + brand tokens", async () => {
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ display_name: "Renamed", default_brand_tokens: { "--theme-main": "#abcabc" } });
+    expect(r.status).toBe(200);
+    expect(r.body.site.display_name).toBe("Renamed");
+    expect(r.body.site.default_brand_tokens).toMatchObject({ "--theme-main": "#abcabc" });
+  });
+
+  it("PATCH 400 with empty body", async () => {
+    const r = await request(app).patch(`/api/sites/${siteId}`).set("X-Admin-Token", ADMIN_TOKEN).send({});
+    expect(r.status).toBe(400);
+  });
+
+  it("PATCH 400 invalid brand tokens", async () => {
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ default_brand_tokens: { "--nope": "#fff" } });
+    expect(r.status).toBe(400);
+  });
+
+  it("PATCH 404 unknown site", async () => {
+    const r = await request(app)
+      .patch(`/api/sites/00000000-0000-0000-0000-000000000000`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ display_name: "X" });
+    expect(r.status).toBe(404);
+  });
+
+  it("creates a page + initial revision", async () => {
+    const r = await request(app)
+      .post(`/api/sites/${siteId}/pages`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug: "about", title: "About Us" });
+    expect(r.status).toBe(201);
+    expect(r.body.page).toMatchObject({ slug: "about", title: "About Us", status: "draft" });
+
+    const rev = await pool.query(
+      `SELECT source FROM page_revisions WHERE page_id = $1`,
+      [r.body.page.id],
+    );
+    expect(rev.rowCount).toBe(1);
+    expect(rev.rows[0].source).toBe("create");
+  });
+
+  it("create page 409 on duplicate slug", async () => {
+    await request(app)
+      .post(`/api/sites/${siteId}/pages`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug: "contact", title: "Contact" });
+    const r = await request(app)
+      .post(`/api/sites/${siteId}/pages`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug: "contact", title: "Contact 2" });
+    expect(r.status).toBe(409);
+  });
+
+  it("create page 404 unknown site", async () => {
+    const r = await request(app)
+      .post(`/api/sites/00000000-0000-0000-0000-000000000000/pages`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug: "x", title: "X" });
+    expect(r.status).toBe(404);
+  });
+});

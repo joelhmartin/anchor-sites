@@ -6,6 +6,7 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
+import { evictSiteCache } from "../../middleware/resolveSite.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -20,6 +21,20 @@ const createSitePayload = z.object({
   slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen"),
   display_name: z.string().min(1).max(200),
   default_brand_tokens: brandTokensSchema.optional(),
+});
+
+const patchSitePayload = z
+  .object({
+    display_name: z.string().min(1).max(200).optional(),
+    default_brand_tokens: brandTokensSchema.optional(),
+  })
+  .refine((v) => v.display_name !== undefined || v.default_brand_tokens !== undefined, {
+    message: "at least one of display_name or default_brand_tokens is required",
+  });
+
+const createPagePayload = z.object({
+  slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen"),
+  title: z.string().min(1).max(200),
 });
 
 export type AdminSitesOptions = {
@@ -176,6 +191,121 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         res.json({ pages: result.rows });
       } catch (err) {
         next(err);
+      }
+    },
+  );
+
+  // PATCH /api/sites/:siteId — update display_name and/or brand tokens. P4-T4.6.
+  router.patch(
+    "/sites/:siteId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = patchSitePayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+      const { siteId } = req.params;
+      const { display_name, default_brand_tokens } = parsed.data;
+      try {
+        const result = await pool.query<{ id: string }>(
+          `UPDATE sites
+              SET display_name = COALESCE($1, display_name),
+                  default_brand_tokens = COALESCE($2::jsonb, default_brand_tokens)
+            WHERE id = $3
+            RETURNING id`,
+          [
+            display_name ?? null,
+            default_brand_tokens ? JSON.stringify(default_brand_tokens) : null,
+            siteId,
+          ],
+        );
+        if (result.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        // Evict resolveSite cache for every hostname pointing at this site
+        // so the next request sees fresh brand tokens (P3-T3.1 helper).
+        const hosts = await pool.query<{ hostname: string }>(
+          `SELECT hostname FROM site_domains WHERE site_id = $1`,
+          [siteId],
+        );
+        for (const row of hosts.rows) evictSiteCache(row.hostname);
+
+        const updated = await pool.query(
+          `SELECT id, slug, display_name, status, default_brand_tokens, created_at FROM sites WHERE id = $1`,
+          [siteId],
+        );
+        res.json({ site: updated.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/sites/:siteId/pages — create an empty page + initial revision. P4-T4.6.
+  router.post(
+    "/sites/:siteId/pages",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = createPagePayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+      const { siteId } = req.params;
+      const { slug, title } = parsed.data;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const siteOk = await client.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          await client.query("ROLLBACK");
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const dup = await client.query(
+          `SELECT 1 FROM pages WHERE site_id = $1 AND slug = $2`,
+          [siteId, slug],
+        );
+        if (dup.rowCount && dup.rowCount > 0) {
+          await client.query("ROLLBACK");
+          res.status(409).json({ error: "a page with that slug already exists on this site" });
+          return;
+        }
+        const pageRes = await client.query<{ id: string; created_at: Date }>(
+          `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+           VALUES ($1, $2, $3, '[]'::jsonb, '{}'::jsonb, 'draft')
+           RETURNING id, created_at`,
+          [siteId, slug, title],
+        );
+        const pageId = pageRes.rows[0].id;
+        await client.query(
+          `INSERT INTO page_revisions (page_id, blocks, seo, source)
+           VALUES ($1, '[]'::jsonb, '{}'::jsonb, 'create')`,
+          [pageId],
+        );
+        await client.query("COMMIT");
+        res.status(201).json({
+          page: { id: pageId, site_id: siteId, slug, title, status: "draft" },
+        });
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        next(err);
+      } finally {
+        client.release();
       }
     },
   );
