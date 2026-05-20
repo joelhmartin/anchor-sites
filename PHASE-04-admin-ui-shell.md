@@ -35,7 +35,7 @@
   - Pages list: `[{ id, slug, title, status, updated_at }]`, ordered by `updated_at desc`.
   - **Tests:** auth gates; detail counts; 404; pages ordering.
 
-- [ ] **4.4 — `GET /api/sites/:siteId/media` (list, paginated)**
+- [x] **4.4 — `GET /api/sites/:siteId/media` (list, paginated)**
   - `[{ id, alt, content_type, variants_status, variants, width, height, created_at }]`, newest first, `?limit&offset`. `requireAdmin`.
   - **Tests:** auth gate; returns ready + pending rows; pagination.
 
@@ -119,8 +119,14 @@
 
 <!-- Routine appends entries below this line, newest first -->
 
-### 2026-05-19 18:50 UTC — Task 4.3 (site detail + pages list)
+### 2026-05-19 19:00 UTC — Task 4.4 (media list endpoint)
 **Commit:** (pending)
+**Done:** `GET /api/sites/:siteId/media` → `{ media: [...], total, limit, offset }`, newest first, `?limit` (1-200, default 50) + `?offset`. Returns ready + pending rows alike (the UI shows processing state). 404 if site missing.
+**Tests added:** 4 (`admin-sites.test.ts`) — 401 gate, newest-first list with mixed statuses + total, limit/offset, 404. Full suite **246/246 across 36 files**; typecheck clean.
+**Next:** 4.5 — POST /api/sites (create).
+
+### 2026-05-19 18:50 UTC — Task 4.3 (site detail + pages list)
+**Commit:** 3433e33
 **Done:** `GET /api/sites/:siteId` → `{ site: { id, slug, display_name, status, default_brand_tokens, created_at, pages_count, media_count } }` (counts via correlated subqueries), 404 on unknown. `GET /api/sites/:siteId/pages` → `{ pages: [{ id, slug, title, status, updated_at }] }` ordered `updated_at desc`, 404 if the site doesn't exist.
 **Tests added:** 5 (`admin-sites.test.ts`) — detail 401/200-with-counts-and-brand-tokens/404, pages list, pages 404. Full suite **242/242 across 36 files**; typecheck clean.
 **Next:** 4.4 — media list endpoint.

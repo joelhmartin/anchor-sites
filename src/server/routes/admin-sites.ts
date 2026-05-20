@@ -93,5 +93,45 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
     },
   );
 
+  // GET /api/sites/:siteId/media — media list, newest first, paginated. P4-T4.4.
+  router.get(
+    "/sites/:siteId/media",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+        const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+        const siteOk = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const totalRes = await pool.query<{ count: string }>(
+          `SELECT COUNT(*) FROM media_assets WHERE site_id = $1`,
+          [siteId],
+        );
+        const result = await pool.query(
+          `SELECT id, alt, content_type, focal_point, variants_status,
+                  variants, width, height, created_at
+             FROM media_assets
+            WHERE site_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3`,
+          [siteId, limit, offset],
+        );
+        res.json({
+          media: result.rows,
+          total: Number(totalRes.rows[0].count),
+          limit,
+          offset,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   return router;
 }

@@ -145,3 +145,69 @@ d("admin sites API — detail + pages (P4-T4.3)", () => {
     expect(r.status).toBe(404);
   });
 });
+
+d("admin sites API — media list (P4-T4.4)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let muldoonId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    // Seed a few media rows.
+    for (let i = 0; i < 3; i++) {
+      await pool.query(
+        `INSERT INTO media_assets (site_id, gcs_key, content_type, alt, variants_status)
+         VALUES ($1, $2, 'image/png', $3, $4)`,
+        [muldoonId, `originals/${muldoonId}/m${i}-${Date.now()}.png`, `alt ${i}`, i === 0 ? "ready" : "pending"],
+      );
+    }
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM media_assets WHERE site_id = $1`, [muldoonId]).catch(() => {});
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  it("401 without token", async () => {
+    const r = await request(app).get(`/api/sites/${muldoonId}/media`);
+    expect(r.status).toBe(401);
+  });
+
+  it("lists media newest-first with total + ready and pending rows", async () => {
+    const r = await request(app)
+      .get(`/api/sites/${muldoonId}/media`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.total).toBeGreaterThanOrEqual(3);
+    expect(r.body.media.length).toBeGreaterThanOrEqual(3);
+    const statuses = r.body.media.map((m: { variants_status: string }) => m.variants_status);
+    expect(statuses).toContain("ready");
+    expect(statuses).toContain("pending");
+    const times = r.body.media.map((m: { created_at: string }) => new Date(m.created_at).getTime());
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+
+  it("honors limit + offset", async () => {
+    const r = await request(app)
+      .get(`/api/sites/${muldoonId}/media?limit=2&offset=0`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.media.length).toBe(2);
+    expect(r.body.limit).toBe(2);
+  });
+
+  it("404 for unknown site", async () => {
+    const r = await request(app)
+      .get(`/api/sites/00000000-0000-0000-0000-000000000000/media`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+});
