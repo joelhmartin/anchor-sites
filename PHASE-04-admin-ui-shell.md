@@ -120,7 +120,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 10:55 UTC — Task 4.14 (Media tab + upload flow) — media upload works from the UI
-**Commit:** (pending)
+**Commit:** 0e64f0d
 **Done:** `src/admin/pages/site-tabs/MediaTab.tsx` is now real. Loads `GET /api/sites/:siteId/media` and renders a responsive grid: ready assets show the **smallest ready variant** as a thumbnail (`pickThumb` sorts by width, webp on ties), pending/processing/failed assets show a status badge; alt + dimensions reveal on hover. The "Upload image" button drives a hidden `<input type=file>` through the **Phase-3 three-step flow**: `POST .../media/upload-url` (body `{content_type, alt:filename}`) → raw `fetch` `PUT` to the returned signed GCS `upload_url` with its `headers` (no admin token sent to GCS) → `POST .../media/:assetId/complete` → `reload()`. An optimistic "Uploading…" tile shows during the flow; a "Refresh" button re-pulls the grid so async variant processing flips tiles to ready. Upload errors surface inline. **Media upload now works end-to-end from the control hub.**
 **Tests added:** 3 (`MediaTab.test.tsx`, jsdom) — grid renders ready thumbnail (asserts the *smallest* variant URL) + pending status badge; the upload flow calls upload-url → PUT → complete **in that order** (asserts the POST body + that the raw `File` is the PUT body); a failed storage PUT surfaces an inline error. Updated `SiteDetailPage.test.tsx` (4.12) again — Media tab is now real, so it mocks `/media` and asserts the "Upload image" affordance instead of the old stub text. Full suite **293/293 across 44 files**; typecheck clean.
 **Next:** 4.15 — Settings tab (display_name + brand tokens via PATCH).
