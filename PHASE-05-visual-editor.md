@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 17:47 UTC — Task 5.4 (Assemble Puck `Config` from the block registry)
-**Commit:** (this commit)
+**Commit:** 79ed703
 **Done:** `src/editor/puck-config.ts` — `buildPuckConfig(): Config` maps every `listBlocks()` entry → `{ label, fields: zodToPuckFields(schema), defaultProps: zodSchemaDefaults(schema), render: entry.component }`. Side-effect imports `../blocks/index.js` so the editor uses the SAME registry/components as the prod renderer (D-018). Plugin blocks (D-016) appear automatically. Added `zodSchemaDefaults` to `zod-fields.ts` (the deferred 5.3 defaults extraction). Exported `richTextBlock` from `src/blocks/rich-text/index.ts` (additive — self-registration unchanged) so tests re-register it without duplicating metadata.
 **Tests added:** 5 (`src/editor/__tests__/puck-config.test.ts`): every registered block present; rich-text + all 7 package blocks covered; fields/defaultProps/label/render derive from each entry; defaultProps parse against their own schema; plugin-registered block picked up automatically. Order-robust via beforeEach reset+re-register from blockManifest + richTextBlock. Suite 314→319, cold-cache full run + typecheck green.
 **Next:** 5.5 — editor route replaces `EditorPlaceholder` (needs jsdom @testing-library; first browser-ish surface — visual QA stays operator-run).
