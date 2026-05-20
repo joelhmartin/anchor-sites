@@ -26,7 +26,7 @@
 
 ### Admin API endpoints
 
-- [ ] **4.2 — `GET /api/sites` (list)**
+- [x] **4.2 — `GET /api/sites` (list)**
   - Returns `[{ id, slug, display_name, status, created_at, pages_count }]`, newest first. `requireAdmin`.
   - **Tests:** auth gate; returns seeded sites with correct page counts.
 
@@ -118,3 +118,15 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-19 18:40 UTC — Task 4.2 (`GET /api/sites` list)
+**Commit:** 902468a
+**Done:** New `src/server/routes/admin-sites.ts` → `adminSitesRouter`, mounted under `/api` in `app.ts`. `GET /api/sites` (requireAdmin) returns `{ sites: [{ id, slug, display_name, status, created_at, pages_count }] }` via `LEFT JOIN pages` + `GROUP BY`, newest first. Houses 4.3–4.6 too.
+**Tests added:** 3 (`tests/integration/admin-sites.test.ts`) — 401 gate, lists seeded sites with numeric page counts, created_at-desc ordering.
+**Next:** 4.3 — site detail + pages list.
+**Notes:** Separate router from `admin-pages.ts` (page save/revisions/restore). `admin-sites.ts` owns site-level CRUD + child lists. Task 4.1's actual commit was **2965eb4** (log field said "pending" due to a non-landing Edit).
+
+### 2026-05-19 18:30 UTC — Task 4.1 (provision studio.anchorcorps.com + admin-host routing)
+**Commit:** 2965eb4
+**Done:** Cloud Run domain mapping `studio.anchorcorps.com` → `anchor-sites` + Kinsta CNAME → `ghs.googlehosted.com.` (DNS resolves; cert provisioning began). `src/config/admin-host.ts` (`isAdminHost` + `studioHost`, port-insensitive, `STUDIO_HOST` override, recognizes `studio.localhost`). `page.ts` short-circuits the admin host before `resolveSite` and passes through to the SPA. Appended **D-032** (cookie-boundary rationale + three-layer host model).
+**Tests added:** 7 admin-host unit + 1 integration (studio.localhost passthrough). Also fixed a latent Task-3.5 cross-file test-pollution bug (admin-pages persisted `brand_tokens_override` on muldoon home; now reset in beforeEach/afterAll). Full detail in commit 2965eb4's message.
