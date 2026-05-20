@@ -36,7 +36,6 @@ steps:
     args:
       - build
       - --tag=${_IMAGE}
-      - --cache-from=${_IMAGE%:*}:cache
       - --file=Dockerfile
       - .
 

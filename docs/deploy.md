@@ -125,13 +125,28 @@ gcloud run jobs create anchor-sites-migrate \
 
 ## 6 — Cloud Build trigger
 
+> **Do NOT use `gcloud builds triggers create github`** here. In this project
+> that command returns a bare `INVALID_ARGUMENT` for *every* repo (verified
+> 2026-05-20 — it fails even for the already-connected `ai-endpoint`), so it's a
+> useless diagnostic. Import the trigger proto instead (`cloudbuild-trigger.yaml`).
+
+**6a — Connect the repo (one-time, Console — interactive GitHub OAuth).** The
+Cloud Build GitHub App being installed on GitHub is *not* sufficient; this GCP
+project also needs a **repository mapping** for `joelhmartin/anchor-sites`. If
+step 6b returns `FAILED_PRECONDITION: Repository mapping does not exist`, open:
+
+```
+https://console.cloud.google.com/cloud-build/triggers;region=global/connect?project=333281424614
+```
+
+Choose **GitHub (Cloud Build GitHub App)** → authorize if prompted → select
+**joelhmartin/anchor-sites** → **Connect**. (The OAuth handshake can't be done
+from the CLI — this is the one manual step.)
+
+**6b — Import the trigger** (repeatable; safe to re-run):
+
 ```bash
-gcloud builds triggers create github \
-  --name=anchor-sites-main \
-  --repo-owner=joelhmartin \
-  --repo-name=anchor-sites \
-  --branch-pattern='^main$' \
-  --build-config=cloudbuild.yaml
+gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global
 ```
 
 Grant Cloud Build the roles it needs:

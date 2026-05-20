@@ -1,0 +1,25 @@
+# Cloud Build trigger definition for anchor-sites (1st-gen GitHub App).
+#
+# The convenience command `gcloud builds triggers create github ...` returns a
+# bare INVALID_ARGUMENT in this project (it fails even for already-connected
+# repos), so we import the trigger proto directly instead:
+#
+#   gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global
+#
+# PREREQUISITE: the joelhmartin/anchor-sites repo must have a Cloud Build
+# "repository mapping" in project 333281424614. If import returns
+# FAILED_PRECONDITION ("Repository mapping does not exist"), connect it once via
+# the Console (interactive GitHub OAuth — not doable from the CLI):
+#   https://console.cloud.google.com/cloud-build/triggers;region=global/connect?project=333281424614
+# Pick GitHub (Cloud Build GitHub App) → joelhmartin/anchor-sites → Connect.
+# Then re-run the import above.
+name: anchor-sites-main
+description: Build, migrate, and deploy anchor-sites to Cloud Run on push to ^main$
+github:
+  name: anchor-sites
+  owner: joelhmartin
+  push:
+    branch: ^main$
+filename: cloudbuild.yaml
+includeBuildLogs: INCLUDE_BUILD_LOGS_WITH_STATUS
+serviceAccount: projects/anchor-hub-480305/serviceAccounts/333281424614-compute@developer.gserviceaccount.com
