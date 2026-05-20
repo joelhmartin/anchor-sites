@@ -552,4 +552,16 @@ Three clean layers result:
 
 **Rationale:** Better-auth already chosen (D-020) + ships Google OAuth, so one library covers hub + per-site auth. Prebuilt over hand-rolled per operator instruction. App-level (not IAP) is forced by the shared public/admin service. Building it in Phase 8 (vs now) keeps the auth surface coherent rather than bolting on a throwaway mid-Phase-4.
 
+### D-035: Third production deploy — Phase 4 complete (4.11-4.16) shipped to prod (2026-05-20)
+
+**Context:** Phase 4 finished on `main` (HEAD `c0b0c83`) but prod was still serving `anchor-sites:24a2ed3` (Phases 2–4.10) — the same deploy gap D-033 described, because the CI trigger is still missing. Operator approved closing the gap in chat (2026-05-20): "keep moving … you should be able to do it all with your direct connection to gcloud." This records that approval per hard rule #9.
+
+**CI trigger — still blocked (GitHub-side):** re-confirmed today. `gcloud builds triggers list` shows only `ai-endpoint` + `Anchor-Client-Dashboard`; `gcloud builds connections list --region=us-central1` returns 0; and `gcloud builds triggers create github --repo-owner=joelhmartin --repo-name=anchor-sites …` still fails `INVALID_ARGUMENT`. Root cause is unchanged: the **Google Cloud Build GitHub App does not have access to the `joelhmartin/anchor-sites` repo**, which is a GitHub-side grant the CLI cannot perform. **Operator action to wire CI (one-time):** GitHub → Settings → Applications → "Google Cloud Build" → Configure → under *Repository access* add `anchor-sites` (or "All repositories") → Save. Then the assistant can run `gcloud builds triggers create github --repo-owner=joelhmartin --repo-name=anchor-sites --branch-pattern='^main$' --build-config=cloudbuild.yaml --name=anchor-sites-main --region=global`. Until then, deploys stay manual.
+
+**Decision / what was deployed:** built `anchor-sites:c0b0c83` via `gcloud builds submit --tag=…` (remote Cloud Build, no local Docker, and deliberately NOT the repo `cloudbuild.yaml` whose `--cache-from=${_IMAGE%:*}:cache` uses a bash-style expansion Cloud Build substitution doesn't support — a latent bug since that pipeline has never actually run end-to-end without a trigger). Then `gcloud run services update anchor-sites --image=…:c0b0c83 --region=us-central1`, which preserves env/secrets/Cloud SQL config (same approach as D-033).
+
+**No migrations:** `git diff 24a2ed3..HEAD -- db/` is empty — 4.11–4.16 were UI + docs only. The migrate job was NOT run (nothing pending); deploy was a pure application-image swap. Rollback path: redeploy `…:24a2ed3`.
+
+**Verification (2026-05-20, post-deploy):** service image now `…/anchor-sites:c0b0c83` (digest `sha256:a18c94c0…`), revision `anchor-sites-00007-7pm` serving 100%. `https://studio.anchorcorps.com/` → 200; `…/api/sites` → 401 (auth gate intact). Shipped JS bundle (`/assets/index-JH5o-DYO.js`) contains all five 4.11–4.16 strings — "Reset to defaults", "View live site", "Brand colors", "Upload image", "Save changes" — confirming the new wizard/tabs/settings code is live, not just a redeploy.
+
 <!-- Routine appends future decisions below this line -->

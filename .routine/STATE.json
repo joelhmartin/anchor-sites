@@ -30,7 +30,8 @@
     "phase4-prod-deploy-phases2-4-live",
     "phase4-new-site-wizard-creates-site",
     "phase4-media-upload-from-ui",
-    "phase4-complete"
+    "phase4-complete",
+    "phase4-complete-prod-live"
   ],
   "blockers_open": 0,
   "tests": {
@@ -44,13 +45,12 @@
     "notes": "Phase 4 through 4.15. Root 238 + package 59 = 297 across 45 files. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
-    "CI trigger: joelhmartin/anchor-sites NOT connected to Cloud Build GitHub App — operator must Connect Repository in console, then create ^main trigger on cloudbuild.yaml. Until then deploys are MANUAL (see D-033 for the exact manual steps).",
+    "CI trigger: STILL NOT WIRED (re-confirmed 2026-05-20). Blocker is GitHub-side: the Google Cloud Build GitHub App lacks access to joelhmartin/anchor-sites. OPERATOR ACTION: GitHub → Settings → Applications → Google Cloud Build → Configure → add the anchor-sites repo (or 'All repositories') → Save. THEN assistant runs: gcloud builds triggers create github --repo-owner=joelhmartin --repo-name=anchor-sites --branch-pattern='^main$' --build-config=cloudbuild.yaml --name=anchor-sites-main --region=global. See D-035. NOTE: cloudbuild.yaml has a latent bug — --cache-from=${_IMAGE%:*}:cache uses a bash expansion Cloud Build doesn't support; fix before relying on trigger builds (manual `gcloud builds submit --tag` sidesteps it).",
     "Tenant certs: muldoon-dental + demo-site mappings recreated 2026-05-20, were CertificatePending — verify they reached Ready=True and the sites serve HTTPS.",
-    "PHASE 4 COMPLETE (4.1-4.16 all done, 2026-05-20). current_task=null. Do NOT start Phase 5 (Puck visual editor) without .routine/NEXT-PHASE-APPROVED. When approved: expand PHASE-05 task file, confirm task list with operator, then begin. Phase 5 wires Puck at /sites/:slug/pages/:pageId (replaces EditorPlaceholder, D-017).",
-    "DEPLOY GAP: prod runs commit 24a2ed3's image (Phases 2-4.10). Tasks 4.11-4.16 (new-site wizard, detail tabs, pages/media/settings, docs) are on main but NOT in prod. Needs a MANUAL deploy (D-033 steps) until the CI trigger is wired — and operator approval per hard rule #9.",
+    "PHASE 4 COMPLETE (4.1-4.16 all done, 2026-05-20) AND DEPLOYED TO PROD (image c0b0c83, revision anchor-sites-00007-7pm, D-035). current_task=null. Do NOT start Phase 5 (Puck visual editor) without .routine/NEXT-PHASE-APPROVED. When approved: expand PHASE-05 task file, confirm task list with operator, then begin. Phase 5 wires Puck at /sites/:slug/pages/:pageId (replaces EditorPlaceholder, D-017).",
     "Auth (D-034): control-hub Google OAuth via Better-auth is Phase 8 work, NOT now. X-Admin-Token is interim. Operator dislikes the token but accepted it as interim.",
     "/healthz returns GFE 404 externally (cosmetic; Cloud Run uses TCP startup probe). Revisit Phase 12.",
-    "Prod runs commit 24a2ed3's image (Phases 2-4). Any new commits need a MANUAL deploy until the CI trigger is wired (D-033 steps)."
+    "Prod now runs c0b0c83 (Phases 2-4 incl. 4.11-4.16, deployed 2026-05-20 via manual gcloud builds submit + run services update — D-035). Future main commits STILL need a manual deploy until the CI trigger is wired (see the CI-trigger follow-up above). Rollback = redeploy …:24a2ed3."
   ],
   "phase_2_approved": true,
   "phase_3_approved": true,
