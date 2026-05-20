@@ -535,4 +535,21 @@ Three clean layers result:
 - **Pre-existing tenant-cert failure (NOT this deploy), RESOLVED 2026-05-20:** `muldoon-dental.sites.anchorcorps.com` + `demo-site.sites.anchorcorps.com` mappings were `PermissionDenied` (`2026-05-19T14:47:20Z`, ~14h pre-deploy): "Caller is not authorized to administer the domain … verify ownership." Root cause: the mappings were created before `anchorcorps.com` domain ownership got verified. With operator approval, deleted + recreated both mappings against `anchor-sites`; they accepted cleanly (no PermissionDenied) and moved to `CertificatePending` — confirming verification is now valid. DNS CNAMEs were untouched (already → `ghs.googlehosted.com.`). Managed certs issue async (minutes–~1h), after which the tenant sites serve over HTTPS again.
 - **`/healthz` returns a GFE 404** externally while `/` + `/api/*` work. Cosmetic — Cloud Run uses a TCP startup probe, not `/healthz`. Pre-existing; revisit Phase 12.
 
+### D-034: Control-hub auth = Google OAuth via Better-auth in Phase 8; X-Admin-Token is interim
+
+**Context:** Phase 4 shipped the studio control hub with a single shared `X-Admin-Token` (pasted at `/login`) as interim auth, with the plan to "replace with Better-auth in Phase 8." The operator pushed back on the token UX ("don't like this token thing one bit") and specified the target model: **Google OAuth, gated to the internal team, no per-person password setup. Locally, no auth.** Confirmed: this is the *control-hub* (studio) auth — separate from each provisioned site's own admin login, which remains the Phase 8 per-site copy-in (D-008/D-020).
+
+**Decision:** The studio control hub authenticates via **Google OAuth, implemented with Better-auth's Google provider** (D-020's chosen library — prebuilt OAuth + sessions + hashing, no hand-rolled crypto), built as part of **Phase 8** (not pulled forward / not hand-built now). Specifics for Phase 8:
+- **App-level OAuth, scoped to the studio host only** — NOT Google IAP, because the `anchor-sites` service also serves public tenant sites and IAP would gate the whole service. The studio host (`isAdminHost`) gets the auth gate; tenant hosts stay public.
+- **Team-gated**: restrict to the team. Operator deferred the exact mechanism to "your normal Phase 8 plan" — default to Workspace-domain (`hd` == `anchorcorps.com`) gating with an optional `ADMIN_ALLOWED_EMAILS` allowlist for non-Workspace teammates. Finalize in the Phase 8 expansion.
+- **Local = no auth**: on `studio.localhost` / non-prod, the guard auto-grants a dev session (no Google round-trip).
+- **Session cookie** is httpOnly + host-only on `studio.anchorcorps.com` (the D-032 boundary already keeps it off tenant hosts).
+- **`requireAdmin` flips** from token-check to session-check; all `/api` admin endpoints inherit it. The `X-Admin-Token` is retired once OAuth lands (or kept only as a documented CI/service path if a concrete need appears).
+
+**Operator prerequisite for Phase 8:** create a Google OAuth Client ID (Console → APIs & Services → Credentials → Web application; redirect URI `https://studio.anchorcorps.com/auth/google/callback`; consent screen Internal). Client ID + secret go into Secret Manager. Cannot be created via CLI.
+
+**Interim (now, until Phase 8):** the `X-Admin-Token` stays. Operator logs into prod studio by pasting the value of the `ANCHOR_SITES_ADMIN_API_TOKEN` secret; local uses whatever `ADMIN_API_TOKEN` is set when running `npm run dev`.
+
+**Rationale:** Better-auth already chosen (D-020) + ships Google OAuth, so one library covers hub + per-site auth. Prebuilt over hand-rolled per operator instruction. App-level (not IAP) is forced by the shared public/admin service. Building it in Phase 8 (vs now) keeps the auth surface coherent rather than bolting on a throwaway mid-Phase-4.
+
 <!-- Routine appends future decisions below this line -->

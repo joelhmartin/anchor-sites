@@ -37,7 +37,7 @@ The existing template's auth, blog, and events flows must **keep working at ever
 - [ ] Phase 6 — AI editing layer (Claude API, schema-validated edits)
 - [ ] Phase 7 — Template system (save-as-template, new-from-template)
 - [ ] Phase 7.5 — Plugin / integration framework *(see D-016: manifest contract, `site_plugins` table, plugin loader, admin enable/disable. Concrete plugins like Stripe / PayPal / booking are post-7.5 packages, not master-plan phases.)*
-- [ ] Phase 8 — Auth/blog/events copy-in pattern for provisioned sites *(see D-020: Better-auth as the auth library inside the per-site copy template)*
+- [ ] Phase 8 — Auth/blog/events copy-in pattern for provisioned sites *(see D-020: Better-auth as the auth library inside the per-site copy template; **also D-034**: studio control-hub login is built here too — Google OAuth via Better-auth, team-gated, no local auth — replacing Phase 4's interim X-Admin-Token)*
 - [ ] Phase 9 — SEO layer (meta, sitemap, JSON-LD, editor SEO panel)
 - [ ] Phase 10 — Domain provisioning (Cloud Run mapping, DNS, SSL)
 - [ ] Phase 11 — CRM integration + CTM install

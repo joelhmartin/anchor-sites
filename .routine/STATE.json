@@ -5,7 +5,7 @@
   "current_phase_file": "PHASE-04-admin-ui-shell.md",
   "current_task": "4.11",
   "phase_started_at": "2026-05-19T18:00:00Z",
-  "last_commit_sha": "2f62307",
+  "last_commit_sha": "1ed0e2e",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
@@ -26,7 +26,8 @@
     "phase3-media-pipeline-end-to-end",
     "phase3-complete",
     "phase4-started",
-    "phase4-admin-shell-demoable"
+    "phase4-admin-shell-demoable",
+    "phase4-prod-deploy-phases2-4-live"
   ],
   "blockers_open": 0,
   "tests": {
@@ -37,8 +38,16 @@
     "current_pass_root": 219,
     "current_pass_package_components": 59,
     "last_run_at": "2026-05-19T20:30:00Z",
-    "notes": "Phase 4 through 4.10: admin API + UI primitives + auth + app shell/routing + sites list. Root 219, package 59, total 278 across 40 files."
+    "notes": "Phase 4 through 4.10. Root 219 + package 59 = 278 across 40 files. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
+  "open_followups": [
+    "CI trigger: joelhmartin/anchor-sites NOT connected to Cloud Build GitHub App — operator must Connect Repository in console, then create ^main trigger on cloudbuild.yaml. Until then deploys are MANUAL (see D-033 for the exact manual steps).",
+    "Tenant certs: muldoon-dental + demo-site mappings recreated 2026-05-20, were CertificatePending — verify they reached Ready=True and the sites serve HTTPS.",
+    "Phase 4 remaining: tasks 4.11-4.16 (new-site wizard, site-detail tabs, pages tab, media upload UI, settings tab, docs). Stubs exist for SitesListPage(real)/NewSiteWizard/SiteDetailPage; the latter two are placeholders.",
+    "Auth (D-034): control-hub Google OAuth via Better-auth is Phase 8 work, NOT now. X-Admin-Token is interim. Operator dislikes the token but accepted it as interim.",
+    "/healthz returns GFE 404 externally (cosmetic; Cloud Run uses TCP startup probe). Revisit Phase 12.",
+    "Prod runs commit 24a2ed3's image (Phases 2-4). Any new commits need a MANUAL deploy until the CI trigger is wired (D-033 steps)."
+  ],
   "phase_2_approved": true,
   "phase_3_approved": true,
   "phase_4_approved": true
