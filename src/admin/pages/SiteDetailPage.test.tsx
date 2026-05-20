@@ -26,6 +26,7 @@ function mockApi(list: unknown[], detail: typeof SITE | null) {
     const url = String(input);
     if (url === "/api/sites") return json({ sites: list });
     if (detail && url === `/api/sites/${detail.id}/pages`) return json({ pages: [] });
+    if (detail && url === `/api/sites/${detail.id}/media`) return json({ media: [] });
     if (detail && url === `/api/sites/${detail.id}`) return json({ site: detail });
     return json({ error: "not found" }, 404);
   }) as unknown as typeof fetch;
@@ -69,7 +70,7 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     expect(screen.queryByText(/arrive in Task 4.14/)).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "Media" }));
-    expect(screen.getByText(/arrive in Task 4.14/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Upload image" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "+ New page" })).toBeNull();
 
     fireEvent.click(screen.getByRole("tab", { name: "Settings" }));

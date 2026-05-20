@@ -81,7 +81,7 @@
   - List pages (4.3) with status badges + updated time. Each row has an "Edit" button → `/sites/:slug/pages/:pageId` (a Phase 5 placeholder screen: "Visual editor lands in Phase 5"). "+ New page" mini-form (slug + title) → `POST /api/sites/:siteId/pages` → refresh list.
   - **Tests:** renders pages; new-page submit; placeholder editor route renders.
 
-- [ ] **4.14 — Media tab + upload flow**
+- [x] **4.14 — Media tab + upload flow**
   - Grid of media_assets (4.4) with thumbnail (smallest ready variant) + status. Upload widget: pick file → `POST /media/upload-url` → browser `PUT` to GCS → `POST /media/:id/complete` → optimistic "processing" card that flips to ready on refresh/poll. Shows alt + dimensions on hover.
   - **Tests:** renders grid; upload orchestration calls the three endpoints in order (mocked fetch + a stub PUT).
 
@@ -118,6 +118,16 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 10:55 UTC — Task 4.14 (Media tab + upload flow) — media upload works from the UI
+**Commit:** (pending)
+**Done:** `src/admin/pages/site-tabs/MediaTab.tsx` is now real. Loads `GET /api/sites/:siteId/media` and renders a responsive grid: ready assets show the **smallest ready variant** as a thumbnail (`pickThumb` sorts by width, webp on ties), pending/processing/failed assets show a status badge; alt + dimensions reveal on hover. The "Upload image" button drives a hidden `<input type=file>` through the **Phase-3 three-step flow**: `POST .../media/upload-url` (body `{content_type, alt:filename}`) → raw `fetch` `PUT` to the returned signed GCS `upload_url` with its `headers` (no admin token sent to GCS) → `POST .../media/:assetId/complete` → `reload()`. An optimistic "Uploading…" tile shows during the flow; a "Refresh" button re-pulls the grid so async variant processing flips tiles to ready. Upload errors surface inline. **Media upload now works end-to-end from the control hub.**
+**Tests added:** 3 (`MediaTab.test.tsx`, jsdom) — grid renders ready thumbnail (asserts the *smallest* variant URL) + pending status badge; the upload flow calls upload-url → PUT → complete **in that order** (asserts the POST body + that the raw `File` is the PUT body); a failed storage PUT surfaces an inline error. Updated `SiteDetailPage.test.tsx` (4.12) again — Media tab is now real, so it mocks `/media` and asserts the "Upload image" affordance instead of the old stub text. Full suite **293/293 across 44 files**; typecheck clean.
+**Next:** 4.15 — Settings tab (display_name + brand tokens via PATCH).
+**Notes:**
+- **Two fetch layers on purpose:** `apiFetch` for the two API hops (attaches `X-Admin-Token`), but a **raw `fetch`** for the PUT — sending the admin token to `storage.googleapis.com` would leak it. Called this out in a code comment.
+- No polling timer (keeps jsdom tests deterministic) — the "Refresh" button + post-upload `reload()` cover "flips to ready on refresh." A poll can be added later behind the same `reload()`.
+- **Can't browser-verify** (operator hard rule) — and the real GCS PUT especially can't be exercised here; it's mocked. jsdom + typecheck only; eyeball at `studio.localhost:3000/sites/<slug>` → Media.
 
 ### 2026-05-20 10:50 UTC — Task 4.13 (Pages tab + new-page form)
 **Commit:** 7fe3e68
