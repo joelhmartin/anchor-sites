@@ -181,6 +181,35 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // GET /api/sites/:siteId/pages/:pageId — single page with blocks + seo.
+  // The visual editor (P5-T5.5) loads a page's current blocks from here; the
+  // pages-list endpoint (admin-sites) deliberately omits blocks for size.
+  // -------------------------------------------------------------------------
+  router.get(
+    "/sites/:siteId/pages/:pageId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId, pageId } = req.params;
+        const result = await pool.query(
+          `SELECT id, site_id, slug, title, status, blocks, seo,
+                  brand_tokens_override, updated_at
+             FROM pages
+            WHERE id = $1 AND site_id = $2`,
+          [pageId, siteId],
+        );
+        if (result.rowCount === 0) {
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+        res.json({ page: result.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // GET /api/sites/:siteId/pages/:pageId/revisions — reverse-chrono list
   // -------------------------------------------------------------------------
   router.get(

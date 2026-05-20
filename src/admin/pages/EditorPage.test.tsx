@@ -1,0 +1,134 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
+// Stub Puck: surfaces the converted `data` and fires onPublish with it.
+// Rendering Puck's real drag-and-drop editor in jsdom is fragile and brittle;
+// visual QA is operator-run at studio.localhost:3000 (D-017 hard constraint).
+vi.mock("../../editor/index.js", () => ({
+  Puck: ({ data, onPublish }: { data: unknown; onPublish: (d: unknown) => void }) => (
+    <div>
+      <pre data-testid="puck-data">{JSON.stringify(data)}</pre>
+      <button type="button" onClick={() => onPublish(data)}>
+        Stub publish
+      </button>
+    </div>
+  ),
+}));
+
+import { EditorPage } from "./EditorPage.js";
+import { toPuckData } from "../../editor/puck-adapter.js";
+import { clearAdminToken, setAdminToken } from "../lib/adminToken.js";
+
+const SITE = {
+  id: "s1",
+  slug: "acme",
+  display_name: "Acme",
+  status: "active",
+  created_at: "2026-05-18T00:00:00Z",
+  pages_count: 1,
+};
+const BLOCKS = [
+  { id: "b1", type: "hero", props: { title: "Hi" } },
+  { id: "b2", type: "rich-text", props: { html: "<p>x</p>", max_width: "medium" } },
+];
+const PAGE = {
+  id: "p1",
+  site_id: "s1",
+  slug: "home",
+  title: "Home",
+  status: "draft",
+  blocks: BLOCKS,
+  seo: { title: "SEO" },
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+let lastPost: { url: string; body: Record<string, unknown> } | null = null;
+
+function mockApi(opts: { savePost?: () => Response } = {}) {
+  lastPost = null;
+  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/sites") return json({ sites: [SITE] });
+    if (url === "/api/sites/s1/pages/p1") {
+      if (init?.method === "POST") {
+        lastPost = { url, body: JSON.parse(String(init.body)) };
+        return opts.savePost
+          ? opts.savePost()
+          : json({ page: PAGE, revision: { id: "r1", created_at: "2026-05-20T00:00:00Z" } });
+      }
+      return json({ page: PAGE });
+    }
+    return json({ error: "not found" }, 404);
+  }) as unknown as typeof fetch;
+}
+
+function renderAt(path = "/sites/acme/pages/p1") {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/sites/:slug" element={<div>site detail</div>} />
+        <Route path="/sites/:slug/pages/:pageId" element={<EditorPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe("EditorPage (P5-T5.5)", () => {
+  const realFetch = global.fetch;
+  beforeEach(() => setAdminToken("tok"));
+  afterEach(() => {
+    cleanup();
+    clearAdminToken();
+    global.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("loads the page and renders Puck with toPuckData(blocks)", async () => {
+    mockApi();
+    renderAt();
+    const pre = await screen.findByTestId("puck-data");
+    expect(JSON.parse(pre.textContent ?? "null")).toEqual(toPuckData(BLOCKS));
+  });
+
+  it("publishing converts back via fromPuckData and POSTs to the save endpoint", async () => {
+    mockApi();
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "Stub publish" }));
+    await waitFor(() => expect(lastPost).toBeTruthy());
+    expect(lastPost?.url).toBe("/api/sites/s1/pages/p1");
+    expect(lastPost?.body.blocks).toEqual(BLOCKS); // round-trip preserved
+    expect(lastPost?.body.seo).toEqual({ title: "SEO" });
+    expect(lastPost?.body.source).toBe("editor");
+    await screen.findByText("Saved ✓");
+  });
+
+  it("surfaces a save error", async () => {
+    mockApi({ savePost: () => json({ error: "boom" }, 500) });
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "Stub publish" }));
+    await screen.findByText("boom");
+  });
+
+  it("shows a not-found card when the slug has no matching site", async () => {
+    mockApi();
+    renderAt("/sites/ghost/pages/p1");
+    await screen.findByText(/No site found for/);
+  });
+
+  it("renders a Back-to-site breadcrumb pointing at the site detail", async () => {
+    mockApi();
+    renderAt();
+    const link = await screen.findByRole("link", { name: /Back to acme/ });
+    expect(link.getAttribute("href")).toBe("/sites/acme");
+  });
+});

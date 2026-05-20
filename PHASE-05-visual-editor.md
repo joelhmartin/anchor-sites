@@ -48,7 +48,7 @@
 
 ### Editor route
 
-- [ ] **5.5 — Editor route replaces `EditorPlaceholder`**
+- [x] **5.5 — Editor route replaces `EditorPlaceholder`**
   - At `/sites/:slug/pages/:pageId`: resolve slug→site (the Phase-4 client-side pattern), load the page's current blocks, `toPuckData`, render `<Puck config … data … onPublish>`. On publish: `fromPuckData` → `POST /api/sites/:siteId/pages/:pageId` (blocks + seo) → toast + revision written. Loading/error/dirty-state handling; a "Back to site" breadcrumb + "View live" link.
   - **Tests:** loads + renders Puck with converted data (jsdom); publish calls the save endpoint with the `fromPuckData` payload; save error surfaced.
 
@@ -101,6 +101,13 @@
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 18:05 UTC — Task 5.5 (Editor route replaces `EditorPlaceholder`)
+**Commit:** (this commit)
+**Done:** Real Puck editor at `/sites/:slug/pages/:pageId`. **Backend:** new `GET /api/sites/:siteId/pages/:pageId` (admin-pages.ts) returns a page's blocks+seo+meta (the pages-list omits blocks). **Frontend:** `src/admin/pages/EditorPage.tsx` resolves slug→site (Phase-4 `/api/sites` pattern), loads the page, `toPuckData`, renders `<Puck config data onPublish>`; publish → `fromPuckData` → `POST …/pages/:pageId` ({blocks, seo, source:"editor"}) with saving/saved/error status; "Back to site" breadcrumb + "View live". Wired in `AdminApp`; deleted `EditorPlaceholder.tsx`; imports Puck CSS. Recorded the Puck-in-jsdom mock-vs-shim gotcha in D-036.
+**Tests added:** 8 (3 backend GET in admin-pages.test.ts: returns page/404/401; 5 EditorPage.test.tsx: load→Puck gets toPuckData, publish→fromPuckData POST, save error surfaced, site-not-found, breadcrumb). Updated PagesTab + AdminApp tests off the deleted placeholder (Puck mocked there). Suite 319→327, **3 cold-cache full runs all 327/0** + typecheck + build green.
+**Next:** 5.6 — Tiptap as a Puck custom field (rich text).
+**Notes:** Hit a real CI-blocker: `AdminApp.test` loaded real Puck without the ResizeObserver shim → `ResizeObserver is not defined`, and that crash cascaded into a Vite esbuild dep-scan abort ("server is being restarted") that failed `editor-smoke` collection on cold runs. Fixed by mocking Puck in `AdminApp.test` (routing test doesn't need real Puck) — NOT a vitest.config change (all optimizer experiments reverted; config is pristine). Build now bundles Puck (admin JS 1.64MB→2.03MB) — fine for the admin-only SPA. Puck's full editor is NOT browser-verified here (tests stub it) — operator visual QA at studio.localhost:3000.
 
 ### 2026-05-20 17:47 UTC — Task 5.4 (Assemble Puck `Config` from the block registry)
 **Commit:** 79ed703

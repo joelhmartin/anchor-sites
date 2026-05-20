@@ -5,7 +5,7 @@ import { AdminLayout } from "./AdminLayout.js";
 import { SitesListPage } from "./pages/SitesListPage.js";
 import { NewSiteWizard } from "./pages/NewSiteWizard.js";
 import { SiteDetailPage } from "./pages/SiteDetailPage.js";
-import { EditorPlaceholder } from "./pages/EditorPlaceholder.js";
+import { EditorPage } from "./pages/EditorPage.js";
 import { NotFound } from "./pages/NotFound.js";
 
 /**
@@ -22,7 +22,7 @@ export function AdminApp() {
           <Route path="/" element={<SitesListPage />} />
           <Route path="/sites/new" element={<NewSiteWizard />} />
           <Route path="/sites/:slug" element={<SiteDetailPage />} />
-          <Route path="/sites/:slug/pages/:pageId" element={<EditorPlaceholder />} />
+          <Route path="/sites/:slug/pages/:pageId" element={<EditorPage />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Route>

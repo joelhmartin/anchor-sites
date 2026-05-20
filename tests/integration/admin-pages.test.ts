@@ -112,6 +112,36 @@ d("admin pages API (integration)", () => {
     expect(res.status).toBe(401);
   });
 
+  // ---------- LOAD (single page with blocks) ----------
+
+  it("GET returns the page with its blocks, seo, slug, title, status (P5-T5.5)", async () => {
+    const res = await request(app)
+      .get(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body.page).toMatchObject({
+      id: muldoonPageId,
+      site_id: muldoonSiteId,
+      slug: "home",
+    });
+    expect(Array.isArray(res.body.page.blocks)).toBe(true);
+    expect(res.body.page).toHaveProperty("seo");
+    expect(res.body.page).toHaveProperty("status");
+    expect(res.body.page).toHaveProperty("title");
+  });
+
+  it("GET 404s for a page id that doesn't belong to the site (P5-T5.5)", async () => {
+    const res = await request(app)
+      .get(`/api/sites/${muldoonSiteId}/pages/00000000-0000-0000-0000-000000000000`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(res.status).toBe(404);
+  });
+
+  it("GET rejects 401 without a token (P5-T5.5)", async () => {
+    const res = await request(app).get(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`);
+    expect(res.status).toBe(401);
+  });
+
   // ---------- SAVE ----------
 
   it("saving valid blocks creates a revision and returns it", async () => {

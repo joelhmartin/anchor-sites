@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { PagesTab } from "./PagesTab.js";
-import { EditorPlaceholder } from "../EditorPlaceholder.js";
 import { setAdminToken, clearAdminToken } from "../../lib/adminToken.js";
 
 const PAGE_A = { id: "p1", slug: "home", title: "Home", status: "published", updated_at: "2026-05-18T00:00:00Z" };
@@ -18,7 +17,8 @@ function renderTab() {
     <MemoryRouter initialEntries={["/sites/acme"]}>
       <Routes>
         <Route path="/sites/:slug" element={<PagesTab siteId="s1" slug="acme" />} />
-        <Route path="/sites/:slug/pages/:pageId" element={<EditorPlaceholder />} />
+        {/* Stub destination — PagesTab only owns the navigation, not the editor. */}
+        <Route path="/sites/:slug/pages/:pageId" element={<div>editor route reached</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -72,12 +72,12 @@ describe("PagesTab (P4-T4.13)", () => {
     expect(body).toEqual({ slug: "about", title: "About us" });
   });
 
-  it("routes Edit to the Phase-5 editor placeholder", async () => {
+  it("routes Edit to the page editor route", async () => {
     global.fetch = vi.fn(async () => json({ pages: [PAGE_A] })) as unknown as typeof fetch;
     renderTab();
     await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.getByText(/Visual editor — coming in Phase 5/)).toBeTruthy();
+    expect(screen.getByText(/editor route reached/)).toBeTruthy();
   });
 
   it("surfaces a duplicate-slug 409 inline", async () => {
