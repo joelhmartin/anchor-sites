@@ -523,4 +523,16 @@ Three clean layers result:
 - Local dev: add `127.0.0.1 studio.localhost` to `/etc/hosts` (or rely on the OS resolving `*.localhost`), then visit `http://studio.localhost:3000`.
 - Phase 8 (Better-auth) sets host-only session cookies on this host. Phase 10/12 may add a managed cert / CDN refinement but the host name is stable.
 
+### D-033: Second production deploy — Phases 2-4 shipped together (2026-05-20)
+
+**Context:** Operator reported `studio.anchorcorps.com` serving the old marketing SPA instead of the admin hub. Investigation: the live `anchor-sites` Cloud Run service was running the **Phase 1 image** (`anchor-sites:7f34311`) — everything from Phase 2 onward existed in git but had never been deployed. Root cause: **no Cloud Build trigger exists for `joelhmartin/anchor-sites`** (only `ai-endpoint` + `Anchor-Client-Dashboard` are wired), so Phase 1's manual deploy never got a successor.
+
+**Decision:** With operator approval (chat, 2026-05-20), deployed current `main` (`24a2ed3`, Phases 2+3+4.1–4.10) to production. Steps: built + pushed `anchor-sites:24a2ed3`; updated the `anchor-sites-migrate` job to the new image and ran it (applied `pages.brand_tokens_override` + `media_assets` migrations to `anchor_sites_prod`); deployed via `gcloud run services update --image` (preserving env/secrets/Cloud SQL config). Verified `/` → 200 admin SPA bundle, `/api/sites` → 401 auth gate, admin strings in the shipped JS. Hard rule #9 satisfied — approval recorded here.
+
+**Findings for future deploys:**
+- **`cloudbuild.yaml` migrate bug fixed:** added a `migrate-image` step that points the `anchor-sites-migrate` job at `${_IMAGE}` before executing it. Without this, trigger-driven deploys ran stale migration files baked into the job's prior image.
+- **CI trigger still missing.** `gcloud builds triggers create github --repo-owner=joelhmartin --repo-name=anchor-sites …` fails `INVALID_ARGUMENT` — the repo isn't connected to the Cloud Build GitHub App. **Operator action:** Console → Cloud Build → Triggers → Connect Repository (`joelhmartin/anchor-sites`), then create a `^main$` trigger pointed at `cloudbuild.yaml`. Until then deploys stay manual.
+- **Pre-existing tenant-cert failure (NOT this deploy):** `muldoon-dental.sites.anchorcorps.com` + `demo-site.sites.anchorcorps.com` mappings are `PermissionDenied` (`2026-05-19T14:47:20Z`, ~14h pre-deploy): "Caller is not authorized to administer the domain … verify ownership." `anchorcorps.com` IS now user-verified and the new `studio` mapping is `Ready=True`, so the tenant mappings are stale from before verification completed. Fix: delete + recreate them. Follow-up.
+- **`/healthz` returns a GFE 404** externally while `/` + `/api/*` work. Cosmetic — Cloud Run uses a TCP startup probe, not `/healthz`. Pre-existing; revisit Phase 12.
+
 <!-- Routine appends future decisions below this line -->
