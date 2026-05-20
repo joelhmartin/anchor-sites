@@ -103,7 +103,7 @@
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 18:23 UTC — Task 5.7 (Image-picker custom field — media library)
-**Commit:** (this commit)
+**Commit:** 7a1c1d2
 **Done:** `src/editor/custom-fields/image-field.tsx` — `imageField(label, siteId)` Puck custom field: "Choose image" opens a thumbnail grid from `GET /api/sites/:siteId/media` (ready-variant thumbs via the MediaTab `pickThumb` logic), select → sets the asset-id string, Clear → "". Evolved the override registry to `applyFieldOverrides(type, fields, opts)` (a transform, so it reaches NESTED array sub-fields); threaded `siteId` through `buildPuckConfig(opts)` → `EditorPage`. Overrides: `image.asset_id` + `hero-slider.slides[].image_asset_id` → media picker. **No storage change** — still the asset-id string the renderer hydrates via MediaContext. Updated D-037.
 **Tests added:** 4 (image-field.test.tsx, fetch mocked: is custom field; lists media on open + select sets id; clear; no-site error) + 3 puck-config (cta untouched=schema; image.asset_id custom; hero-slider nested custom). Suite 332→339; cold-cache full run + typecheck + build green.
 **Next:** 5.8 — color / brand-token custom field (if needed).
