@@ -27,6 +27,29 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-20 — Phase 4 admin control hub LIVE in prod + CI auto-deploy
+**Milestone ID:** phase4-complete-prod-live
+**Phase/Task:** Phase 4 complete (4.1–4.16) + D-035
+**Commit:** prod runs image `2b81ded` (revision `anchor-sites-00008-wj2`)
+
+**What to look at:**
+- **https://studio.anchorcorps.com** — log in at `/login` with the value of the `ANCHOR_SITES_ADMIN_API_TOKEN` secret (`gcloud secrets versions access latest --secret=ANCHOR_SITES_ADMIN_API_TOKEN`).
+- Flow: Sites list → **+ New site** wizard (name+slug, brand colors w/ live preview) → open a site → **Pages** (create a page; Edit routes to the Phase-5 placeholder) · **Media** (upload an image — real signed-URL PUT to GCS, variant job processes async, hit Refresh) · **Settings** (edit display_name + brand tokens, Save).
+
+**What's new since last demo:**
+- The whole admin SPA went from "shell" to fully usable: new-site wizard, site detail with Pages/Media/Settings tabs, media upload, brand-token editing.
+- Deployed to prod (D-035) and **CI is now wired + validated** — pushes to `main` auto build→migrate→deploy (trigger `anchor-sites-main`).
+
+**Known limitations:**
+- The page **editor** is still a Phase-5 placeholder ("Visual editor — coming in Phase 5").
+- Auth is the interim shared `X-Admin-Token` (Google OAuth via Better-auth is Phase 8, D-034).
+- Not browser-verified by the assistant (operator hard rule) — typecheck + jsdom-tested; this is the operator's eyeball pass.
+
+**Next visible thing coming:**
+Phase 5 — a real drag-and-drop Puck editor replacing the placeholder.
+
+---
+
 ### 2026-05-19 — Tenant provisioning automated end-to-end (one API call)
 **Milestone ID:** phase1-provisioning-automated
 **Phase/Task:** Phase 1, Task 1.11

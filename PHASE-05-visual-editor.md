@@ -1,0 +1,103 @@
+# Phase 5 — Visual editor on Puck
+
+> **Goal:** Replace the Phase-4 `EditorPlaceholder` at `/sites/:slug/pages/:pageId`
+> with a real drag-and-drop page editor built on **Puck** (D-017). An operator
+> opens a page, edits its blocks visually (drag, reorder, side-panel forms,
+> undo/redo, viewport preview), and publishes — saving back through the existing
+> `pages.blocks` JSONB + revision API. Our `Block[]` shape stays the source of
+> truth; Puck is only a *view* of it and lives entirely behind `src/editor/`.
+
+> **This file is pre-drafted (2026-05-20) so the routine can start without an
+> expansion/confirmation round-trip.** Operator: review/adjust before approving;
+> the task list is a proposal grounded in D-017, not a contract. Reorder or split
+> tasks freely. Each checkbox is its own commit (per the per-subitem cadence).
+
+## Anchors that govern this phase
+
+- **D-001** — `Block[]` (`{ id, type, props, children }`) in `pages.blocks` JSONB is the canonical shape. Puck's `{ content, root, zones }` is a view, never the source of truth.
+- **D-002 / Zod-first** — every block's Zod schema generates the editor fields. We do NOT define fields twice.
+- **D-017** — Puck is the editor. Block schemas, the registry (`src/blocks/registry.ts`), block components, and the prod renderer are unchanged — Puck *calls* our components and *emits* JSON we round-trip through `Block[]`. Nothing outside `src/editor/` imports Puck.
+- **D-018** — block components come from `@anchorcorps/components` (the `ac-` prefixed public blocks) + the inline `rich-text` block. The editor renders the *same* components the prod renderer uses — no editor-only forks.
+- **Existing API (Phase 4)** — save is `POST /api/sites/:siteId/pages/:pageId` (writes blocks+seo + a `page_revisions` row); revisions list `GET …/revisions`; restore `POST …/revisions/:revisionId/restore`. The editor builds on these; add a page-blocks GET only if one doesn't already exist.
+- **Hard constraints** — UI can't be browser-verified on the operator's machine (no Chrome automation); verify with typecheck + jsdom @testing-library + adapter round-trip unit tests, and flag that visual QA needs the operator at `studio.localhost:3000`. Every push to `main` now auto-deploys prod (CI live, D-035) — keep `main` green; never push red tests. No `<form>` inside block/editor *previews* (admin chrome forms are fine, per the Phase 4 precedent).
+
+## Decisions to record during execution
+
+- **D-0xx — Puck version pin + data-shape conversion contract.** Pin a specific `@measured/puck` version; freeze the `toPuckData`/`fromPuckData` mapping (esp. how `children`/zones and block `id`s round-trip). Record once 5.1–5.2 land.
+- Append any field-DSL gaps (Zod shapes Puck can't model) as they surface, with the custom-field workaround chosen.
+
+## Tasks
+
+### Foundation
+
+- [ ] **5.1 — Add & pin Puck; `src/editor/` scaffolding**
+  - Add `@measured/puck` (pin the current stable version; record it). Ensure the admin Vite build + Tailwind content glob cover `src/editor/**`. Create `src/editor/` with a barrel. No editor route wired yet.
+  - **Tests:** an import/smoke test that Puck loads in jsdom; build/typecheck clean.
+
+- [ ] **5.2 — `puck-adapter.ts`: `Block[]` ↔ Puck `Data` (lossless)**
+  - `toPuckData(blocks: Block[]): Data` and `fromPuckData(data: Data): Block[]` in `src/editor/puck-adapter.ts`. Preserve block `id`, `type`, `props`, and nested `children`. Round-trip is a **tested invariant** (`fromPuckData(toPuckData(x))` deep-equals `x`).
+  - **Tests:** round-trip for flat blocks, nested children, empty page; unknown-type passthrough behavior decided + tested.
+
+- [ ] **5.3 — `zodToPuckFields(schema)`**
+  - Generate Puck field config from a block's Zod schema: string→text, number→number, boolean→radio/switch, enum→select, nested object→object fields, array→array fields, with labels/defaults. Document which Zod constructs are supported; unsupported ones fall back to a JSON/textarea field (and are candidates for custom fields in 5.6–5.8).
+  - **Tests:** field generation per Zod type; unsupported-type fallback.
+
+- [ ] **5.4 — Assemble Puck `Config` from the block registry**
+  - Build `Config.components` from `listBlocks()`: each registered type → `{ fields: zodToPuckFields(schema), render: component, defaultProps }`. Covers the inline `rich-text` block + the `@anchorcorps/components` blocks (hero, hero-slider, cta, testimonial-carousel, logo-reel, faq-accordion, image). Plugin-registered blocks (D-016) ride the same registry, so they appear automatically.
+  - **Tests:** config includes every registered block; a block's fields match its schema; render maps to the shared component.
+
+### Editor route
+
+- [ ] **5.5 — Editor route replaces `EditorPlaceholder`**
+  - At `/sites/:slug/pages/:pageId`: resolve slug→site (the Phase-4 client-side pattern), load the page's current blocks, `toPuckData`, render `<Puck config … data … onPublish>`. On publish: `fromPuckData` → `POST /api/sites/:siteId/pages/:pageId` (blocks + seo) → toast + revision written. Loading/error/dirty-state handling; a "Back to site" breadcrumb + "View live" link.
+  - **Tests:** loads + renders Puck with converted data (jsdom); publish calls the save endpoint with the `fromPuckData` payload; save error surfaced.
+
+### Custom fields
+
+- [ ] **5.6 — Tiptap as a Puck custom field (rich text)**
+  - Wrap Tiptap as a Puck custom field so the `rich-text` block edits inline-ish in the side panel (D-017). Reuse the existing `src/blocks/rich-text` rendering contract; store the same serialized shape the renderer expects.
+  - **Tests:** field renders; edits flow into the block props; serialized output matches the renderer's expected shape.
+
+- [ ] **5.7 — Image-picker custom field (media library)**
+  - A Puck custom field that opens the Phase-3/4 media library (`GET …/media`) to pick an `image_asset_id` (used by hero-slider + the Image block). Shows ready-variant thumbnails; supports the upload flow or links to the Media tab.
+  - **Tests:** field lists media; selecting sets the asset id on the block props.
+
+- [ ] **5.8 — Color / brand-token custom field (if needed)**
+  - For any block color props, a color field (reuse the Phase-4 `<input type=color>` + preview pattern from `BrandTokenFields`). Only build if a block actually needs per-block color props beyond site/page brand tokens; otherwise skip + note why.
+  - **Tests:** field sets a valid color value on props.
+
+### Revisions & polish
+
+- [ ] **5.9 — Revisions panel in the editor**
+  - List revisions (`GET …/revisions`) with timestamps/source; "Restore" (`POST …/revisions/:id/restore`) reloads Puck with the restored data. Puck supplies in-session undo/redo natively; this is cross-session history.
+  - **Tests:** revisions render; restore reloads converted data.
+
+- [ ] **5.10 — Publish/draft status + viewport preview**
+  - Surface page `status` (draft/published) with a publish toggle (reuses the save endpoint's status handling). Puck's native viewport switcher for responsive preview. Confirm the preview renders blocks identically to prod (same components, brand-token `:root` vars applied in the preview frame).
+  - **Tests:** status toggle persists; preview renders the shared components.
+
+### Wrap
+
+- [ ] **5.11 — Phase 5 docs + plan tick**
+  - `docs/visual-editor.md`: the `Block[]`↔Puck boundary, `zodToPuckFields` coverage + custom fields, the editor route, how AI editing (Phase 6) stays decoupled. Record the Puck-version/contract decision in `DECISIONS.md`. Tick the `PLAN.md` Phase 5 row. Append `.routine/baseline-tests.log`.
+
+## Demo milestones (chat-only)
+
+- Puck loads in the editor route against a real page's blocks (after 5.5)
+- Rich-text editing works inline (after 5.6)
+- Image picker pulls from the media library (after 5.7)
+- A full page edited + published round-trips through `Block[]` and renders on the live tenant site (after 5.10)
+- Phase 5 complete (after 5.11)
+
+## Definition of done
+
+- `/sites/:slug/pages/:pageId` is a working Puck editor (drag/reorder/side-panel/undo-redo/viewport) — not a placeholder.
+- Edits publish via the existing save+revision API; `Block[]` remains the stored source of truth; the prod renderer is unchanged and renders the saved page identically.
+- `toPuckData`/`fromPuckData` lossless round-trip is a tested invariant; `zodToPuckFields` covers the live block schemas (custom fields for rich text + image).
+- Nothing outside `src/editor/` imports Puck.
+- Full test suite green; new tests for the adapter, field generation, config assembly, and the editor route. (Visual QA is operator-run — flagged, not claimed.)
+- `PLAN.md` Phase 5 row ticked. Phase 6 not started — wait for `.routine/NEXT-PHASE-APPROVED`.
+
+## Completion log
+
+<!-- Routine appends entries below this line, newest first -->
