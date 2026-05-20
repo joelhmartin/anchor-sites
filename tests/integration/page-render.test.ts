@@ -97,6 +97,12 @@ d("page renderer catch-all (integration)", () => {
     expect(res.text).toBe("DOWNSTREAM");
   });
 
+  it("admin host (studio.localhost) passes through to the SPA, never 404s as a tenant (P4-T4.1)", async () => {
+    const res = await request(app).get("/sites").set("Host", "studio.localhost");
+    expect(res.status).toBe(200);
+    expect(res.text).toBe("DOWNSTREAM");
+  });
+
   it("brand tokens differ between the two sites' rendered CSS", async () => {
     const m = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
     const d = await request(app).get("/").set("Host", "demo-site.sites.anchorcorps.com");

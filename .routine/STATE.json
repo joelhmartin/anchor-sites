@@ -3,9 +3,9 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 4,
   "current_phase_file": "PHASE-04-admin-ui-shell.md",
-  "current_task": "4.1",
+  "current_task": "4.2",
   "phase_started_at": "2026-05-19T18:00:00Z",
-  "last_commit_sha": "cbef7c5",
+  "last_commit_sha": "fafee6b",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
@@ -24,18 +24,19 @@
     "phase3-brand-tokens-merge-live",
     "phase3-image-block-0.2.0-published",
     "phase3-media-pipeline-end-to-end",
-    "phase3-complete"
+    "phase3-complete",
+    "phase4-started"
   ],
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 227,
+    "current_pass": 234,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 168,
+    "current_pass_root": 175,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-19T14:18:11Z",
-    "notes": "Phase 3 Task 3.14: +7 hydration unit + 1 end-to-end test in the root suite. Root 168, package 59, total 227 across 34 files."
+    "last_run_at": "2026-05-19T18:28:00Z",
+    "notes": "Phase 4 Task 4.1: +7 admin-host unit + 1 integration. Fixed a Task-3.5 cross-file test-pollution bug (brand_tokens_override leak). Root 175, package 59, total 234 across 35 files."
   },
   "phase_2_approved": true,
   "phase_3_approved": true,

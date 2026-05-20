@@ -77,13 +77,22 @@ d("admin pages API (integration)", () => {
   }, 60_000);
 
   afterAll(async () => {
+    // Restore muldoon home's brand_tokens_override to NULL — the
+    // brand-tokens save tests persist values on shared seed data, which
+    // would otherwise pollute page-render.test.ts (it asserts the site
+    // default --theme-main). Cross-file isolation via cleanup here.
+    await pool
+      .query(`UPDATE pages SET brand_tokens_override = NULL WHERE id = $1`, [muldoonPageId])
+      .catch(() => undefined);
     await pool.end().catch(() => undefined);
     delete process.env.ADMIN_API_TOKEN;
   });
 
   beforeEach(async () => {
-    // Clear revisions for muldoon home so each test starts at zero.
+    // Clear revisions + any leftover brand-token override so each test
+    // starts from the seeded baseline.
     await pool.query(`DELETE FROM page_revisions WHERE page_id = $1`, [muldoonPageId]);
+    await pool.query(`UPDATE pages SET brand_tokens_override = NULL WHERE id = $1`, [muldoonPageId]);
   });
 
   // ---------- AUTH ----------

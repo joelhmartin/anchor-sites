@@ -22,6 +22,8 @@ export type ResolvedSite = {
 declare module "express-serve-static-core" {
   interface Request {
     site?: ResolvedSite;
+    /** Set by the page router when the request targets the admin control hub (D-032). */
+    isAdminHost?: boolean;
   }
 }
 

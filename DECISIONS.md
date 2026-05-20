@@ -493,4 +493,34 @@ https://storage.googleapis.com/anchorcorps-media/variants/<site_id>/<asset_id>-<
 
 **How to apply:** Job writes to `variants/<site_id>/<asset_id>-<variant>.<hash>.<ext>` with the immutable cache header. The Image block (3.12) iterates `media_assets.variants` and assembles a `<picture>` with WebP `<source>` (srcset across the five widths) + JPG `<img>` fallback. The Phase 12 CDN switch only touches `variantPublicUrl(...)`.
 
+### D-032: Admin control hub at `studio.anchorcorps.com` — top-level sibling, not under the tenant wildcard
+
+**Context:** Phase 4 builds the admin UI — a single control hub for managing all tenant sites. It needs a URL. Two models were considered: (a) path-based on any tenant host (`<tenant>.sites.anchorcorps.com/admin`), (b) a dedicated host. The operator and assistant worked through it in chat on 2026-05-19.
+
+**Decision:** The admin hub lives at **`studio.anchorcorps.com`** — a TOP-LEVEL subdomain of the registrable apex, a sibling to the `*.sites.anchorcorps.com` tenant wildcard, deliberately NOT under `sites.`.
+
+Three clean layers result:
+| Layer | Host | Purpose |
+|---|---|---|
+| Marketing | `anchorcorps.com` | The apex AnchorCorps site |
+| Control hub | `studio.anchorcorps.com` | Admin — manage/edit all sites |
+| Tenant sites | `*.sites.anchorcorps.com` | Demo/preview sites pre-real-domain (D-025) |
+
+**Rationale:**
+- **Cookie / auth boundary (decisive).** `studio.anchorcorps.com` is NOT a DNS parent of any tenant host. Browsers send a parent domain's cookies down to subdomains, so an admin host *under* `sites.` (or the bare `sites.anchorcorps.com`) would make admin session cookies (Phase 8 / Better-auth) reachable by every `*.sites.anchorcorps.com` tenant by default. A top-level sibling can only leak via a deliberately `.anchorcorps.com`-scoped cookie — the safe behavior is the default behavior.
+- **Resolver isolation.** The tenant regex only matches `<label>.sites.anchorcorps.com`; `studio.anchorcorps.com` never collides. (A tenant literally named "studio" would be `studio.sites.anchorcorps.com` — distinct.)
+- **Product clarity.** "studio" frames the creative-editor surface and pairs with the Phase 5 Puck visual editor. Mixing admin into a tenant host's `/admin` path conflates two product surfaces + exposes `/admin` to tenant-site crawlers.
+- **No extra infra cost.** A `*.sites.anchorcorps.com` wildcard cert wouldn't cover the bare `sites.anchorcorps.com` anyway, so co-locating saves nothing. One Cloud Run domain mapping + one Kinsta CNAME — the same machinery the tenant provisioning orchestrator already uses.
+
+**Alternatives considered:**
+- Path-based `/admin` on tenant hosts: rejected — cookie scoping per host breaks multi-site editing under real auth; conflated surfaces.
+- Bare `sites.anchorcorps.com`: rejected — it's the DNS parent of every tenant, so cookies leak by default unless every cookie is carefully host-only forever.
+- `app.` / `admin.`: viable; `studio.` chosen for the editor framing.
+
+**How to apply:**
+- Served by the same single Express + Vite process. `src/config/admin-host.ts` `isAdminHost(hostname)` recognizes `studio.anchorcorps.com`, `studio.localhost` (local dev), and a `STUDIO_HOST` env override. The page router short-circuits the admin host before tenant resolution and serves the SPA.
+- Infra (provisioned 2026-05-19): Cloud Run domain mapping `studio.anchorcorps.com` → `anchor-sites` service; Kinsta CNAME `studio.anchorcorps.com` → `ghs.googlehosted.com.`. Cert provisioning began once DNS resolved.
+- Local dev: add `127.0.0.1 studio.localhost` to `/etc/hosts` (or rely on the OS resolving `*.localhost`), then visit `http://studio.localhost:3000`.
+- Phase 8 (Better-auth) sets host-only session cookies on this host. Phase 10/12 may add a managed cert / CDN refinement but the host name is stable.
+
 <!-- Routine appends future decisions below this line -->
