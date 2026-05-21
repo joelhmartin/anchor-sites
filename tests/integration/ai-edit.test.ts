@@ -28,6 +28,9 @@ d("AI-edit endpoint (integration, dry-run)", () => {
   let app: express.Express;
   let siteId: string;
   let pageId: string;
+  // A dedicated throwaway page for the apply test, so persisting AI edits never
+  // pollutes the seeded muldoon home that page-render.test.ts asserts on.
+  let applyPageId: string;
   const prevKey = process.env.ANTHROPIC_API_KEY;
 
   beforeAll(async () => {
@@ -48,6 +51,14 @@ d("AI-edit endpoint (integration, dry-run)", () => {
     siteId = r.rows[0].id;
     pageId = r.rows[0].page_id;
 
+    const ap = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, status)
+       VALUES ($1, 'ai-apply-test', 'AI apply test', '[]'::jsonb, 'draft')
+       RETURNING id`,
+      [siteId],
+    );
+    applyPageId = ap.rows[0].id;
+
     process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     // Force the AI service into deterministic dry-run (no spend, no network).
     process.env.ANTHROPIC_API_KEY = "dry-run";
@@ -55,6 +66,8 @@ d("AI-edit endpoint (integration, dry-run)", () => {
   }, 60_000);
 
   afterAll(async () => {
+    // Drop the throwaway page (CASCADE removes its revisions) — zero footprint.
+    await pool.query(`DELETE FROM pages WHERE id = $1`, [applyPageId]).catch(() => undefined);
     await pool.end().catch(() => undefined);
     delete process.env.ADMIN_API_TOKEN;
     if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
@@ -103,5 +116,44 @@ d("AI-edit endpoint (integration, dry-run)", () => {
     // Critical: the preview did not touch the stored page.
     const after = await pool.query<{ blocks: unknown }>(`SELECT blocks FROM pages WHERE id = $1`, [pageId]);
     expect(JSON.stringify(after.rows[0].blocks)).toBe(beforeBlocks);
+  });
+
+  it("applies an accepted proposal through the existing save endpoint with source:'ai' (P6-T6.5)", async () => {
+    // 1. Preview a change for the throwaway page.
+    const preview = await request(app)
+      .post(`/api/sites/${siteId}/pages/${applyPageId}/ai-edit`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ instruction: "add a closing section" });
+    expect(preview.status).toBe(200);
+    const proposed = preview.body.proposed_blocks;
+    expect(proposed.length).toBeGreaterThan(0);
+
+    // 2. Operator accepts → save through the EXISTING page-save endpoint, tagged source:'ai'.
+    const apply = await request(app)
+      .post(`/api/sites/${siteId}/pages/${applyPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: proposed, source: "ai" });
+    expect(apply.status).toBe(200);
+
+    // 3. The page now holds the proposed blocks.
+    const page = await pool.query<{ blocks: { type: string }[] }>(
+      `SELECT blocks FROM pages WHERE id = $1`,
+      [applyPageId],
+    );
+    expect(page.rows[0].blocks.at(-1)!.type).toBe("rich-text");
+
+    // 4. A page_revisions row recorded source='ai'.
+    const rev = await pool.query<{ source: string }>(
+      `SELECT source FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [applyPageId],
+    );
+    expect(rev.rows[0].source).toBe("ai");
+
+    // 5. The revisions panel surfaces the AI revision (demo milestone).
+    const list = await request(app)
+      .get(`/api/sites/${siteId}/pages/${applyPageId}/revisions`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(list.status).toBe(200);
+    expect(list.body.revisions[0].source).toBe("ai");
   });
 });

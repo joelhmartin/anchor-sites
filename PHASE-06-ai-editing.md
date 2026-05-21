@@ -67,7 +67,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
   - `POST /api/sites/:siteId/pages/:pageId/ai-edit` (admin-gated, rate-limited): body = NL instruction (+ optional target/selection). Loads current blocks, calls Claude with the catalog (6.2) + instruction via the edit contract (6.3), validates the proposal, returns `{ proposed_blocks, diff }`. **Does not save.** Dry-run returns a deterministic stub proposal.
   - **Tests (Anthropic client mocked):** returns validated proposed blocks; AI output with an unregistered/invalid block is rejected (never persisted); 401 without token; 400 on bad input.
 
-- [ ] **6.5 — Apply an accepted proposal**
+- [x] **6.5 — Apply an accepted proposal**
   - Applying saves the proposed `Block[]` via the existing `POST …/pages/:pageId` with `source:"ai"` (+ a `page_revisions` row). Mostly wiring; confirm `source='ai'` lands in the revision.
   - **Tests:** applying persists the blocks with `source:'ai'` and writes a revision.
 
@@ -105,6 +105,13 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 21:50 UTC — Task 6.5
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** Apply path = the **existing** `POST …/pages/:pageId` save endpoint called with `source:"ai"` — no new server code (it already re-validates via the shared validator and writes a `page_revisions` row). Recorded **D-040** (propose-then-apply: preview never saves; apply reuses save). End-to-end test proves the full cycle: ai-edit preview → save `proposed_blocks` with `source:"ai"` → page updated + revision `source='ai'` → revisions list surfaces it.
+**Tests added:** 1 (`ai-edit.test.ts` apply case). Fully isolated on a dedicated throwaway page created in `beforeAll` and dropped in `afterAll` (CASCADE) so the seeded muldoon home stays pristine — `page-render.test.ts` still green.
+**Next:** 6.6 — "Ask AI" panel in the editor
+**Notes:** D-040 documents preview-never-saves + apply-reuses-save (one validation + one revision mechanism, `source` tags AI edits for audit, undo = restore a revision). Full cold suite **389 / 58 files** green. Demo milestone (chat-only): an AI proposal applied with `source:'ai'`, visible in the revisions panel.
 
 ### 2026-05-20 21:46 UTC — Task 6.4
 **Commit:** 1dd1d69
