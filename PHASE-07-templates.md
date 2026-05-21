@@ -175,7 +175,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 435/64 green (was 433/63). Typecheck clean. Still local — not pushed.
 
 ### 2026-05-21 16:04 UTC — Task 7.8
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** 27dd4b0
 **Done:** Studio UI. `NewSiteWizard` extended with a "Start from" selector (Blank vs the fetched `kind:'site'` templates): Blank keeps the 2-step flow (POST /api/sites); a template skips the brand-colors step (template carries tokens, D-042), submits POST /api/sites/from-template, then polls site detail (pages_count) until materialized pages appear before routing. New `src/admin/components/SaveAsTemplateDialog.tsx` (Radix Dialog): loads the site's pages on open (all checked), captures name + optional description + page selection → POST /api/sites/:siteId/save-as-template (omits page_ids when all selected), 409/422 surfaced inline; wired a "Save as template" button into the SiteDetailView header.
 **Tests added:** 10 jsdom — NewSiteWizard.test.tsx rewritten to a URL-routing fetch mock (6: blank step gating/validation/submit/409 + template list/create/poll + template 409); SaveAsTemplateDialog.test.tsx (4: open+load+save all/omit page_ids, subset page_ids, name-gating, 409). SiteDetailPage's 4 tests still green.
 **Next:** 7.9 (page-level templates — thin slice)
