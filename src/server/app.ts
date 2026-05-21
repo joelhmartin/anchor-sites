@@ -9,6 +9,7 @@ import { adminPagesRouter } from "./routes/admin-pages.js";
 import { siteResolveRouter } from "./routes/site-resolve.js";
 import { mediaRouter } from "./routes/media.js";
 import { adminSitesRouter } from "./routes/admin-sites.js";
+import { templatesRouter } from "./routes/templates.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 
 export function createApp(): Express {
@@ -45,6 +46,9 @@ export function createApp(): Express {
 
   // P4: admin sites API (list/detail/create/update + child resources).
   app.use("/api", adminSitesRouter());
+
+  // P7: template system — save-as-template, list/inspect/archive, from-template.
+  app.use("/api", templatesRouter());
 
   // Admin-only debug endpoint for tenant resolution. P3-T3.2.
   app.use(siteResolveRouter());

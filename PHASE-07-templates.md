@@ -55,7 +55,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
   injected): `createTemplate`, `listTemplates({ kind? })`, `getTemplate(id)`
   (+ ordered pages), `archiveTemplate(id)`. Unit + integration tests.
 
-- [ ] **7.3 — Save-a-site-as-template endpoint.**
+- [x] **7.3 — Save-a-site-as-template endpoint.**
   `POST /api/sites/:siteId/save-as-template`
   `{ name, description?, page_ids? (default: all pages), include_brand_tokens?
   (default true) }`. Snapshots each selected page's slug/title/blocks/seo +
@@ -138,3 +138,10 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Tests added:** 12 — `tests/integration/templates-repo.test.ts` (8: create+ordered pages+brand token, getTemplate ordering, null on unknown id, list filter+counts, archive+hide+idempotent, archive null, dup-slug conflict, block-validation rejection persists nothing) + `src/server/templates/schema.test.ts` (4, DB-free: validateTemplatePages valid/invalid, input defaults + bad-slug reject, kind enum).
 **Next:** 7.3 (save-a-site-as-template endpoint)
 **Notes:** Full cold suite 409/60 green (was 397/58). Typecheck clean. Repo imports `../../blocks/index.js` for registry side-effect so validation works standalone. Still local — not pushed.
+
+### 2026-05-21 15:40 UTC — Task 7.3
+**Commit:** (pending — recorded in follow-up chore)
+**Done:** `POST /api/sites/:siteId/save-as-template` in a new `src/server/routes/templates.ts` router (mounted at /api in app.ts; will also host 7.4/7.6/7.9). Body `{ name, description?, slug?, page_ids?, include_brand_tokens? (default true) }`: 404 if site missing; captures all pages (created_at order) or the given `page_ids` (preserving order, 400 if any id isn't on the site); builds a `kind:'site'` template with `source_site_id` + (optional) the site's default brand tokens; slug derived from name via `slugifyName` when omitted. Reuses `createTemplate` so blocks are re-validated through the shared validator — 422 on TemplateValidationError, 409 on TemplateSlugConflictError.
+**Tests added:** 7 — `tests/integration/templates-api.test.ts` (401 no-auth, capture-all + derived slug + persisted pages, include_brand_tokens:false, page_ids subset+order, foreign page_id 400, unknown site 404, dup slug 409).
+**Next:** 7.4 (templates admin API — list/detail/delete)
+**Notes:** Full cold suite 416/61 green (was 409/60). Typecheck clean. Still local — not pushed.
