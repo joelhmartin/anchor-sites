@@ -16,10 +16,16 @@ const d = TEST_DB_URL ? describe : describe.skip;
 
 const ADMIN_TOKEN = "test-admin-token";
 
-function buildApp(pool: Pool): express.Express {
+function buildApp(
+  pool: Pool,
+  aiEditRateLimit?: { max: number; windowMs: number },
+): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
-  app.use("/api", adminPagesRouter({ pool, saveRateLimit: { max: 100, windowMs: 60_000 } }));
+  app.use(
+    "/api",
+    adminPagesRouter({ pool, saveRateLimit: { max: 100, windowMs: 60_000 }, aiEditRateLimit }),
+  );
   return app;
 }
 
@@ -155,5 +161,17 @@ d("AI-edit endpoint (integration, dry-run)", () => {
       .set("X-Admin-Token", ADMIN_TOKEN);
     expect(list.status).toBe(200);
     expect(list.body.revisions[0].source).toBe("ai");
+  });
+
+  it("rate-limits AI calls — 429 once the budget is spent (P6-T6.7)", async () => {
+    const limited = buildApp(pool, { max: 2, windowMs: 60_000 });
+    const call = () =>
+      request(limited)
+        .post(`/api/sites/${siteId}/pages/${pageId}/ai-edit`)
+        .set("X-Admin-Token", ADMIN_TOKEN)
+        .send({ instruction: "x" });
+    expect((await call()).status).toBe(200);
+    expect((await call()).status).toBe(200);
+    expect((await call()).status).toBe(429);
   });
 });

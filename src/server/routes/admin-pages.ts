@@ -37,6 +37,8 @@ export type AdminPagesOptions = {
   pool?: Pool;
   /** Override the save rate limit for tests. Default 10/min. */
   saveRateLimit?: RateLimitOptions;
+  /** Override the AI-edit rate limit for tests. Default 30/min — AI calls cost money. */
+  aiEditRateLimit?: RateLimitOptions;
 };
 
 export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
@@ -45,6 +47,10 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
 
   const saveLimiter = rateLimit(
     opts.saveRateLimit ?? { max: 10, windowMs: 60_000 },
+  );
+  // Separate, tighter-budgeted limiter for AI calls (each one can spend money).
+  const aiLimiter = rateLimit(
+    opts.aiEditRateLimit ?? { max: 30, windowMs: 60_000 },
   );
 
   // requireAdmin is applied per-route (not router-level) so unmatched /api/*
@@ -199,7 +205,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   router.post(
     "/sites/:siteId/pages/:pageId/ai-edit",
     admin,
-    saveLimiter,
+    aiLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       const { siteId, pageId } = req.params;
       const parsed = aiEditPayload.safeParse(req.body);

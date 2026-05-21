@@ -53,31 +53,46 @@ function toToolSchema(schema: z.ZodTypeAny): Anthropic.Tool.InputSchema {
   return js as Anthropic.Tool.InputSchema;
 }
 
-// Built once — the param schemas are static, so these are deterministic
-// (cache-friendly). The catalog (which DOES depend on the registry) is built
-// per call inside the system prompt.
-const EDIT_TOOLS: Anthropic.Tool[] = [
-  {
-    name: "insert_block",
-    description: "Insert a new block of a catalog type at start, end, or after an existing block id.",
-    input_schema: toToolSchema(insertParamsSchema),
-  },
-  {
-    name: "update_block",
-    description: "Shallow-merge new props into an existing block (by id). Send only the props that change.",
-    input_schema: toToolSchema(updateParamsSchema),
-  },
-  {
-    name: "delete_block",
-    description: "Delete the block with the given id.",
-    input_schema: toToolSchema(deleteParamsSchema),
-  },
-  {
-    name: "move_block",
-    description: "Move an existing block (by id) to start, end, or after another block id.",
-    input_schema: toToolSchema(moveParamsSchema),
-  },
-];
+/**
+ * The four edit tools. Built per call so `insert_block.block.type` can be
+ * constrained to the currently-registered block types — a guardrail (P6-T6.7)
+ * that steers the model to valid types. Server-side re-validation in
+ * `applyAndValidate` (D-039) is still the hard gate. Output is deterministic
+ * for a given registry, so the tool list stays byte-stable across requests
+ * (prompt-cache friendly — tools render before the cached system block).
+ */
+function buildEditTools(): Anthropic.Tool[] {
+  const registeredTypes = buildBlockCatalog().map((b) => b.type);
+  const insertSchema = toToolSchema(insertParamsSchema) as Anthropic.Tool.InputSchema & {
+    properties?: { block?: { properties?: { type?: Record<string, unknown> } } };
+  };
+  const typeProp = insertSchema.properties?.block?.properties?.type;
+  if (typeProp) {
+    insertSchema.properties!.block!.properties!.type = { ...typeProp, enum: registeredTypes };
+  }
+  return [
+    {
+      name: "insert_block",
+      description: "Insert a new block of a catalog type at start, end, or after an existing block id.",
+      input_schema: insertSchema,
+    },
+    {
+      name: "update_block",
+      description: "Shallow-merge new props into an existing block (by id). Send only the props that change.",
+      input_schema: toToolSchema(updateParamsSchema),
+    },
+    {
+      name: "delete_block",
+      description: "Delete the block with the given id.",
+      input_schema: toToolSchema(deleteParamsSchema),
+    },
+    {
+      name: "move_block",
+      description: "Move an existing block (by id) to start, end, or after another block id.",
+      input_schema: toToolSchema(moveParamsSchema),
+    },
+  ];
+}
 
 function buildSystemPrompt(): string {
   return `${SYSTEM_INTRO}\n\n--- BLOCK CATALOG ---\n${JSON.stringify(buildBlockCatalog())}`;
@@ -171,9 +186,14 @@ export async function proposeEdit(input: ProposeEditInput): Promise<ProposeEditR
   } else {
     const res = await runMessage(
       {
-        system: buildSystemPrompt(),
+        // Cache the stable prefix (tools render before system, so one breakpoint
+        // on the system block caches tools + system + catalog). The volatile
+        // page blocks + instruction live in `messages`, after the breakpoint.
+        system: [
+          { type: "text", text: buildSystemPrompt(), cache_control: { type: "ephemeral" } },
+        ],
         messages: [{ role: "user", content: buildUserPrompt(blocks, instruction) }],
-        tools: EDIT_TOOLS,
+        tools: buildEditTools(),
         tool_choice: { type: "auto" },
         ...(input.maxTokens ? { max_tokens: input.maxTokens } : {}),
       },

@@ -83,12 +83,12 @@ describe("proposeEdit — api (client mocked)", () => {
     expect(res.message).toBe("Made the headline punchier.");
   });
 
-  it("sends the four edit tools + the block catalog in the request", async () => {
+  it("sends a cached system+catalog and the four edit tools with a registered-type enum (P6-T6.7)", async () => {
     const { client, create } = clientReturning(msg([toolUse("delete_block", { id: "b1" })]));
     await proposeEdit({ blocks: base(), instruction: "remove the hero", env: API, client });
     const arg = create.mock.calls[0][0] as {
-      tools: { name: string }[];
-      system: string;
+      tools: { name: string; input_schema: Record<string, unknown> }[];
+      system: { type: string; text: string; cache_control?: { type: string } }[];
       tool_choice: { type: string };
     };
     expect(arg.tools.map((t) => t.name).sort()).toEqual([
@@ -97,7 +97,18 @@ describe("proposeEdit — api (client mocked)", () => {
       "move_block",
       "update_block",
     ]);
-    expect(arg.system).toContain("BLOCK CATALOG");
+    // Prompt caching: system is a content-block array with an ephemeral breakpoint.
+    expect(Array.isArray(arg.system)).toBe(true);
+    expect(arg.system[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(arg.system[0].text).toContain("BLOCK CATALOG");
+    // Guardrail: insert_block.block.type is constrained to registered types.
+    const insert = arg.tools.find((t) => t.name === "insert_block")!;
+    const typeEnum = (
+      insert.input_schema as { properties: { block: { properties: { type: { enum?: string[] } } } } }
+    ).properties.block.properties.type.enum;
+    expect(typeEnum).toContain("hero");
+    expect(typeEnum).toContain("rich-text");
+    expect(typeEnum).not.toContain("wormhole");
     expect(arg.tool_choice).toMatchObject({ type: "auto" });
   });
 
