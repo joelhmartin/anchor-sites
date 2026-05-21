@@ -16,6 +16,7 @@
     "migrate:up": "node-pg-migrate -m db/migrations up",
     "migrate:down": "node-pg-migrate -m db/migrations down",
     "db:seed": "tsx db/seed.ts",
+    "db:seed-templates": "tsx db/seed-templates.ts",
     "provision": "tsx scripts/provision-site.ts",
     "build:components": "npm -w @anchorcorps/components run build",
     "dev:components": "npm -w @anchorcorps/components run dev",

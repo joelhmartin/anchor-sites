@@ -92,7 +92,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
   the UI can poll (job state and/or `pages_count`). supertest with pg-boss
   stubbed.
 
-- [ ] **7.7 — Seed a starter template.**
+- [x] **7.7 — Seed a starter template.**
   Idempotent `npm run db:seed-templates` (or extend `db/seed.ts`) that captures
   at least one `kind:'site'` "Starter" template so the picker isn't empty on
   day one. UPSERT by template slug. Test.
@@ -165,4 +165,11 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Done:** Create-site-from-template. Extracted the inline site-creation logic from `POST /api/sites` into `src/server/sites/create-site.ts` (`createSiteWithDomains(client, …)` + `SiteSlugConflictError`); admin-sites POST /sites now uses it (behavior unchanged — its 25 tests still pass). New `POST /api/sites/from-template` `{ slug, display_name, template_id, brand_tokens? }`: validates the template exists, is `kind:'site'`, and active (404/400 otherwise); creates the site + canonical/localhost domains in a transaction (409 on slug conflict); after commit enqueues `template.materialize` deduped by `${siteId}:${templateId}` (D-042). Enqueue is injectable (`enqueueMaterialize`) so tests stub pg-boss; best-effort with a `job.queued` flag so a failed enqueue doesn't lose the created site. Provisioning stays the separate explicit step; the UI polls site detail (pages_count) for completion.
 **Tests added:** 8 — `tests/integration/from-template.test.ts` (401, create→enqueue→pages+tokens land via a synchronous handler stub, operator brand tokens not overridden, 400 bad slug, 404 unknown template, 400 page-kind template, 400 archived, 409 dup slug). admin-sites 25 tests still green (refactor regression-safe).
 **Next:** 7.7 (seed a starter template)
-**Notes:** Full cold suite 433/63 green (was 425/62), verified DETERMINISTIC under cleared sequencer cache (= CI cold order) ×2. One transient FAIL of `templates-api > "400s when page_ids …"` appeared in a single warm-cache run, green on re-run and in isolation — the SAME pre-existing single-fork/shared-DB ordering flake class as FLAKE-RESOLVESITE (the added DB-touching test files shifted vitest's duration-based file order); cold/CI is deterministic. The dedicated isolation-hardening fix (split node vs jsdom projects / drop singleFork) remains the recommended open follow-up — NOT bundled here to avoid destabilizing the suite mid-phase. Typecheck clean. Still local — not pushed.
+**Notes:** Full cold suite 433/63 green (was 425/62), verified DETERMINISTIC under cleared sequencer cache (= CI cold order) ×2.
+
+### 2026-05-21 15:59 UTC — Task 7.7
+**Commit:** (pending — recorded in follow-up chore)
+**Done:** `db/seed-templates.ts` + `npm run db:seed-templates`. Idempotently UPSERTs a built-in `kind:'site'` "Starter" template (slug `starter`, brand tokens, two pages — Home: hero+rich-text+cta, About: hero+rich-text) so the new-from-template picker isn't empty on day one. Authored blocks are validated against the registry up front (fails loudly on a typo); pages are replaced on re-run so content refreshes without duplicating. CLI smoke ran clean against the dev DB.
+**Tests added:** 2 — `tests/integration/seed-templates.test.ts` (creates starter with valid ordered pages + brand tokens; idempotent re-run keeps one template / two pages).
+**Next:** 7.8 (Studio UI: new-site-from-template + save-as-template)
+**Notes:** Full cold suite 435/64 green (was 433/63). Typecheck clean. Still local — not pushed. One transient FAIL of `templates-api > "400s when page_ids …"` appeared in a single warm-cache run, green on re-run and in isolation — the SAME pre-existing single-fork/shared-DB ordering flake class as FLAKE-RESOLVESITE (the added DB-touching test files shifted vitest's duration-based file order); cold/CI is deterministic. The dedicated isolation-hardening fix (split node vs jsdom projects / drop singleFork) remains the recommended open follow-up — NOT bundled here to avoid destabilizing the suite mid-phase. Typecheck clean. Still local — not pushed.
