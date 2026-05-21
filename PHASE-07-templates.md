@@ -140,7 +140,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 409/60 green (was 397/58). Typecheck clean. Repo imports `../../blocks/index.js` for registry side-effect so validation works standalone. Still local — not pushed.
 
 ### 2026-05-21 15:40 UTC — Task 7.3
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** 10be0fa
 **Done:** `POST /api/sites/:siteId/save-as-template` in a new `src/server/routes/templates.ts` router (mounted at /api in app.ts; will also host 7.4/7.6/7.9). Body `{ name, description?, slug?, page_ids?, include_brand_tokens? (default true) }`: 404 if site missing; captures all pages (created_at order) or the given `page_ids` (preserving order, 400 if any id isn't on the site); builds a `kind:'site'` template with `source_site_id` + (optional) the site's default brand tokens; slug derived from name via `slugifyName` when omitted. Reuses `createTemplate` so blocks are re-validated through the shared validator — 422 on TemplateValidationError, 409 on TemplateSlugConflictError.
 **Tests added:** 7 — `tests/integration/templates-api.test.ts` (401 no-auth, capture-all + derived slug + persisted pages, include_brand_tokens:false, page_ids subset+order, foreign page_id 400, unknown site 404, dup slug 409).
 **Next:** 7.4 (templates admin API — list/detail/delete)
