@@ -53,7 +53,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
   - Add `@anthropic-ai/sdk` (pin exact; record the version + model). Create `src/server/ai/` with a client wrapper that reads `ANTHROPIC_API_KEY` from env and has **stub / dry-run / api modes** (mirror `src/server/email/send.ts`, D-012) so no key = no spend. No endpoint yet.
   - **Tests:** mode selection (stub when no key; dry-run returns a canned proposal; api builds the right request — client mocked). Build/typecheck clean.
 
-- [ ] **6.2 — Block catalog from the registry (`zod-to-json-schema`)**
+- [x] **6.2 — Block catalog from the registry (`zod-to-json-schema`)**
   - Turn `listBlocks()` into the AI's catalog: per block `{ type, label, description, aiHints, jsonSchema }` via `zod-to-json-schema` (the helper foretold in `src/blocks/registry.ts`). This is the stable prefix that gets prompt-cached (6.7).
   - **Tests:** catalog includes every registered block + its `aiHints`; each `jsonSchema` is valid and round-trips a default-props instance.
 
@@ -105,6 +105,13 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 21:32 UTC — Task 6.2
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** `src/server/ai/catalog.ts` — `buildBlockCatalog()` turns `listBlocks()` into `{ type, label, description, aiHints?, category, jsonSchema }`, deriving each `jsonSchema` from the block's Zod schema via `zod-to-json-schema` (`$refStrategy:"none"` → inlined draft-07, no `$ref` for the model to resolve). Order = registration order so the serialized catalog is byte-stable (prompt-cache requirement for 6.7). Plugin blocks (D-016) appear automatically.
+**Tests added:** 4 (`src/server/ai/catalog.test.ts` — every registered block present; label/description/category/aiHints sourced from the registry; each `jsonSchema` is a valid object schema whose `properties` cover the default-props instance + a true zod round-trip; byte-stable determinism). Order-independent via the `beforeEach` reset + re-register pattern (mirrors `puck-config.test.ts`).
+**Next:** 6.3 — schema-validated edit-op contract + applier + shared `validateBlocks`
+**Notes:** No new decision. Full cold suite **356 / 54 files** green.
 
 ### 2026-05-20 21:16 UTC — Task 6.1
 **Commit:** 1deca54

@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 6,
   "current_phase_file": "PHASE-06-ai-editing.md",
-  "current_task": "6.2",
+  "current_task": "6.3",
   "phase_started_at": "2026-05-20T21:11:00Z",
   "last_commit_sha": "1deca54",
   "last_email_sent_at": null,
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 352,
+    "current_pass": 356,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 293,
+    "current_pass_root": 297,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-20T21:16:00Z",
-    "notes": "P6-T6.1 done: 352 across 53 files (root 293, package 59). Phase-6 baseline was 344/52; +8 from src/server/ai/client.test.ts. Typecheck clean; full cold suite green; @anthropic-ai/sdk import does NOT break cold collection. FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-20T21:32:00Z",
+    "notes": "P6-T6.2 done: 356 across 54 files (root 297, package 59). Phase-6 baseline was 344/52; +8 (6.1 ai/client) +4 (6.2 ai/catalog). Typecheck clean; full cold suite green; @anthropic-ai/sdk import does NOT break cold collection. FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",
