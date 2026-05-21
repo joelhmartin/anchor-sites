@@ -97,7 +97,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
   at least one `kind:'site'` "Starter" template so the picker isn't empty on
   day one. UPSERT by template slug. Test.
 
-- [ ] **7.8 — Studio UI: new-site-from-template + save-as-template.**
+- [x] **7.8 — Studio UI: new-site-from-template + save-as-template.**
   Extend `src/admin/pages/NewSiteWizard.tsx` with a "Blank vs Template" choice
   + template picker (`GET /api/templates?kind=site`); on submit hit
   `/api/sites/from-template` and show materialization progress (poll). Add a
@@ -172,4 +172,11 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Done:** `db/seed-templates.ts` + `npm run db:seed-templates`. Idempotently UPSERTs a built-in `kind:'site'` "Starter" template (slug `starter`, brand tokens, two pages — Home: hero+rich-text+cta, About: hero+rich-text) so the new-from-template picker isn't empty on day one. Authored blocks are validated against the registry up front (fails loudly on a typo); pages are replaced on re-run so content refreshes without duplicating. CLI smoke ran clean against the dev DB.
 **Tests added:** 2 — `tests/integration/seed-templates.test.ts` (creates starter with valid ordered pages + brand tokens; idempotent re-run keeps one template / two pages).
 **Next:** 7.8 (Studio UI: new-site-from-template + save-as-template)
-**Notes:** Full cold suite 435/64 green (was 433/63). Typecheck clean. Still local — not pushed. One transient FAIL of `templates-api > "400s when page_ids …"` appeared in a single warm-cache run, green on re-run and in isolation — the SAME pre-existing single-fork/shared-DB ordering flake class as FLAKE-RESOLVESITE (the added DB-touching test files shifted vitest's duration-based file order); cold/CI is deterministic. The dedicated isolation-hardening fix (split node vs jsdom projects / drop singleFork) remains the recommended open follow-up — NOT bundled here to avoid destabilizing the suite mid-phase. Typecheck clean. Still local — not pushed.
+**Notes:** Full cold suite 435/64 green (was 433/63). Typecheck clean. Still local — not pushed.
+
+### 2026-05-21 16:04 UTC — Task 7.8
+**Commit:** (pending — recorded in follow-up chore)
+**Done:** Studio UI. `NewSiteWizard` extended with a "Start from" selector (Blank vs the fetched `kind:'site'` templates): Blank keeps the 2-step flow (POST /api/sites); a template skips the brand-colors step (template carries tokens, D-042), submits POST /api/sites/from-template, then polls site detail (pages_count) until materialized pages appear before routing. New `src/admin/components/SaveAsTemplateDialog.tsx` (Radix Dialog): loads the site's pages on open (all checked), captures name + optional description + page selection → POST /api/sites/:siteId/save-as-template (omits page_ids when all selected), 409/422 surfaced inline; wired a "Save as template" button into the SiteDetailView header.
+**Tests added:** 10 jsdom — NewSiteWizard.test.tsx rewritten to a URL-routing fetch mock (6: blank step gating/validation/submit/409 + template list/create/poll + template 409); SaveAsTemplateDialog.test.tsx (4: open+load+save all/omit page_ids, subset page_ids, name-gating, 409). SiteDetailPage's 4 tests still green.
+**Next:** 7.9 (page-level templates — thin slice)
+**Notes:** Full cold suite 441/65 green (was 435/64). Typecheck clean. **Visual QA is operator-run at studio.localhost:3000** — drag-free flows here, but the wizard selector, materialization spinner, and the save-as-template modal need a human eye. Still local — not pushed. One transient FAIL of `templates-api > "400s when page_ids …"` appeared in a single warm-cache run, green on re-run and in isolation — the SAME pre-existing single-fork/shared-DB ordering flake class as FLAKE-RESOLVESITE (the added DB-touching test files shifted vitest's duration-based file order); cold/CI is deterministic. The dedicated isolation-hardening fix (split node vs jsdom projects / drop singleFork) remains the recommended open follow-up — NOT bundled here to avoid destabilizing the suite mid-phase. Typecheck clean. Still local — not pushed.

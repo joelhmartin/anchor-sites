@@ -10,6 +10,7 @@ import { cn } from "../ui/cn.js";
 import { PagesTab } from "./site-tabs/PagesTab.js";
 import { MediaTab } from "./site-tabs/MediaTab.js";
 import { SettingsTab } from "./site-tabs/SettingsTab.js";
+import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
   active: "success",
@@ -83,14 +84,17 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             <h1 className="text-2xl font-semibold">{site?.display_name ?? slug}</h1>
             {site && <Badge tone={statusTone[site.status]}>{site.status}</Badge>}
           </div>
-          <a
-            href={liveSiteUrl(slug)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-          >
-            View live site ↗
-          </a>
+          <div className="flex items-center gap-3">
+            {site && <SaveAsTemplateDialog siteId={site.id} siteName={site.display_name} />}
+            <a
+              href={liveSiteUrl(slug)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+            >
+              View live site ↗
+            </a>
+          </div>
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>
       </div>
