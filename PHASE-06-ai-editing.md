@@ -107,7 +107,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 21:16 UTC — Task 6.1
-**Commit:** <pending — recorded in follow-up chore commit>
+**Commit:** 1deca54
 **Done:** Pinned `@anthropic-ai/sdk@0.97.1` (exact). Added `src/server/ai/config.ts` (model pin `claude-sonnet-4-6`, `AI_MAX_TOKENS`, `resolveAiMode`) + `src/server/ai/client.ts` (`runMessage` with stub/dry-run/api modes mirroring `send.ts`; injectable client; model pin forced, non-overridable). No endpoint yet.
 **Tests added:** 8 (`src/server/ai/client.test.ts` — `resolveAiMode` ×3; `runMessage` modes ×5, incl. no-spend in stub/dry-run + pinned-model/raisable-max_tokens in api with the client mocked).
 **Next:** 6.2 — block catalog from the registry via `zod-to-json-schema`
