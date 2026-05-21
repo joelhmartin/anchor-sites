@@ -189,7 +189,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 451/66 green (was 441/65). Typecheck clean. Existing PagesTab tests untouched (lazy fetch). Still local — not pushed.
 
 ### 2026-05-21 16:14 UTC — Task 7.10 — PHASE 7 COMPLETE
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** 6bb5a09
 **Done:** Closeout. `docs/templates.md` (data model, full API, materialization + media caveat, page templates, Studio UI, seed). Ticked PLAN.md Phase 7 with the completion summary (Phases 1–6 format). Confirmed D-041/D-042/D-043 recorded in DECISIONS.md. Refreshed `.routine/baseline-tests.log` with the Phase-7 section. No source changes — typecheck unaffected.
 **Tests added:** none (docs/log/PLAN only). Final certification: typecheck clean; full cold suite 451/66 green (deterministic, = CI order).
 **Next:** phase complete — STOP at the Phase 7 → 7.5 boundary (Phase 7.5 plugin framework, D-016, requires a FRESH .routine/NEXT-PHASE-APPROVED).
