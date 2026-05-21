@@ -107,7 +107,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 21:46 UTC — Task 6.4
-**Commit:** <pending — recorded in follow-up chore commit>
+**Commit:** 1dd1d69
 **Done:** `POST /api/sites/:siteId/pages/:pageId/ai-edit` (admin-gated, rate-limited) — **preview only, never saves** (the handler only SELECTs). `src/server/ai/propose.ts` (`proposeEdit`: builds system prompt + block catalog + the 4 edit tools from the op param schemas, calls Claude via `runMessage`, parses `tool_use` → `EditOp[]`, runs `applyAndValidate`, returns `{ proposed_blocks, diff, message }`); stub/dry-run return a deterministic rich-text sample (no spend). `src/server/ai/diff.ts` (`diffBlocks`: added/removed/updated/moved with relative-order move detection so inserts don't false-flag survivors). `edit-ops.ts` refactored to export per-op **param** schemas (the tool `input_schema` source, with `op` stripped — the tool name carries it).
 **Tests added:** 18 — `diff.test.ts` (6); `propose.test.ts` (8, Anthropic client mocked: valid ops → proposal + diff; tools + catalog sent in the request; unknown-type / invalid-props → `validate` reject; malformed tool input → `bad_tool_input`; text-only → no-op); `ai-edit.test.ts` (4 integration: 401 / 400 / 404 + 200 dry-run returns proposal + diff and the stored page is unchanged). Save-route suite (19) still green.
 **Next:** 6.5 — apply an accepted proposal (save with `source:'ai'` + revision)
