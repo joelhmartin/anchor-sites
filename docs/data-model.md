@@ -65,9 +65,46 @@ Every save inserts one row. Restoring an old revision = inserting a new revision
 
 **Index:** `(page_id, created_at)` for chronological revision listing.
 
+### `templates`
+Phase 7 (migration `1747574000000_templates.cjs`). A reusable snapshot of pages + brand tokens. See D-041 (data-model shape), D-042 (pg-boss materialization), D-043 (media shared by reference, not copied).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` (PK) | `gen_random_uuid()` |
+| `slug` | `text` UNIQUE | Stable reference handle |
+| `name` | `text` | Shown in the template picker |
+| `description` | `text` nullable | |
+| `source_site_id` | `uuid` FK → `sites.id` | `ON DELETE SET NULL` — deleting the source site keeps the template |
+| `kind` | `text` | CHECK: `'site' \| 'page'`. Default `'site'`. `'site'` = many pages + brand tokens (materialized by a pg-boss job); `'page'` = a single page inserted into an existing site |
+| `brand_tokens` | `jsonb` | Captured site `default_brand_tokens` (empty for `'page'` templates). Default `'{}'::jsonb` |
+| `status` | `text` | CHECK: `'active' \| 'archived'`. Default `'active'`. Delete = archive |
+| `created_at` | `timestamptz` | |
+| `updated_at` | `timestamptz` | Maintained by `templates_touch_updated_at` BEFORE-UPDATE trigger |
+
+**Index:** `(kind, status)` for "list active site templates".
+
+### `template_pages`
+One row per page captured into a template. Mirrors `pages` (block JSON is still the source of truth, D-001). Captured blocks keep their source media `asset_id`s — referenced images render from the immutable public GCS variant URLs (D-031/D-043); media is **not** copied in v1.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` (PK) | |
+| `template_id` | `uuid` FK → `templates.id` | `ON DELETE CASCADE` |
+| `slug` | `text` | Page slug as captured |
+| `title` | `text` | |
+| `blocks` | `jsonb` | Snapshot of the source page's `blocks`. Default `'[]'::jsonb` |
+| `seo` | `jsonb` | Snapshot of the source page's `seo`. Default `'{}'::jsonb` |
+| `sort_order` | `integer` | Materialization order. Default `0` |
+| `created_at` | `timestamptz` | |
+
+**Constraints / indexes:**
+- `UNIQUE(template_id, slug)` — `template_pages_template_slug_unique`
+- `INDEX(template_id, sort_order)` — ordered page listing
+- `GIN(blocks)` — structural block queries across templates
+
 ## Triggers / functions
 
-- **`touch_updated_at()`** — generic BEFORE-UPDATE trigger function. Currently only attached to `pages` (`pages_touch_updated_at`). Reusable when other tables grow an `updated_at` column.
+- **`touch_updated_at()`** — generic BEFORE-UPDATE trigger function. Attached to `pages` (`pages_touch_updated_at`) and `templates` (`templates_touch_updated_at`). Reusable when other tables grow an `updated_at` column.
 
 ## Future schema (reserved, NOT in this migration)
 

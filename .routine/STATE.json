@@ -1,10 +1,10 @@
 {
   "_comment": "Routine state. Update atomically. Never edit by hand once routine is running.",
   "notify_email": "jmartin@anchorcorps.com",
-  "current_phase": 6,
-  "current_phase_file": "PHASE-06-ai-editing.md",
-  "current_task": null,
-  "phase_started_at": "2026-05-20T21:11:00Z",
+  "current_phase": 7,
+  "current_phase_file": "PHASE-07-templates.md",
+  "current_task": "7.2",
+  "phase_started_at": "2026-05-21T15:26:44Z",
   "last_commit_sha": "aae02e7",
   "last_email_sent_at": null,
   "emails_sent": [],
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 394,
+    "current_pass": 397,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 335,
+    "current_pass_root": 338,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-20T22:02:00Z",
-    "notes": "PHASE 6 COMPLETE (6.1-6.8, 2026-05-20): 394 across 58 files (root 335, package 59); +50 over the 344/52 Phase-6 baseline. AI editing layer: SDK+model pin (D-038), block catalog, tool-use edit contract + shared validator (D-039), ai-edit preview endpoint + apply via existing save with source:'ai' (D-040), Ask-AI editor panel, prompt caching + type-enum guardrail + AI rate limiter, docs/ai-editing.md. Typecheck clean; full cold suite + final run green; resolveSite + page-render clean. Live AI gated on operator ANTHROPIC_API_KEY (prod=stub until then). PUSHED to main 2026-05-21 (fe200f7..6d0ae09, incl. README refresh) — CI trigger anchor-sites-main auto build→migrate→deploying prod. FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-21T15:29:00Z",
+    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 DONE 2026-05-21: templates + template_pages tables (D-041) via migration 1747574000000_templates.cjs (forward+rollback); +3 schema tests → 397 across 58 files (root 338, package 59) from the 394/58 Phase-6 close baseline. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",
@@ -63,5 +63,7 @@
   "phase_5_approved": true,
   "phase_5_approved_note": "Operator approved Phase 5 verbally in chat 2026-05-20 ('unblock everything'). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Advanced to current_phase=5, current_task=5.1.",
   "phase_6_approved": true,
-  "phase_6_approved_note": "Operator approved Phase 6 verbally in chat 2026-05-20 after the EXPAND+CONFIRM gate. Confirmed: model=claude-sonnet-4-6 (cost/latency sweet spot, swappable pin), edit-contract=tool-use ops (insert/update/delete/move_block), propose-then-apply (preview+diff, no auto-save). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 344/52 cold green. Advanced to current_phase=6, current_task=6.1."
+  "phase_6_approved_note": "Operator approved Phase 6 verbally in chat 2026-05-20 after the EXPAND+CONFIRM gate. Confirmed: model=claude-sonnet-4-6 (cost/latency sweet spot, swappable pin), edit-contract=tool-use ops (insert/update/delete/move_block), propose-then-apply (preview+diff, no auto-save). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 344/52 cold green. Advanced to current_phase=6, current_task=6.1.",
+  "phase_7_approved": true,
+  "phase_7_approved_note": "Operator approved Phase 7 (template system) verbally in chat 2026-05-21 after the EXPAND+CONFIRM gate, signing off on PHASE-07-templates.md (tasks 7.1-7.10) + four design forks (operator took the recommendation on three, chose include-now on the fourth): storage=normalized templates+template_pages (D-041); materialization=pg-boss async per D-019 (D-042); media on materialize=share immutable GCS variant URLs in v1, keep source asset_ids, per-site media copy deferred to Phase 12 (D-043); page-level templates=included now (thin slice, task 7.9). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 394/58 cold green (2026-05-21). Advanced to current_phase=7, current_task=7.1. STOP at the 7->7.5 boundary (Phase 7.5 plugin framework, D-016, is a separate later phase)."
 }

@@ -206,19 +206,99 @@ d("schema migrations (integration)", () => {
     }
   });
 
+  it("creates templates + template_pages with unique slug, kind check, and GIN index (P7-T7.1)", async () => {
+    const tables = await pool.query<{ tablename: string }>(
+      `SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN
+       ('templates','template_pages') ORDER BY tablename`,
+    );
+    expect(tables.rows.map((r) => r.tablename)).toEqual(["template_pages", "templates"]);
+
+    const slugUniq = await pool.query(
+      `SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='templates'
+       AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%(slug)%'`,
+    );
+    expect(slugUniq.rowCount).toBe(1);
+
+    const tpUniq = await pool.query(
+      `SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='template_pages'
+       AND indexname='template_pages_template_slug_unique'`,
+    );
+    expect(tpUniq.rowCount).toBe(1);
+
+    const gin = await pool.query(
+      `SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='template_pages'
+       AND indexdef ILIKE '%USING gin%'`,
+    );
+    expect(gin.rowCount).toBe(1);
+
+    // kind CHECK rejects an unknown value.
+    const bad = pool.query(
+      `INSERT INTO templates (slug, name, kind) VALUES ('kind-check', 'Kind Check', 'bogus')`,
+    );
+    await expect(bad).rejects.toThrow(/check/i);
+  });
+
+  it("template_pages cascades from templates; source_site_id SET NULL on site delete (P7-T7.1)", async () => {
+    const site = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ('tpl-src', 'Template Source') RETURNING id`,
+    );
+    const siteId = site.rows[0].id;
+    const tpl = await pool.query<{ id: string }>(
+      `INSERT INTO templates (slug, name, source_site_id) VALUES ('cascade-tpl', 'Cascade Tpl', $1) RETURNING id`,
+      [siteId],
+    );
+    const templateId = tpl.rows[0].id;
+    await pool.query(
+      `INSERT INTO template_pages (template_id, slug, title) VALUES ($1, 'home', 'Home'), ($1, 'about', 'About')`,
+      [templateId],
+    );
+
+    // Deleting the source site nulls source_site_id but keeps the template.
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]);
+    const afterSiteDel = await pool.query<{ source_site_id: string | null }>(
+      `SELECT source_site_id FROM templates WHERE id = $1`,
+      [templateId],
+    );
+    expect(afterSiteDel.rowCount).toBe(1);
+    expect(afterSiteDel.rows[0].source_site_id).toBeNull();
+
+    // Deleting the template cascades its pages.
+    await pool.query(`DELETE FROM templates WHERE id = $1`, [templateId]);
+    const pages = await pool.query<{ count: string }>(
+      `SELECT count(*) FROM template_pages WHERE template_id = $1`,
+      [templateId],
+    );
+    expect(Number(pages.rows[0].count)).toBe(0);
+  });
+
+  it("templates.updated_at trigger touches the timestamp on UPDATE (P7-T7.1)", async () => {
+    const ins = await pool.query<{ id: string; updated_at: Date }>(
+      `INSERT INTO templates (slug, name) VALUES ('tpl-touch', 'Touch') RETURNING id, updated_at`,
+    );
+    const templateId = ins.rows[0].id;
+    const t0 = ins.rows[0].updated_at;
+    await new Promise((r) => setTimeout(r, 25));
+    const upd = await pool.query<{ updated_at: Date }>(
+      `UPDATE templates SET name = 'Touched' WHERE id = $1 RETURNING updated_at`,
+      [templateId],
+    );
+    expect(upd.rows[0].updated_at.getTime()).toBeGreaterThan(t0.getTime());
+    await pool.query(`DELETE FROM templates WHERE id = $1`, [templateId]);
+  });
+
   it("migrate down then up returns to clean schema", async () => {
     await runMigrate("down", Infinity);
     const empty = await pool.query(
       `SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN
-       ('sites','site_domains','pages','page_revisions','media_assets')`,
+       ('sites','site_domains','pages','page_revisions','media_assets','templates','template_pages')`,
     );
     expect(Number(empty.rows[0].count)).toBe(0);
 
     await runMigrate("up", Infinity);
     const back = await pool.query(
       `SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN
-       ('sites','site_domains','pages','page_revisions','media_assets')`,
+       ('sites','site_domains','pages','page_revisions','media_assets','templates','template_pages')`,
     );
-    expect(Number(back.rows[0].count)).toBe(5);
+    expect(Number(back.rows[0].count)).toBe(7);
   }, 60_000);
 });
