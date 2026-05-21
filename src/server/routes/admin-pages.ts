@@ -11,6 +11,8 @@ import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 import { blockShape, validateBlocks, type BlockShape } from "../../blocks/validate.js";
 // Side-effect: register the static block types so saves validate.
 import "../../blocks/index.js";
+import { proposeEdit } from "../ai/propose.js";
+import type { Block } from "../../blocks/types.js";
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
@@ -24,6 +26,12 @@ const savePayload = z.object({
 });
 
 type SavePayload = z.infer<typeof savePayload>;
+
+const aiEditPayload = z.object({
+  instruction: z.string().trim().min(1).max(2000),
+  /** Optional: id of the block the operator currently has selected. */
+  target_id: z.string().optional(),
+});
 
 export type AdminPagesOptions = {
   pool?: Pool;
@@ -174,6 +182,77 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           return;
         }
         res.json({ page: result.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/pages/:pageId/ai-edit — AI proposes a change.
+  // Returns a schema-validated PREVIEW { proposed_blocks, diff } — does NOT
+  // save (apply is a separate operator action, 6.5). Dry-run/stub return a
+  // deterministic sample proposal (no spend). The AI can never persist an
+  // invalid block: the proposal is re-validated against the registry, and this
+  // handler only SELECTs — there is no write path here at all (P6-T6.4).
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/pages/:pageId/ai-edit",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, pageId } = req.params;
+      const parsed = aiEditPayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+
+      try {
+        const pageRes = await pool.query<{ blocks: Block[] }>(
+          `SELECT blocks FROM pages WHERE id = $1 AND site_id = $2`,
+          [pageId, siteId],
+        );
+        if (pageRes.rowCount === 0) {
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+
+        const currentBlocks = pageRes.rows[0].blocks ?? [];
+        const { instruction, target_id } = parsed.data;
+        const result = await proposeEdit({
+          blocks: currentBlocks,
+          instruction: target_id
+            ? `${instruction}\n\n(The operator currently has block id "${target_id}" selected.)`
+            : instruction,
+        });
+
+        if (!result.ok) {
+          // 422: the request was well-formed but no valid proposal could be
+          // produced (unknown type / invalid props / bad tool input). Nothing
+          // was persisted.
+          res.status(422).json({
+            error: "ai proposal rejected",
+            mode: result.mode,
+            reason: result.reason,
+            message: result.message,
+            failures: result.failures,
+          });
+          return;
+        }
+
+        res.status(200).json({
+          mode: result.mode,
+          message: result.message,
+          proposed_blocks: result.proposed_blocks,
+          diff: result.diff,
+        });
       } catch (err) {
         next(err);
       }

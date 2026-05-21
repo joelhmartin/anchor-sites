@@ -63,7 +63,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
   - Define the mutation set the model emits and an applier that turns ops → a new `Block[]`. Re-validate every resulting block against the registry (extract/reuse `validateBlocks` from `src/server/routes/admin-pages.ts` so server + AI share one validator). Decide tool-use vs. structured output (record D-0xx). Unknown type / invalid props → rejected, never applied.
   - **Tests:** each op (insert/update/delete/move) applied to a `Block[]` yields the expected `Block[]`; invalid op or unregistered type is rejected; ids preserved/generated correctly.
 
-- [ ] **6.4 — AI-edit endpoint (preview, no auto-save)**
+- [x] **6.4 — AI-edit endpoint (preview, no auto-save)**
   - `POST /api/sites/:siteId/pages/:pageId/ai-edit` (admin-gated, rate-limited): body = NL instruction (+ optional target/selection). Loads current blocks, calls Claude with the catalog (6.2) + instruction via the edit contract (6.3), validates the proposal, returns `{ proposed_blocks, diff }`. **Does not save.** Dry-run returns a deterministic stub proposal.
   - **Tests (Anthropic client mocked):** returns validated proposed blocks; AI output with an unregistered/invalid block is rejected (never persisted); 401 without token; 400 on bad input.
 
@@ -105,6 +105,13 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 21:46 UTC — Task 6.4
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** `POST /api/sites/:siteId/pages/:pageId/ai-edit` (admin-gated, rate-limited) — **preview only, never saves** (the handler only SELECTs). `src/server/ai/propose.ts` (`proposeEdit`: builds system prompt + block catalog + the 4 edit tools from the op param schemas, calls Claude via `runMessage`, parses `tool_use` → `EditOp[]`, runs `applyAndValidate`, returns `{ proposed_blocks, diff, message }`); stub/dry-run return a deterministic rich-text sample (no spend). `src/server/ai/diff.ts` (`diffBlocks`: added/removed/updated/moved with relative-order move detection so inserts don't false-flag survivors). `edit-ops.ts` refactored to export per-op **param** schemas (the tool `input_schema` source, with `op` stripped — the tool name carries it).
+**Tests added:** 18 — `diff.test.ts` (6); `propose.test.ts` (8, Anthropic client mocked: valid ops → proposal + diff; tools + catalog sent in the request; unknown-type / invalid-props → `validate` reject; malformed tool input → `bad_tool_input`; text-only → no-op); `ai-edit.test.ts` (4 integration: 401 / 400 / 404 + 200 dry-run returns proposal + diff and the stored page is unchanged). Save-route suite (19) still green.
+**Next:** 6.5 — apply an accepted proposal (save with `source:'ai'` + revision)
+**Notes:** "Never persisted" is structural (no write path in the handler) **and** asserted in the integration test. Real model proposals need the operator's `ANTHROPIC_API_KEY`; dry-run exercises the full apply→validate→diff pipeline. Full cold suite **388 / 58 files** green. Demo milestone (chat-only): AI-edit endpoint proposes a schema-valid change for a real page.
 
 ### 2026-05-20 21:38 UTC — Task 6.3
 **Commit:** 11cd9d8

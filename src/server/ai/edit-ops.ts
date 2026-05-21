@@ -30,32 +30,36 @@ const newBlockSchema = z.object({
   props: z.record(z.unknown()).default({}),
 });
 
-export const insertOpSchema = z.object({
-  op: z.literal("insert_block"),
+// Per-op PARAM schemas (without the `op` discriminator). These are also the
+// source for the tool-use `input_schema`s the model sees (P6-T6.4): the tool
+// NAME carries the op, so the params must not include `op`.
+export const insertParamsSchema = z.object({
   block: newBlockSchema,
   place: PLACE.default("end"),
   /** Required iff `place === "after"`: id of the existing block to insert after. */
   after_id: z.string().optional(),
 });
 
-export const updateOpSchema = z.object({
-  op: z.literal("update_block"),
+export const updateParamsSchema = z.object({
   id: z.string().min(1),
   /** Shallow-merged over the block's current props (send only what changes). */
   props: z.record(z.unknown()),
 });
 
-export const deleteOpSchema = z.object({
-  op: z.literal("delete_block"),
+export const deleteParamsSchema = z.object({
   id: z.string().min(1),
 });
 
-export const moveOpSchema = z.object({
-  op: z.literal("move_block"),
+export const moveParamsSchema = z.object({
   id: z.string().min(1),
   place: PLACE.default("end"),
   after_id: z.string().optional(),
 });
+
+export const insertOpSchema = insertParamsSchema.extend({ op: z.literal("insert_block") });
+export const updateOpSchema = updateParamsSchema.extend({ op: z.literal("update_block") });
+export const deleteOpSchema = deleteParamsSchema.extend({ op: z.literal("delete_block") });
+export const moveOpSchema = moveParamsSchema.extend({ op: z.literal("move_block") });
 
 export const editOpSchema = z.discriminatedUnion("op", [
   insertOpSchema,
