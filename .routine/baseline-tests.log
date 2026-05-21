@@ -161,3 +161,46 @@ Notes:
 
 Single command runs both:
   DATABASE_URL=... TEST_DATABASE_URL=... npm test
+
+---
+
+2026-05-20 — Phase 6 close (Tasks 6.1 through 6.8, AI editing layer)
+Suite: vitest run (with DATABASE_URL + TEST_DATABASE_URL set)
+Result: 394 passed, 0 skipped, 0 failed across 58 files
+        (root 335, @anchorcorps/components 59)
+Phase-6 baseline was 344/52; +50 across Phase 6.
+
+New Phase-6 tests (all AI client + fetch mocked — no network, no key, no spend):
+  ✓ src/server/ai/client.test.ts (8)
+      resolveAiMode stub/dry-run/api; runMessage modes; pinned-model not
+      overridable; raisable max_tokens; no client touched in stub/dry-run
+  ✓ src/server/ai/catalog.test.ts (4)
+      every registered block present; metadata/aiHints from registry;
+      jsonSchema valid + round-trips default props; byte-stable (cacheable)
+  ✓ src/server/ai/edit-ops.test.ts (14)
+      contract defaults + unknown-op reject; each op; start/end/after
+      placement; purity; missing-id/bad-placement; applyAndValidate
+      accept / unknown-type / invalid-props / apply-stage
+  ✓ src/server/ai/diff.test.ts (6)
+      added/removed/updated; insert doesn't false-flag moved; real reorder
+  ✓ src/server/ai/propose.test.ts (8)
+      stub/dry-run sample; tool_use → validated proposal + diff; cached
+      system + registered-type enum sent; unknown-type/invalid-props/
+      bad-tool-input reject; text-only = no-op
+  ✓ tests/integration/ai-edit.test.ts (6)
+      401/400/404; 200 dry-run preview does NOT persist; propose→apply
+      with source:'ai' + revision; 429 rate limit
+  ✓ src/admin/pages/EditorPage.test.tsx (+4 → 12)
+      Ask AI: preview diff; Apply saves source:'ai' + editor reloads;
+      Reject discards; endpoint error surfaced
+
+Notes:
+  - Shared validator extracted to src/blocks/validate.ts — the save route
+    and the AI path run ONE validator (admin-pages 19 tests still green).
+  - @anthropic-ai/sdk import does NOT break cold collection (tests inject a
+    fake client; the real SDK is never constructed in tests).
+  - Live AI edits gated on the operator's ANTHROPIC_API_KEY (Secret Manager);
+    prod runs stub until then.
+
+Single command runs both:
+  DATABASE_URL=... TEST_DATABASE_URL=... npm test

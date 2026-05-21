@@ -83,7 +83,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
   - Cache the system prompt + block catalog (stable prefix). Cap max tokens; rate-limit AI calls. Enforce guardrails: the model can only reference registered block types; all props re-validated server-side; reject + surface otherwise. Record token/cost notes.
   - **Tests:** cache structure present on the request; guardrail rejects an unknown block type from a (mocked) model response.
 
-- [ ] **6.8 — Phase 6 docs + plan tick**
+- [x] **6.8 — Phase 6 docs + plan tick**
   - `docs/ai-editing.md` (the `Block[]` mutation surface, catalog/prompt, edit-op contract + tool-use, the endpoint, the editor panel, model/secret config, reuse of save+revisions, how it stays decoupled from Puck). Record the SDK/model + edit-contract + propose-vs-apply decisions in `DECISIONS.md`. Tick the `PLAN.md` Phase 6 row. Append `.routine/baseline-tests.log`.
 
 ## Demo milestones (chat-only — surface in chat, do NOT email)
@@ -105,6 +105,13 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 22:02 UTC — Task 6.8 — PHASE 6 COMPLETE
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** `docs/ai-editing.md` (the `Block[]` mutation surface, catalog/prompt, tool-use edit contract, the endpoint, the Ask-AI panel, model/secret config, save+revision reuse, Puck decoupling, caching + cost, testing). Ticked the `PLAN.md` Phase 6 row. Appended `.routine/baseline-tests.log` (Phase 6 close, 394/58). Decisions **D-038** (SDK + model), **D-039** (edit contract + shared validator), **D-040** (propose-then-apply) were recorded as the tasks landed.
+**Tests added:** 0 (docs/plan/log). Final certification: typecheck clean, full cold suite **394 / 58 files** green.
+**Next:** phase complete — STOP at the 6→7 boundary (wait for a fresh `.routine/NEXT-PHASE-APPROVED`).
+**Notes:** Phase 6 Definition of Done met EXCEPT live API calls, which are gated on the operator provisioning `ANTHROPIC_API_KEY` in Secret Manager (prod runs `stub` until then — no spend). Visual QA of the Ask-AI panel is operator-run at `studio.localhost:3000`. **All Phase-6 work is committed LOCALLY on `main` but NOT yet pushed** — pushing `main` auto-deploys prod (D-035), so I'm holding the push for the operator's go-ahead rather than deploying mid-stream. Demo milestone (chat-only): Phase 6 complete.
 
 ### 2026-05-20 21:59 UTC — Task 6.7
 **Commit:** 2ddcf68
