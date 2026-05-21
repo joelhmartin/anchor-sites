@@ -147,7 +147,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 416/61 green (was 409/60). Typecheck clean. Still local — not pushed.
 
 ### 2026-05-21 15:43 UTC — Task 7.4
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** c467e91
 **Done:** Templates admin API added to `src/server/routes/templates.ts`: `GET /api/templates` (newest-first list + pages_count; `?kind=site|page`, `?status=active|archived` default active), `GET /api/templates/:id` (template + ordered pages, 404 if missing), `DELETE /api/templates/:id` (archive — soft delete, idempotent, 404 if missing). All `requireAdmin`, delegating to the repo.
 **Tests added:** 4 (in templates-api.test.ts) — GET list 401 no-auth, list active + kind filter + pages_count, GET detail + ordered pages + 404, DELETE archives (hidden from active list, still fetchable) + 404.
 **Next:** 7.5 (materialization job — pg-boss, D-019/D-042)
