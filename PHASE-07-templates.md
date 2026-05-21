@@ -47,7 +47,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
   Update `docs/data-model.md` (move templates from "reserved" to real). Record
   **D-041**.
 
-- [ ] **7.2 — Template Zod schema + repository.**
+- [x] **7.2 — Template Zod schema + repository.**
   `src/server/templates/schema.ts` (`templateSchema`, `templatePageSchema`,
   `templateKindSchema`) — page blocks validated through the **same** shared
   validator (`src/blocks/validate.ts`, D-039) so a template can never hold
@@ -131,3 +131,10 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Tests added:** 3 (in `tests/integration/schema.test.ts`) — templates/template_pages exist + unique slug + kind CHECK + GIN; template_pages CASCADE + source_site_id SET NULL; templates updated_at trigger. Updated the down/up round-trip test to expect 7 tables.
 **Next:** 7.2 (template Zod schema + repository)
 **Notes:** Full cold suite 397/58 green (was 394/58). Typecheck clean. `touch_updated_at` left intact on rollback (owned by the sites/pages migration). Not yet pushed — holding the phase's first prod-deploying push for an operator checkpoint (CI=deploy, D-035).
+
+### 2026-05-21 15:36 UTC — Task 7.2
+**Commit:** (pending — recorded in follow-up chore)
+**Done:** Template schema + repository. `src/server/templates/schema.ts`: `templateKindSchema` ('site'|'page'), `templateStatusSchema`, `templatePageInputSchema`, `createTemplateInputSchema` (slug/name/description/kind/source_site_id/brand_tokens/pages), and `validateTemplatePages` — runs the shared registry validator (`validateBlocks`, D-039) across captured pages so a template can't hold blocks the save path rejects. `CreateTemplateInput` is `z.input` (callers may omit defaulted fields). `src/server/templates/repo.ts` (pool-injected): `createTemplate` (Zod + block validation, then a single transaction; sort_order from array position; `TemplateValidationError` / `TemplateSlugConflictError`), `listTemplates({kind?,status?})` with pages_count, `getTemplate(id)` (+ ordered pages), `archiveTemplate(id)` (soft delete, idempotent).
+**Tests added:** 12 — `tests/integration/templates-repo.test.ts` (8: create+ordered pages+brand token, getTemplate ordering, null on unknown id, list filter+counts, archive+hide+idempotent, archive null, dup-slug conflict, block-validation rejection persists nothing) + `src/server/templates/schema.test.ts` (4, DB-free: validateTemplatePages valid/invalid, input defaults + bad-slug reject, kind enum).
+**Next:** 7.3 (save-a-site-as-template endpoint)
+**Notes:** Full cold suite 409/60 green (was 397/58). Typecheck clean. Repo imports `../../blocks/index.js` for registry side-effect so validation works standalone. Still local — not pushed.

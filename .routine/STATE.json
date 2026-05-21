@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 7,
   "current_phase_file": "PHASE-07-templates.md",
-  "current_task": "7.2",
+  "current_task": "7.3",
   "phase_started_at": "2026-05-21T15:26:44Z",
   "last_commit_sha": "a32a1f6",
   "last_email_sent_at": null,
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 397,
+    "current_pass": 409,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 338,
+    "current_pass_root": 350,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-21T15:29:00Z",
-    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 DONE 2026-05-21: templates + template_pages tables (D-041) via migration 1747574000000_templates.cjs (forward+rollback); +3 schema tests → 397 across 58 files (root 338, package 59) from the 394/58 Phase-6 close baseline. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-21T15:36:00Z",
+    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 DONE: templates + template_pages tables (D-041) via migration 1747574000000_templates.cjs (forward+rollback). 7.2 DONE 2026-05-21: template Zod schema + repository (src/server/templates/{schema,repo}.ts) — createTemplate/listTemplates/getTemplate/archiveTemplate, block capture re-validated through the shared registry validator (D-039). Now 409 across 60 files (root 350, package 59) from the 394/58 Phase-6 close baseline. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",
