@@ -73,7 +73,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 
 ### Editor integration
 
-- [ ] **6.6 — "Ask AI" panel in the editor**
+- [x] **6.6 — "Ask AI" panel in the editor**
   - An AI affordance in `src/admin` (the Puck editor route): instruction box → `ai-edit` → show the proposed change (diff/summary) → **Apply** reloads the editor (`Block[]` → `toPuckData`, the 5.x reload path) → **Reject** discards. Does NOT import Puck (D-017) — it produces `Block[]`; the editor re-renders.
   - **Tests (jsdom; AI client + `fetch` mocked, Puck stubbed):** instruction → preview renders; Apply triggers the save + editor reload; error surfaced.
 
@@ -105,6 +105,13 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 21:55 UTC — Task 6.6
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** "Ask AI" panel in the editor (`src/admin/pages/EditorPage.tsx` → `AskAiPanel` + an "Ask AI" toggle). Flow: instruction textarea → "Propose" `POST …/ai-edit` → renders the model `message` + `diff.summary` → **Apply** saves `proposed_blocks` via the existing save endpoint with `source:"ai"`, then `reload()` flips `loading` so the editor remounts with the applied blocks (the 5.x reload path); **Reject** discards. Does NOT import Puck (D-017) — it produces `Block[]`, the editor re-renders. Errors (incl. a 422 rejection, surfacing the server's detailed `message`) shown inline.
+**Tests added:** 4 (`EditorPage.test.tsx`, jsdom, Puck stubbed + `fetch` mocked): instruction previews the diff; Apply POSTs `source:'ai'` + editor reloads with applied blocks; Reject discards without saving; endpoint rejection surfaced.
+**Next:** 6.7 — prompt caching, guardrails, cost
+**Notes:** Visual QA is operator-run at `studio.localhost:3000` (the panel UX, drag/preview parity — D-017/D-036 hard constraint; not claimed here). Full cold suite **393 / 58 files** green. Demo milestone (chat-only): the "Ask AI" panel edits a page end-to-end and the editor reloads with the change.
 
 ### 2026-05-20 21:50 UTC — Task 6.5
 **Commit:** 465b1b6

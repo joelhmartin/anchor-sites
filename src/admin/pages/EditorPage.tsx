@@ -125,12 +125,154 @@ function RevisionsPanel({
   );
 }
 
+type AiDiff = {
+  added: { id: string; type: string }[];
+  removed: { id: string; type: string }[];
+  updated: { id: string; type: string }[];
+  moved: { id: string; type: string; from: number; to: number }[];
+  unchanged: number;
+  summary: string;
+};
+type AiProposal = {
+  mode: string;
+  message: string;
+  proposed_blocks: Block[];
+  diff: AiDiff;
+};
+
+/** Prefer the server's detailed `message` (e.g. why a proposal was rejected). */
+function aiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    const b = err.body;
+    if (b && typeof b === "object" && "message" in b && typeof (b as { message: unknown }).message === "string") {
+      return (b as { message: string }).message;
+    }
+    return err.message;
+  }
+  return fallback;
+}
+
+/**
+ * "Ask AI" panel (P6-T6.6 / D-040). Sends an NL instruction to the ai-edit
+ * endpoint, shows the proposed change (message + diff summary), and on Apply
+ * saves the proposed `Block[]` through the EXISTING save endpoint with
+ * `source:"ai"` — then `onApplied()` reloads the page so the editor remounts
+ * with the applied blocks (the 5.x reload path). Does NOT import Puck (D-017):
+ * it produces `Block[]`; the editor re-renders.
+ */
+function AskAiPanel({
+  siteId,
+  pageId,
+  seo,
+  onApplied,
+}: {
+  siteId: string;
+  pageId: string;
+  seo: Record<string, unknown>;
+  onApplied: () => void;
+}) {
+  const [instruction, setInstruction] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [proposal, setProposal] = useState<AiProposal | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function ask() {
+    if (!instruction.trim()) return;
+    setAsking(true);
+    setError(null);
+    setProposal(null);
+    try {
+      const res = await apiFetch<AiProposal>(`/api/sites/${siteId}/pages/${pageId}/ai-edit`, {
+        method: "POST",
+        body: { instruction },
+      });
+      setProposal(res);
+    } catch (err) {
+      setError(aiErrorMessage(err, "AI request failed."));
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  async function apply() {
+    if (!proposal) return;
+    setApplying(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/pages/${pageId}`, {
+        method: "POST",
+        body: { blocks: proposal.proposed_blocks, seo, source: "ai" },
+      });
+      setProposal(null);
+      setInstruction("");
+      onApplied(); // reload → editor remounts with the applied blocks
+    } catch (err) {
+      setError(aiErrorMessage(err, "Couldn’t apply the change."));
+      setApplying(false); // on success the panel unmounts via reload; only reset on error
+    }
+  }
+
+  return (
+    <div className="rounded border border-indigo-200 bg-indigo-50/40 p-3" aria-label="Ask AI">
+      <h3 className="mb-2 text-sm font-medium">Ask AI</h3>
+      <textarea
+        aria-label="AI instruction"
+        value={instruction}
+        onChange={(e) => setInstruction(e.target.value)}
+        placeholder="e.g. Make the hero punchier, or add a testimonial section"
+        rows={2}
+        className="w-full rounded border border-zinc-200 p-2 text-sm"
+      />
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={ask}
+          disabled={asking || applying || !instruction.trim()}
+          className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {asking ? "Asking…" : "Propose"}
+        </button>
+        {error && <span className="text-xs text-red-600">{error}</span>}
+      </div>
+
+      {proposal && (
+        <div className="mt-3 rounded border border-zinc-200 bg-white p-3" aria-label="AI proposal">
+          <p className="text-sm text-zinc-700">{proposal.message}</p>
+          <p className="mt-1 text-xs font-medium text-zinc-600">
+            Proposed changes: {proposal.diff.summary}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={apply}
+              disabled={applying}
+              className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {applying ? "Applying…" : "Apply"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setProposal(null)}
+              disabled={applying}
+              className="rounded border border-zinc-200 px-3 py-1 text-sm hover:bg-zinc-50 disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const { pageId } = useParams();
   const { data, loading, error, reload } = useApi<{ page: PageDetail }>(
     `/api/sites/${siteId}/pages/${pageId}`,
   );
   const [showRevisions, setShowRevisions] = useState(false);
+  const [showAskAi, setShowAskAi] = useState(false);
 
   // Config is derived from the shared block registry; siteId lets the media
   // picker custom field fetch this site's library.
@@ -237,6 +379,14 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
           </button>
           <button
             type="button"
+            onClick={() => setShowAskAi((v) => !v)}
+            aria-pressed={showAskAi}
+            className="font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            Ask AI
+          </button>
+          <button
+            type="button"
             onClick={() => setShowRevisions((v) => !v)}
             aria-pressed={showRevisions}
             className="font-medium text-zinc-600 hover:text-zinc-800"
@@ -253,6 +403,10 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
           </a>
         </div>
       </div>
+
+      {showAskAi && pageId && (
+        <AskAiPanel siteId={siteId} pageId={pageId} seo={page.seo ?? {}} onApplied={reload} />
+      )}
 
       {showRevisions && pageId && (
         <RevisionsPanel siteId={siteId} pageId={pageId} onRestored={reload} />

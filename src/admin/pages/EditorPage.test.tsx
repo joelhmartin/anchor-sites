@@ -97,6 +97,49 @@ function mockApi(opts: { savePost?: () => Response } = {}) {
   }) as unknown as typeof fetch;
 }
 
+const AI_PROPOSED = [
+  ...BLOCKS,
+  { id: "ai1", type: "rich-text", props: { html: "<p>added by ai</p>", max_width: "medium" } },
+];
+const AI_DIFF = {
+  added: [{ id: "ai1", type: "rich-text" }],
+  removed: [],
+  updated: [],
+  moved: [],
+  unchanged: 2,
+  summary: "1 added",
+};
+
+// Mock for the "Ask AI" panel: an ai-edit POST returns a proposal; applying it
+// saves through the page-save endpoint with source:'ai', after which the page
+// re-fetch returns the applied blocks (so the editor remounts with them).
+function mockApiWithAi(opts: { aiStatus?: number } = {}) {
+  lastPost = null;
+  let applied = false;
+  global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/sites") return json({ sites: [SITE] });
+    if (url === "/api/sites/s1/pages/p1/ai-edit" && init?.method === "POST") {
+      if (opts.aiStatus && opts.aiStatus >= 400) {
+        return json(
+          { error: "ai proposal rejected", message: "Proposal rejected at the validate stage." },
+          opts.aiStatus,
+        );
+      }
+      return json({ mode: "dry-run", message: "Added a section.", proposed_blocks: AI_PROPOSED, diff: AI_DIFF });
+    }
+    if (url === "/api/sites/s1/pages/p1") {
+      if (init?.method === "POST") {
+        lastPost = { url, body: JSON.parse(String(init.body)) };
+        if ((lastPost.body.source as string) === "ai") applied = true;
+        return json({ page: { ...PAGE, blocks: AI_PROPOSED }, revision: { id: "r9", created_at: "2026-05-20T00:00:00Z" } });
+      }
+      return json({ page: { ...PAGE, blocks: applied ? AI_PROPOSED : BLOCKS } });
+    }
+    return json({ error: "not found" }, 404);
+  }) as unknown as typeof fetch;
+}
+
 function renderAt(path = "/sites/acme/pages/p1") {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -197,5 +240,59 @@ describe("EditorPage (P5-T5.5)", () => {
         toPuckData(BLOCKS_B),
       ),
     );
+  });
+
+  it("Ask AI: an instruction previews the proposed change (P6-T6.6)", async () => {
+    mockApiWithAi();
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    fireEvent.change(screen.getByLabelText("AI instruction"), {
+      target: { value: "add a closing section" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Propose" }));
+    await screen.findByText("Added a section.");
+    expect(screen.getByText(/1 added/)).toBeTruthy();
+    await screen.findByRole("button", { name: "Apply" });
+  });
+
+  it("Ask AI: Apply saves with source:'ai' and reloads the editor with the applied blocks", async () => {
+    mockApiWithAi();
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    fireEvent.change(screen.getByLabelText("AI instruction"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Propose" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(lastPost?.body.source).toBe("ai"));
+    expect(lastPost?.body.blocks).toEqual(AI_PROPOSED);
+    // Editor remounted with the applied blocks (the reload path).
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId("puck-data").textContent ?? "null")).toEqual(
+        toPuckData(AI_PROPOSED),
+      ),
+    );
+  });
+
+  it("Ask AI: Reject discards the proposal without saving", async () => {
+    mockApiWithAi();
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    fireEvent.change(screen.getByLabelText("AI instruction"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Propose" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Apply" })).toBeNull());
+    expect(lastPost).toBeNull();
+  });
+
+  it("Ask AI: surfaces a rejected-proposal error from the endpoint", async () => {
+    mockApiWithAi({ aiStatus: 422 });
+    renderAt();
+    await screen.findByTestId("puck-data");
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    fireEvent.change(screen.getByLabelText("AI instruction"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Propose" }));
+    await screen.findByText(/Proposal rejected at the validate stage/);
   });
 });
