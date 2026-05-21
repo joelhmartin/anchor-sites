@@ -168,7 +168,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 433/63 green (was 425/62), verified DETERMINISTIC under cleared sequencer cache (= CI cold order) ×2.
 
 ### 2026-05-21 15:59 UTC — Task 7.7
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** f00cdba
 **Done:** `db/seed-templates.ts` + `npm run db:seed-templates`. Idempotently UPSERTs a built-in `kind:'site'` "Starter" template (slug `starter`, brand tokens, two pages — Home: hero+rich-text+cta, About: hero+rich-text) so the new-from-template picker isn't empty on day one. Authored blocks are validated against the registry up front (fails loudly on a typo); pages are replaced on re-run so content refreshes without duplicating. CLI smoke ran clean against the dev DB.
 **Tests added:** 2 — `tests/integration/seed-templates.test.ts` (creates starter with valid ordered pages + brand tokens; idempotent re-run keeps one template / two pages).
 **Next:** 7.8 (Studio UI: new-site-from-template + save-as-template)
