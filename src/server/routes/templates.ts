@@ -6,9 +6,13 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import {
   createTemplate,
+  listTemplates,
+  getTemplate,
+  archiveTemplate,
   TemplateValidationError,
   TemplateSlugConflictError,
 } from "../templates/repo.js";
+import { templateKindSchema, templateStatusSchema } from "../templates/schema.js";
 import type { Block } from "../../blocks/types.js";
 
 /**
@@ -151,6 +155,71 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
           res.status(422).json({ error: "template block validation failed", failures: err.failures });
           return;
         }
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // GET /api/templates — list templates (newest first) with pages_count.
+  // Optional filters: ?kind=site|page, ?status=active|archived (default active).
+  // (P7-T7.4)
+  // -------------------------------------------------------------------------
+  router.get(
+    "/templates",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const kindParse = templateKindSchema.safeParse(req.query.kind);
+      const statusParse = templateStatusSchema.safeParse(req.query.status);
+      try {
+        const templates = await listTemplates({
+          pool,
+          kind: kindParse.success ? kindParse.data : undefined,
+          status: statusParse.success ? statusParse.data : "active",
+        });
+        res.json({ templates });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // GET /api/templates/:id — one template with its ordered pages. (P7-T7.4)
+  // -------------------------------------------------------------------------
+  router.get(
+    "/templates/:id",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const found = await getTemplate(req.params.id, { pool });
+        if (!found) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        res.json(found);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // DELETE /api/templates/:id — archive (soft delete; D-041 never hard-deletes).
+  // Idempotent. (P7-T7.4)
+  // -------------------------------------------------------------------------
+  router.delete(
+    "/templates/:id",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const archived = await archiveTemplate(req.params.id, { pool });
+        if (!archived) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        res.json({ template: archived });
+      } catch (err) {
         next(err);
       }
     },

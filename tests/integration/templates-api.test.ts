@@ -150,4 +150,62 @@ d("save-as-template API (integration, P7-T7.3)", () => {
     expect(res.status).toBe(409);
     expect(res.body.slug).toBe("my-starter");
   });
+
+  // ---- 7.4: list / detail / archive --------------------------------------
+
+  it("GET /api/templates 401s without an admin token", async () => {
+    const res = await request(app).get(`/api/templates`);
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/templates lists active templates with pages_count, filterable by kind", async () => {
+    const res = await auth(request(app).get(`/api/templates?kind=site`));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.templates)).toBe(true);
+    expect(res.body.templates.every((t: { kind: string }) => t.kind === "site")).toBe(true);
+    const starter = res.body.templates.find((t: { slug: string }) => t.slug === "my-starter");
+    expect(starter).toBeDefined();
+    expect(starter.pages_count).toBe(2);
+  });
+
+  it("GET /api/templates/:id returns the template + ordered pages; 404 when unknown", async () => {
+    const idRes = await pool.query<{ id: string }>(`SELECT id FROM templates WHERE slug = 'my-starter'`);
+    const id = idRes.rows[0].id;
+    const res = await auth(request(app).get(`/api/templates/${id}`));
+    expect(res.status).toBe(200);
+    expect(res.body.template.slug).toBe("my-starter");
+    expect(res.body.pages.map((p: { slug: string }) => p.slug)).toEqual(["home", "services"]);
+
+    const missing = await auth(
+      request(app).get(`/api/templates/00000000-0000-0000-0000-000000000000`),
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it("DELETE /api/templates/:id archives (hidden from active list, still fetchable); 404 when unknown", async () => {
+    const created = await auth(
+      request(app).post(`/api/sites/${muldoonSiteId}/save-as-template`),
+    ).send({ name: "Archive Target", slug: "apitest-archive" });
+    const id = created.body.template.id;
+
+    const del = await auth(request(app).delete(`/api/templates/${id}`));
+    expect(del.status).toBe(200);
+    expect(del.body.template.status).toBe("archived");
+
+    const active = await auth(request(app).get(`/api/templates?status=active`));
+    expect(active.body.templates.find((t: { id: string }) => t.id === id)).toBeUndefined();
+
+    const archived = await auth(request(app).get(`/api/templates?status=archived`));
+    expect(archived.body.templates.find((t: { id: string }) => t.id === id)).toBeDefined();
+
+    // Still individually fetchable.
+    const detail = await auth(request(app).get(`/api/templates/${id}`));
+    expect(detail.status).toBe(200);
+    expect(detail.body.template.status).toBe("archived");
+
+    const missing = await auth(
+      request(app).delete(`/api/templates/00000000-0000-0000-0000-000000000000`),
+    );
+    expect(missing.status).toBe(404);
+  });
 });
