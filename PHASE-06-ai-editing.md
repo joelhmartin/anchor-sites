@@ -49,7 +49,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 
 ### Foundation
 
-- [ ] **6.1 — Add & pin Anthropic SDK; AI service scaffold + config**
+- [x] **6.1 — Add & pin Anthropic SDK; AI service scaffold + config**
   - Add `@anthropic-ai/sdk` (pin exact; record the version + model). Create `src/server/ai/` with a client wrapper that reads `ANTHROPIC_API_KEY` from env and has **stub / dry-run / api modes** (mirror `src/server/email/send.ts`, D-012) so no key = no spend. No endpoint yet.
   - **Tests:** mode selection (stub when no key; dry-run returns a canned proposal; api builds the right request — client mocked). Build/typecheck clean.
 
@@ -105,3 +105,10 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 21:16 UTC — Task 6.1
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** Pinned `@anthropic-ai/sdk@0.97.1` (exact). Added `src/server/ai/config.ts` (model pin `claude-sonnet-4-6`, `AI_MAX_TOKENS`, `resolveAiMode`) + `src/server/ai/client.ts` (`runMessage` with stub/dry-run/api modes mirroring `send.ts`; injectable client; model pin forced, non-overridable). No endpoint yet.
+**Tests added:** 8 (`src/server/ai/client.test.ts` — `resolveAiMode` ×3; `runMessage` modes ×5, incl. no-spend in stub/dry-run + pinned-model/raisable-max_tokens in api with the client mocked).
+**Next:** 6.2 — block catalog from the registry via `zod-to-json-schema`
+**Notes:** D-038 records SDK + model pin + the three modes + wrapper shape. Typecheck clean; full cold suite **352 / 53 files** green (was 344/52). SDK import does NOT break cold collection (the D-036 dep-scan risk did not materialize — tests inject a fake client and never load the real SDK).

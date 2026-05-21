@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anchorcorps/components": "*",
+    "@anthropic-ai/sdk": "0.97.1",
     "@google-cloud/storage": "^7.19.0",
     "@hookform/resolvers": "^3.9.0",
     "@measured/puck": "0.20.2",

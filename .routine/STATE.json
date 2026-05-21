@@ -1,10 +1,10 @@
 {
   "_comment": "Routine state. Update atomically. Never edit by hand once routine is running.",
   "notify_email": "jmartin@anchorcorps.com",
-  "current_phase": 5,
-  "current_phase_file": "PHASE-05-visual-editor.md",
-  "current_task": null,
-  "phase_started_at": "2026-05-20T17:03:00Z",
+  "current_phase": 6,
+  "current_phase_file": "PHASE-06-ai-editing.md",
+  "current_task": "6.2",
+  "phase_started_at": "2026-05-20T21:11:00Z",
   "last_commit_sha": "3d98639",
   "last_email_sent_at": null,
   "emails_sent": [],
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 344,
+    "current_pass": 352,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 285,
+    "current_pass_root": 293,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-20T18:36:00Z",
-    "notes": "PHASE 5 COMPLETE (5.1-5.11; 5.8 skipped by design): 344 across 52 files (root 285, package 59). Cold-cache full run + typecheck + build green; baseline-tests.log updated. FLAKE-RESOLVESITE surfaces ~1/3 on COLD runs (growing file set shifted ordering) — pre-existing isolation flake (1 test /healthz 403, intermittent, recovers on rerun, not Phase-5 code); all Phase-5 CI builds SUCCESS; dedicated isolation fix worth prioritizing. NOTE: a pre-existing ORDER-DEPENDENT FLAKE exists (see open_followups FLAKE-RESOLVESITE) — warm-cache full `npm test` rarely (~1/3 only in a transient cache state) fails `resolveSite.test.ts > /healthz` with 403; self-heals as the duration cache converges, and cold cache (= CI order) is deterministically green. Treated as known latent test-isolation issue, NOT a regression. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-20T21:16:00Z",
+    "notes": "P6-T6.1 done: 352 across 53 files (root 293, package 59). Phase-6 baseline was 344/52; +8 from src/server/ai/client.test.ts. Typecheck clean; full cold suite green; @anthropic-ai/sdk import does NOT break cold collection. FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",
@@ -59,5 +59,7 @@
   "phase_3_approved": true,
   "phase_4_approved": true,
   "phase_5_approved": true,
-  "phase_5_approved_note": "Operator approved Phase 5 verbally in chat 2026-05-20 ('unblock everything'). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Advanced to current_phase=5, current_task=5.1."
+  "phase_5_approved_note": "Operator approved Phase 5 verbally in chat 2026-05-20 ('unblock everything'). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Advanced to current_phase=5, current_task=5.1.",
+  "phase_6_approved": true,
+  "phase_6_approved_note": "Operator approved Phase 6 verbally in chat 2026-05-20 after the EXPAND+CONFIRM gate. Confirmed: model=claude-sonnet-4-6 (cost/latency sweet spot, swappable pin), edit-contract=tool-use ops (insert/update/delete/move_block), propose-then-apply (preview+diff, no auto-save). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 344/52 cold green. Advanced to current_phase=6, current_task=6.1."
 }

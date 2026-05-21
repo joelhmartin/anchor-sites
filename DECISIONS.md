@@ -626,3 +626,17 @@ So the precise state: the Cloud Build GitHub App **is** installed/configured on 
 **Testing:** Same gotcha as Puck (D-036) — booting a real ProseMirror `EditorView` in jsdom is fragile, so the field test **mocks `@tiptap/react`** and asserts the value↔`getHTML()` contract (content seeded from `value`; `onUpdate` → `onChange(html)`). Importing Tiptap transitively (via `buildPuckConfig`) does NOT crash on load (unlike dnd-kit's `ResizeObserver`), so it caused no dep-scan cascade. Real editing is operator-verified at `studio.localhost:3000`.
 
 **Rationale:** Keeping `html`-string storage means the renderer, AI editor (Phase 6), and revisions are all unchanged — Tiptap is purely an editing surface. A declarative override registry keeps `buildPuckConfig` generic and gives 5.7/5.8 a ready home.
+
+### D-038: Anthropic SDK + model pin; AI service modes (P6-T6.1)
+
+**Context:** Phase 6 (D-001/D-002/D-017) adds an AI editing layer that proposes schema-validated `Block[]` edits via the Anthropic API. The PHASE-06 "Decisions to record" note requires pinning the SDK + model and freezing the no-key dry-run/stub contract before the AI code spreads.
+
+**Decision:**
+- **SDK:** `@anthropic-ai/sdk` pinned **exactly `0.97.1`** (`--save-exact`; current latest). Bump deliberately.
+- **Model:** **`claude-sonnet-4-6`**, pinned as `AI_MODEL` in `src/server/ai/config.ts`. Operator chose Sonnet 4.6 (chat, 2026-05-20) as the cost/latency sweet spot over the `claude-api` skill's default Opus 4.7: ~half the per-edit cost ($3/$15 vs $5/$25 per 1M in/out), faster for an interactive panel, and every proposal is re-validated server-side (6.3) so a weaker proposal is rejected, never shipped. The pin is one line — bumping to Opus 4.7 for hard reasoning later is trivial and the edit contract + endpoint are model-agnostic. Per-edit estimate ~$0.02–0.05 (Sonnet, system+catalog prompt-cached); a full ~50-edit site build ≈ $1–2.50.
+- **Modes (mirror `src/server/email/send.ts`, D-012):** `ANTHROPIC_API_KEY` unset → `stub` (canned message, no client constructed); `=== "dry-run"` → `dry-run` (canned message; tests/smoke); any other value → `api` (real `client.messages.create` with the pinned model). Dev + tests never call the live API and never spend; prod runs `stub` until the operator provisions the key (operator prereq — no spend until then).
+- **Wrapper shape:** `runMessage(params, opts)` in `src/server/ai/client.ts` owns the pin (`model` is omitted from the param type AND forced last in the request so it can't be overridden), defaults `max_tokens` to `AI_MAX_TOKENS=4096` (raisable per-request; 6.7 may tune), and accepts an injected `client` so tests run with the SDK mocked (no network, no key). Returns `{ mode, message }`.
+
+**Rationale:** One greppable model constant + an env-driven mode switch keeps cost controllable and dev/test spend-free, matching the established email-service pattern. Client injection sidesteps the cold-run SDK dep-scan risk (the Puck-in-jsdom lesson, D-036) — tests never load a real client.
+
+**Alternatives considered:** Opus 4.7 (skill default — rejected for this per-edit feature on cost/latency; kept as a one-line escape hatch). Caret-ranged SDK (rejected — the tool-use/conversion surface must be reproducible). Reading the model from env (rejected — the pin is a recorded decision, not an ops toggle; env already carries the key).
