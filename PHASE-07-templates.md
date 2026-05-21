@@ -182,7 +182,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 441/65 green (was 435/64). Typecheck clean. **Visual QA is operator-run at studio.localhost:3000** — drag-free flows here, but the wizard selector, materialization spinner, and the save-as-template modal need a human eye. Still local — not pushed.
 
 ### 2026-05-21 16:09 UTC — Task 7.9
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** 9eecddb
 **Done:** Page-level templates (thin slice). Two endpoints in templates.ts: `POST /api/sites/:siteId/pages/:pageId/save-as-template` (captures ONE page as a `kind:'page'` template, no brand tokens; reuses createTemplate → 422/409) and `POST /api/sites/:siteId/pages/from-template` (inserts a page template's single page into a site — synchronous, ON CONFLICT (site_id,slug) 409, writes an 'import' revision; slug/title overridable, default from the template page; 400 if the template isn't kind:'page'/active, 404 unknown site/template). UI: a lazy-loaded "Add from template" form on the PagesTab (fetches `kind:'page'` templates only when opened, so the tab's mount-time fetch is unchanged) → POST pages/from-template → reload.
 **Tests added:** 10 — `tests/integration/page-templates.test.ts` (9: 401, save-page kind:'page'+empty tokens, 404 unknown page, 409 dup slug, insert default slug/title + import revision, slug override, 409 slug collision, 400 site-template misuse, 404 unknown site/template) + PagesTab.test.tsx (+1 jsdom: add-from-template flow omits slug → server default).
 **Next:** 7.10 (closeout — docs/templates.md, PLAN tick, baseline log)
