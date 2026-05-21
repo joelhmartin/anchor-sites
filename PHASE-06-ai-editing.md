@@ -107,7 +107,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 21:55 UTC — Task 6.6
-**Commit:** <pending — recorded in follow-up chore commit>
+**Commit:** bcef39d
 **Done:** "Ask AI" panel in the editor (`src/admin/pages/EditorPage.tsx` → `AskAiPanel` + an "Ask AI" toggle). Flow: instruction textarea → "Propose" `POST …/ai-edit` → renders the model `message` + `diff.summary` → **Apply** saves `proposed_blocks` via the existing save endpoint with `source:"ai"`, then `reload()` flips `loading` so the editor remounts with the applied blocks (the 5.x reload path); **Reject** discards. Does NOT import Puck (D-017) — it produces `Block[]`, the editor re-renders. Errors (incl. a 422 rejection, surfacing the server's detailed `message`) shown inline.
 **Tests added:** 4 (`EditorPage.test.tsx`, jsdom, Puck stubbed + `fetch` mocked): instruction previews the diff; Apply POSTs `source:'ai'` + editor reloads with applied blocks; Reject discards without saving; endpoint rejection surfaced.
 **Next:** 6.7 — prompt caching, guardrails, cost
