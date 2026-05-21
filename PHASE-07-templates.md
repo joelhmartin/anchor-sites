@@ -154,7 +154,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Notes:** Full cold suite 420/61 green (was 416/61). Typecheck clean. Still local — not pushed.
 
 ### 2026-05-21 15:47 UTC — Task 7.5
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** d0ac371
 **Done:** `template.materialize` pg-boss job (D-042). `src/server/jobs/materialize-template.ts` (`handleMaterializeTemplate({siteId,templateId})`): loads site + template, in one transaction inserts each template page into `pages` with `ON CONFLICT (site_id, slug) DO NOTHING` (created get a `source:'import'` revision), adopts the template's brand tokens only when the site has none, then evicts the resolver cache for the site's hostnames. Idempotent by construction (re-run = 0 created / N skipped, tokens untouched). Captured blocks keep source `asset_id`s — media shared by reference (D-043). Registered as `TEMPLATE_MATERIALIZE` in jobs/index.ts. Recorded **D-041** (data model), **D-042** (pg-boss materialization), **D-043** (media-by-reference).
 **Tests added:** 5 — `tests/integration/materialize-template.test.ts` (materialize empty site + adopt tokens + import revisions; idempotent re-run; doesn't override existing tokens; slug-collision skip preserves the existing page; throws on unknown site/template).
 **Next:** 7.6 (create-site-from-template endpoint)
