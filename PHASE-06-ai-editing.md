@@ -107,7 +107,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 21:50 UTC — Task 6.5
-**Commit:** <pending — recorded in follow-up chore commit>
+**Commit:** 465b1b6
 **Done:** Apply path = the **existing** `POST …/pages/:pageId` save endpoint called with `source:"ai"` — no new server code (it already re-validates via the shared validator and writes a `page_revisions` row). Recorded **D-040** (propose-then-apply: preview never saves; apply reuses save). End-to-end test proves the full cycle: ai-edit preview → save `proposed_blocks` with `source:"ai"` → page updated + revision `source='ai'` → revisions list surfaces it.
 **Tests added:** 1 (`ai-edit.test.ts` apply case). Fully isolated on a dedicated throwaway page created in `beforeAll` and dropped in `afterAll` (CASCADE) so the seeded muldoon home stays pristine — `page-render.test.ts` still green.
 **Next:** 6.6 — "Ask AI" panel in the editor
