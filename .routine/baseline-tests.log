@@ -204,3 +204,56 @@ Notes:
 
 Single command runs both:
   DATABASE_URL=... TEST_DATABASE_URL=... npm test
+
+================================================================================
+2026-05-21 — Phase 7 close (Tasks 7.1–7.10, template system)
+Suite: vitest run (DATABASE_URL + TEST_DATABASE_URL set)
+Result: 451 passed, 0 skipped, 0 failed across 66 files
+        (root 392, package components 59). +57 over the 394/58 Phase-6 close.
+Verified deterministic under a cleared sequencer cache (= CI cold glob order).
+
+New test files this phase:
+  ✓ tests/integration/templates-repo.test.ts (8)
+      createTemplate (+ordered pages, brand token), getTemplate ordering/null,
+      listTemplates kind/status filter + pages_count, archive (+idempotent),
+      dup-slug conflict, block-validation rejection persists nothing
+  ✓ src/server/templates/schema.test.ts (4, DB-free)
+      validateTemplatePages valid/invalid, input defaults + bad-slug, kind enum
+  ✓ tests/integration/templates-api.test.ts (11)
+      save-as-template (capture all/subset/brand toggle, 401/400/404/409) +
+      templates admin API (list/detail/archive, 404/401)
+  ✓ tests/integration/materialize-template.test.ts (5)
+      empty-site materialize + adopt tokens + import revisions, idempotent
+      re-run, no-override existing tokens, slug-collision skip, throws on
+      unknown site/template
+  ✓ tests/integration/from-template.test.ts (8)
+      create site + enqueue + (stubbed worker) pages/tokens land, operator
+      brand tokens not overridden, 400 bad slug, 404 unknown template,
+      400 page-kind/archived template, 409 dup site slug
+  ✓ tests/integration/seed-templates.test.ts (2)
+      starter template valid ordered pages; idempotent re-run
+  ✓ tests/integration/page-templates.test.ts (9)
+      save-page-as-template (kind:page, no tokens, 401/404/409) +
+      pages/from-template (default slug/title + import revision, slug override,
+      409 collision, 400 site-template misuse, 404 unknown site/template)
+  ✓ src/admin/components/SaveAsTemplateDialog.test.tsx (4, jsdom)
+  + extended NewSiteWizard.test.tsx (6, jsdom), PagesTab.test.tsx (5, jsdom),
+    schema.test.ts (+3 template-table assertions)
+
+Notes:
+  - New tables templates + template_pages (D-041); migration has forward +
+    rollback; down/up round-trip asserts 7 tables.
+  - Materialization is a pg-boss job (D-019/D-042), idempotent (ON CONFLICT
+    DO NOTHING + adopt-tokens-if-empty). Media shared by reference (D-043).
+  - Captured blocks re-validated through the ONE shared registry validator
+    (D-039) — a template can't hold blocks the save path would reject.
+  - Studio UI jsdom-tested with fetch mocked (no Puck involved). Visual QA is
+    operator-run at studio.localhost:3000.
+  - FLAKE: the pre-existing single-fork/shared-DB ordering flake
+    (FLAKE-RESOLVESITE class) can now also surface in templates-api under a
+    WARM local cache; cold/CI is deterministic. Re-run cold
+    (rm -rf node_modules/.vite/vitest) before investigating a non-resolveSite
+    integration failure. Isolation-hardening fix remains an open follow-up.
+
+Single command runs all:
+  DATABASE_URL=... TEST_DATABASE_URL=... npm test
