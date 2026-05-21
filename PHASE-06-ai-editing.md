@@ -107,7 +107,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 21:59 UTC — Task 6.7
-**Commit:** <pending — recorded in follow-up chore commit>
+**Commit:** 2ddcf68
 **Done:** Caching + guardrails + cost (per the `claude-api` skill). (1) **Prompt caching** — the request sends `system` as a content-block array with `cache_control:{type:"ephemeral"}`; tools render before system, so the one breakpoint caches **tools + system + catalog** (the stable prefix). The volatile page blocks + instruction stay in `messages` after the breakpoint. System text is byte-stable (constant intro + the deterministic 6.2 catalog), so it caches across requests. (2) **Guardrail** — `insert_block.block.type` is now constrained to the registered-types `enum` (built per request from the catalog) to steer the model; the server-side `applyAndValidate` re-validation (D-039) is still the hard gate. (3) **Rate limit** — a dedicated `aiLimiter` (default **30/min**, separate from the save limiter, since AI calls cost money); `max_tokens` capped at `AI_MAX_TOKENS=4096`.
 **Tests added:** +1 net — `propose.test` now asserts the cached system array + `cache_control` + the registered-type enum (and `not` an unknown type); `ai-edit.test` adds a 429 rate-limit test. The unknown-type guardrail rejection was already covered.
 **Next:** 6.8 — docs (`docs/ai-editing.md`) + plan tick
