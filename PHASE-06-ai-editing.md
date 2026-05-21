@@ -59,7 +59,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 
 ### Edit contract + endpoint
 
-- [ ] **6.3 — Schema-validated edit-operations contract**
+- [x] **6.3 — Schema-validated edit-operations contract**
   - Define the mutation set the model emits and an applier that turns ops → a new `Block[]`. Re-validate every resulting block against the registry (extract/reuse `validateBlocks` from `src/server/routes/admin-pages.ts` so server + AI share one validator). Decide tool-use vs. structured output (record D-0xx). Unknown type / invalid props → rejected, never applied.
   - **Tests:** each op (insert/update/delete/move) applied to a `Block[]` yields the expected `Block[]`; invalid op or unregistered type is rejected; ids preserved/generated correctly.
 
@@ -105,6 +105,13 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 ## Completion log
 
 <!-- Routine appends entries below this line, newest first -->
+
+### 2026-05-20 21:38 UTC — Task 6.3
+**Commit:** <pending — recorded in follow-up chore commit>
+**Done:** Edit-op contract + applier + shared validator. Extracted `blockShape` + `validateBlocks` from `admin-pages.ts` into `src/blocks/validate.ts` (save route now imports it — behavior unchanged). `src/server/ai/edit-ops.ts`: Zod discriminated union (`insert_block`/`update_block`/`delete_block`/`move_block`, `place` enum default `end`), pure `applyEditOps` (structuredClone, fail-fast on `missing_id`/`bad_placement`, nanoid ids for new blocks), and `applyAndValidate` (apply → `validateBlocks` guardrail; unknown type / invalid props / missing id rejected, never applied).
+**Tests added:** 14 (`src/server/ai/edit-ops.test.ts`) — contract defaults + unknown-op rejection, each op, start/end/after placement, purity, missing-id + bad-placement, and `applyAndValidate` accept / unknown-type / invalid-props / apply-stage. Save-route suite (19 tests) re-run green — the extraction is behavior-preserving.
+**Next:** 6.4 — AI-edit endpoint (preview, no auto-save)
+**Notes:** D-039 records the tool-use-ops contract + the single shared validator. Full cold suite **370 / 55 files** green.
 
 ### 2026-05-20 21:32 UTC — Task 6.2
 **Commit:** e0a01f9

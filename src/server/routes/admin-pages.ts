@@ -4,18 +4,13 @@ import { z } from "zod";
 import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
-import { getBlock } from "../../blocks/registry.js";
 import { provisionSiteHostname, siteIdFromSlug } from "../provisioning/orchestrator.js";
 import { brandTokensSchema } from "../../blocks/brand-tokens.js";
-// Side-effect: register the three static block types so saves validate.
+// Shared block validator (P6-T6.3) — the AI editor uses the same one, so the
+// save path and AI path can never disagree about what's a valid block.
+import { blockShape, validateBlocks, type BlockShape } from "../../blocks/validate.js";
+// Side-effect: register the static block types so saves validate.
 import "../../blocks/index.js";
-
-const blockShape = z.object({
-  id: z.string().min(1),
-  type: z.string().min(1),
-  props: z.record(z.unknown()).default({}),
-  children: z.array(z.unknown()).optional(),
-});
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
@@ -29,40 +24,6 @@ const savePayload = z.object({
 });
 
 type SavePayload = z.infer<typeof savePayload>;
-type BlockShape = z.infer<typeof blockShape>;
-
-type ValidationFailure = {
-  index: number;
-  id: string;
-  type: string;
-  reason: "unknown_type" | "invalid_props";
-  errors?: { path: string; message: string }[];
-};
-
-function validateBlocks(blocks: BlockShape[]): ValidationFailure[] {
-  const failures: ValidationFailure[] = [];
-  blocks.forEach((block, index) => {
-    const entry = getBlock(block.type);
-    if (!entry) {
-      failures.push({ index, id: block.id, type: block.type, reason: "unknown_type" });
-      return;
-    }
-    const parsed = entry.schema.safeParse(block.props);
-    if (!parsed.success) {
-      failures.push({
-        index,
-        id: block.id,
-        type: block.type,
-        reason: "invalid_props",
-        errors: parsed.error.errors.map((e) => ({
-          path: e.path.join(".") || "(root)",
-          message: e.message,
-        })),
-      });
-    }
-  });
-  return failures;
-}
 
 export type AdminPagesOptions = {
   pool?: Pool;
