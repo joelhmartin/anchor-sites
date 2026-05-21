@@ -59,6 +59,19 @@ type SourcePageRow = {
   seo: Record<string, unknown>;
 };
 
+const savePageAsTemplatePayload = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(2000).optional(),
+  slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen").optional(),
+});
+
+const pageFromTemplatePayload = z.object({
+  template_id: z.string().uuid(),
+  /** Slug for the new page; defaults to the template page's slug. */
+  slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen").optional(),
+  title: z.string().min(1).max(200).optional(),
+});
+
 const fromTemplatePayload = z.object({
   slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen"),
   display_name: z.string().min(1).max(200),
@@ -189,6 +202,148 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
           res.status(422).json({ error: "template block validation failed", failures: err.failures });
           return;
         }
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/pages/:pageId/save-as-template — capture ONE page
+  // as a reusable `kind:'page'` template (no brand tokens). (P7-T7.9)
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/pages/:pageId/save-as-template",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = savePageAsTemplatePayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({ path: e.path.join(".") || "(root)", message: e.message })),
+        });
+        return;
+      }
+      const { siteId, pageId } = req.params;
+      const { name, description } = parsed.data;
+      const slug = parsed.data.slug ?? slugifyName(name);
+
+      try {
+        const pageRes = await pool.query<{ slug: string; title: string; blocks: Block[]; seo: Record<string, unknown> }>(
+          `SELECT slug, title, blocks, seo FROM pages WHERE id = $1 AND site_id = $2`,
+          [pageId, siteId],
+        );
+        if (pageRes.rowCount === 0) {
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+        const page = pageRes.rows[0];
+
+        const { template } = await createTemplate(
+          {
+            slug,
+            name,
+            description,
+            kind: "page",
+            source_site_id: siteId,
+            pages: [{ slug: page.slug, title: page.title, blocks: page.blocks ?? [], seo: page.seo ?? {} }],
+          },
+          { pool },
+        );
+        res.status(201).json({ template });
+      } catch (err) {
+        if (err instanceof TemplateSlugConflictError) {
+          res.status(409).json({ error: "a template with that slug already exists", slug: err.slug });
+          return;
+        }
+        if (err instanceof TemplateValidationError) {
+          res.status(422).json({ error: "template block validation failed", failures: err.failures });
+          return;
+        }
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/pages/from-template — insert a `kind:'page'`
+  // template's single page into an existing site. Synchronous (one page, no
+  // job): writes the page + an 'import' revision; 409 on slug collision.
+  // (P7-T7.9)
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/pages/from-template",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = pageFromTemplatePayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({ path: e.path.join(".") || "(root)", message: e.message })),
+        });
+        return;
+      }
+      const { siteId } = req.params;
+      const { template_id, slug: slugOverride, title: titleOverride } = parsed.data;
+
+      try {
+        const siteOk = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const found = await getTemplate(template_id, { pool });
+        if (!found) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        if (found.template.kind !== "page") {
+          res.status(400).json({ error: "template is not a page template" });
+          return;
+        }
+        if (found.template.status !== "active") {
+          res.status(400).json({ error: "template is archived" });
+          return;
+        }
+        const tplPage = found.pages[0];
+        if (!tplPage) {
+          res.status(400).json({ error: "template has no page to insert" });
+          return;
+        }
+        const slug = slugOverride ?? tplPage.slug;
+        const title = titleOverride ?? tplPage.title;
+
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          const ins = await client.query<{ id: string }>(
+            `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+             VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'draft')
+             ON CONFLICT (site_id, slug) DO NOTHING
+             RETURNING id`,
+            [siteId, slug, title, JSON.stringify(tplPage.blocks ?? []), JSON.stringify(tplPage.seo ?? {})],
+          );
+          if (ins.rowCount === 0) {
+            await client.query("ROLLBACK");
+            res.status(409).json({ error: "a page with that slug already exists on this site" });
+            return;
+          }
+          const pageId = ins.rows[0].id;
+          await client.query(
+            `INSERT INTO page_revisions (page_id, blocks, seo, source)
+             VALUES ($1, $2::jsonb, $3::jsonb, 'import')`,
+            [pageId, JSON.stringify(tplPage.blocks ?? []), JSON.stringify(tplPage.seo ?? {})],
+          );
+          await client.query("COMMIT");
+          res.status(201).json({ page: { id: pageId, site_id: siteId, slug, title, status: "draft" } });
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw err;
+        } finally {
+          client.release();
+        }
+      } catch (err) {
         next(err);
       }
     },

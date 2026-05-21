@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 7,
   "current_phase_file": "PHASE-07-templates.md",
-  "current_task": "7.9",
+  "current_task": "7.10",
   "phase_started_at": "2026-05-21T15:26:44Z",
   "last_commit_sha": "27dd4b0",
   "last_email_sent_at": null,
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 441,
+    "current_pass": 451,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 382,
+    "current_pass_root": 392,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-21T16:04:00Z",
-    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 tables (D-041). 7.2 schema+repo. 7.3 save-as-template. 7.4 templates admin API. 7.5 materialize pg-boss job (D-042/D-043). 7.6 from-template endpoint. 7.7 starter seed. 7.8 DONE 2026-05-21: Studio UI — NewSiteWizard 'Start from' template path (+poll) + SaveAsTemplateDialog wired into SiteDetailView. jsdom-tested (Puck not involved; fetch mocked). VISUAL QA operator-run at studio.localhost:3000. Now 441 across 65 files (root 382, package 59), cold-green (= CI order). NOTE: the pre-existing single-fork/shared-DB ordering flake class (FLAKE-RESOLVESITE) now occasionally manifests in tests/integration/templates-api.test.ts too under a WARM local cache (one transient fail of '400s when page_ids …', green on re-run + isolation + cold); the added DB-touching test files shifted vitest's duration-based file ordering. Cold/CI deterministic green. Dedicated isolation-hardening fix (split node/jsdom vitest projects, or drop singleFork) is still the recommended open follow-up — NOT done (avoids destabilizing the suite mid-phase). If a non-resolveSite integration test fails under warm cache, re-run cold (rm -rf node_modules/.vite/vitest) before investigating. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-21T16:09:00Z",
+    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 tables (D-041). 7.2 schema+repo. 7.3 save-as-template. 7.4 templates admin API. 7.5 materialize pg-boss job (D-042/D-043). 7.6 from-template endpoint. 7.7 starter seed. 7.8 Studio UI (wizard template path + SaveAsTemplateDialog). 7.9 DONE 2026-05-21: page-level templates — POST pages/:pageId/save-as-template + POST pages/from-template (synchronous, import revision) + lazy 'Add from template' on PagesTab. Now 451 across 66 files (root 392, package 59), cold-green (= CI order). Only 7.10 (closeout: docs/templates.md, PLAN tick, baseline log) remains, then STOP at the 7->7.5 boundary. VISUAL QA operator-run at studio.localhost:3000. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. NOTE: the pre-existing single-fork/shared-DB ordering flake class (FLAKE-RESOLVESITE) now occasionally manifests in tests/integration/templates-api.test.ts too under a WARM local cache (one transient fail of '400s when page_ids …', green on re-run + isolation + cold); the added DB-touching test files shifted vitest's duration-based file ordering. Cold/CI deterministic green. Dedicated isolation-hardening fix (split node/jsdom vitest projects, or drop singleFork) is still the recommended open follow-up — NOT done (avoids destabilizing the suite mid-phase). If a non-resolveSite integration test fails under warm cache, re-run cold (rm -rf node_modules/.vite/vitest) before investigating. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",

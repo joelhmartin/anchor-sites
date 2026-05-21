@@ -80,6 +80,42 @@ describe("PagesTab (P4-T4.13)", () => {
     expect(screen.getByText(/editor route reached/)).toBeTruthy();
   });
 
+  it("adds a page from a page template (P7-T7.9) and refreshes the list", async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/templates")) {
+        return json({ templates: [{ id: "pt1", name: "Promo block", pages_count: 1 }] });
+      }
+      if (url === "/api/sites/s1/pages/from-template" && method === "POST") {
+        return json({ page: { id: "p2", slug: "promo", title: "Promo", status: "draft" } }, 201);
+      }
+      getCount += 1;
+      return json({ pages: getCount === 1 ? [PAGE_A] : [PAGE_A, { ...PAGE_B, slug: "promo", title: "Promo" }] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Add from template" }));
+    await waitFor(() => expect(screen.getByRole("option", { name: "Promo block" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Page template"), { target: { value: "pt1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add page" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/pages/from-template" && (c[1] as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+    });
+    const post = fetchMock.mock.calls.find((c) => String(c[0]) === "/api/sites/s1/pages/from-template")!;
+    const body = JSON.parse((post[1] as RequestInit).body as string);
+    expect(body.template_id).toBe("pt1");
+    expect(body.slug).toBeUndefined(); // omitted → server defaults to the template's slug
+  });
+
   it("surfaces a duplicate-slug 409 inline", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method ?? "GET";
