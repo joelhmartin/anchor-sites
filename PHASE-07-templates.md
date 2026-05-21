@@ -126,7 +126,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 <!-- Append one timestamped entry per sub-checkbox, newest at the bottom. -->
 
 ### 2026-05-21 15:30 UTC — Task 7.1
-**Commit:** (pending — recorded in follow-up chore)
+**Commit:** a32a1f6
 **Done:** `templates` + `template_pages` tables (D-041) via migration `1747574000000_templates.cjs` (forward + rollback). `templates`: slug UNIQUE, kind CHECK('site'|'page'), status CHECK, brand_tokens jsonb, source_site_id FK ON DELETE SET NULL, updated_at trigger reusing `touch_updated_at`. `template_pages`: UNIQUE(template_id,slug), GIN(blocks), (template_id,sort_order) index, CASCADE from templates. Migration applies clean on dev; down/up round-trips clean. `docs/data-model.md` updated (templates moved from reserved → real).
 **Tests added:** 3 (in `tests/integration/schema.test.ts`) — templates/template_pages exist + unique slug + kind CHECK + GIN; template_pages CASCADE + source_site_id SET NULL; templates updated_at trigger. Updated the down/up round-trip test to expect 7 tables.
 **Next:** 7.2 (template Zod schema + repository)
