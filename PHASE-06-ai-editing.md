@@ -107,7 +107,7 @@ confirm in the expansion). Knowledge cutoff: latest family is Claude 4.x.
 <!-- Routine appends entries below this line, newest first -->
 
 ### 2026-05-20 22:02 UTC — Task 6.8 — PHASE 6 COMPLETE
-**Commit:** <pending — recorded in follow-up chore commit>
+**Commit:** aae02e7
 **Done:** `docs/ai-editing.md` (the `Block[]` mutation surface, catalog/prompt, tool-use edit contract, the endpoint, the Ask-AI panel, model/secret config, save+revision reuse, Puck decoupling, caching + cost, testing). Ticked the `PLAN.md` Phase 6 row. Appended `.routine/baseline-tests.log` (Phase 6 close, 394/58). Decisions **D-038** (SDK + model), **D-039** (edit contract + shared validator), **D-040** (propose-then-apply) were recorded as the tasks landed.
 **Tests added:** 0 (docs/plan/log). Final certification: typecheck clean, full cold suite **394 / 58 files** green.
 **Next:** phase complete — STOP at the 6→7 boundary (wait for a fresh `.routine/NEXT-PHASE-APPROVED`).
