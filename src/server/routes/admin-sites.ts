@@ -5,8 +5,8 @@ import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { brandTokensSchema } from "../../blocks/brand-tokens.js";
-import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
 import { evictSiteCache } from "../../middleware/resolveSite.js";
+import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-site.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -91,37 +91,11 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-
-        const dup = await client.query(`SELECT 1 FROM sites WHERE slug = $1`, [slug]);
-        if (dup.rowCount && dup.rowCount > 0) {
-          await client.query("ROLLBACK");
-          res.status(409).json({ error: "slug already in use" });
-          return;
-        }
-
-        const siteRes = await client.query<{ id: string }>(
-          `INSERT INTO sites (slug, display_name, default_brand_tokens)
-           VALUES ($1, $2, $3::jsonb)
-           RETURNING id`,
-          [slug, display_name, JSON.stringify(default_brand_tokens ?? {})],
-        );
-        const siteId = siteRes.rows[0].id;
-
-        // Canonical hostname + local-dev hostname (matches db/seed.ts).
-        const cfg = getDomainConfig();
-        const canonical = hostnameForSlug(slug, cfg);
-        const localhostName = `${slug}.localhost`;
-        await client.query(
-          `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
-           VALUES ($1, $2, true, 'pending', 'pending')`,
-          [siteId, canonical],
-        );
-        await client.query(
-          `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
-           VALUES ($1, $2, false, 'verified', 'active')`,
-          [siteId, localhostName],
-        );
-
+        const { siteId, canonical } = await createSiteWithDomains(client, {
+          slug,
+          displayName: display_name,
+          brandTokens: default_brand_tokens,
+        });
         await client.query("COMMIT");
         res.status(201).json({
           site: {
@@ -135,6 +109,10 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         });
       } catch (err) {
         await client.query("ROLLBACK").catch(() => undefined);
+        if (err instanceof SiteSlugConflictError) {
+          res.status(409).json({ error: "slug already in use" });
+          return;
+        }
         next(err);
       } finally {
         client.release();

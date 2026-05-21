@@ -82,7 +82,7 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
   via the jobs harness (`bootJobs(pool, { extraHandlers })` + reset). Record
   **D-042** + **D-043**.
 
-- [ ] **7.6 — Create-site-from-template endpoint.**
+- [x] **7.6 — Create-site-from-template endpoint.**
   Extract the site-creation logic now inline in `POST /api/sites` into a shared
   helper (`createSiteWithDomains(client, {...})`) and reuse it.
   `POST /api/sites/from-template` `{ slug, display_name, template_id,
@@ -159,3 +159,10 @@ replace — the Phase-4 wizard and the Phase-1 provisioning orchestrator.
 **Tests added:** 5 — `tests/integration/materialize-template.test.ts` (materialize empty site + adopt tokens + import revisions; idempotent re-run; doesn't override existing tokens; slug-collision skip preserves the existing page; throws on unknown site/template).
 **Next:** 7.6 (create-site-from-template endpoint)
 **Notes:** Full cold suite 425/62 green (was 420/61). Typecheck clean. The new queue's registration is exercised by the existing jobs boot test. Still local — not pushed.
+
+### 2026-05-21 15:53 UTC — Task 7.6
+**Commit:** (pending — recorded in follow-up chore)
+**Done:** Create-site-from-template. Extracted the inline site-creation logic from `POST /api/sites` into `src/server/sites/create-site.ts` (`createSiteWithDomains(client, …)` + `SiteSlugConflictError`); admin-sites POST /sites now uses it (behavior unchanged — its 25 tests still pass). New `POST /api/sites/from-template` `{ slug, display_name, template_id, brand_tokens? }`: validates the template exists, is `kind:'site'`, and active (404/400 otherwise); creates the site + canonical/localhost domains in a transaction (409 on slug conflict); after commit enqueues `template.materialize` deduped by `${siteId}:${templateId}` (D-042). Enqueue is injectable (`enqueueMaterialize`) so tests stub pg-boss; best-effort with a `job.queued` flag so a failed enqueue doesn't lose the created site. Provisioning stays the separate explicit step; the UI polls site detail (pages_count) for completion.
+**Tests added:** 8 — `tests/integration/from-template.test.ts` (401, create→enqueue→pages+tokens land via a synchronous handler stub, operator brand tokens not overridden, 400 bad slug, 404 unknown template, 400 page-kind template, 400 archived, 409 dup slug). admin-sites 25 tests still green (refactor regression-safe).
+**Next:** 7.7 (seed a starter template)
+**Notes:** Full cold suite 433/63 green (was 425/62), verified DETERMINISTIC under cleared sequencer cache (= CI cold order) ×2. One transient FAIL of `templates-api > "400s when page_ids …"` appeared in a single warm-cache run, green on re-run and in isolation — the SAME pre-existing single-fork/shared-DB ordering flake class as FLAKE-RESOLVESITE (the added DB-touching test files shifted vitest's duration-based file order); cold/CI is deterministic. The dedicated isolation-hardening fix (split node vs jsdom projects / drop singleFork) remains the recommended open follow-up — NOT bundled here to avoid destabilizing the suite mid-phase. Typecheck clean. Still local — not pushed.

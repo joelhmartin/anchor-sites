@@ -3,7 +3,7 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 7,
   "current_phase_file": "PHASE-07-templates.md",
-  "current_task": "7.6",
+  "current_task": "7.7",
   "phase_started_at": "2026-05-21T15:26:44Z",
   "last_commit_sha": "d0ac371",
   "last_email_sent_at": null,
@@ -36,13 +36,13 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 425,
+    "current_pass": 433,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 366,
+    "current_pass_root": 374,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-21T15:47:00Z",
-    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 templates+template_pages tables (D-041). 7.2 template schema+repo. 7.3 save-as-template endpoint. 7.4 templates admin API. 7.5 DONE 2026-05-21: template.materialize pg-boss job (src/server/jobs/materialize-template.ts, D-042) — idempotent page insert + import revisions + brand-token adopt-if-empty + cache eviction; media shared by reference (D-043). Recorded D-041/D-042/D-043. Now 425 across 62 files (root 366, package 59) from the 394/58 Phase-6 close baseline. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
+    "last_run_at": "2026-05-21T15:53:00Z",
+    "notes": "PHASE 7 IN PROGRESS (template system). 7.1 tables (D-041). 7.2 schema+repo. 7.3 save-as-template. 7.4 templates admin API. 7.5 materialize pg-boss job (D-042/D-043). 7.6 DONE 2026-05-21: POST /api/sites/from-template (+ extracted src/server/sites/create-site.ts shared by admin-sites). Now 433 across 63 files (root 374, package 59), DETERMINISTIC under cleared sequencer cache (= CI cold order) x2. NOTE: the pre-existing single-fork/shared-DB ordering flake class (FLAKE-RESOLVESITE) now occasionally manifests in tests/integration/templates-api.test.ts too under a WARM local cache (one transient fail of '400s when page_ids …', green on re-run + isolation + cold); the added DB-touching test files shifted vitest's duration-based file ordering. Cold/CI deterministic green. Dedicated isolation-hardening fix (split node/jsdom vitest projects, or drop singleFork) is still the recommended open follow-up — NOT done (avoids destabilizing the suite mid-phase). If a non-resolveSite integration test fails under warm cache, re-run cold (rm -rf node_modules/.vite/vitest) before investigating. Typecheck clean; full cold suite green. NOT yet pushed — holding the phase's first prod-deploying push (CI=deploy, D-035) for an operator checkpoint. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE-RESOLVESITE (see open_followups) still latent — pre-existing order-dependent isolation flake: `resolveSite.test.ts > /healthz` rarely 403s on a transient warm-cache order, self-heals, cold cache (= CI) deterministically green. NOT a regression; if exactly that one test fails, rerun. Run with: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
     "CI trigger: WIRED + RESOLVED 2026-05-20. Operator connected joelhmartin/anchor-sites via the Console; `gcloud builds triggers import --source=cloudbuild-trigger.yaml --region=global` then succeeded → trigger `anchor-sites-main` (id 6db12fd3-8701-4333-90f1-ec135fda8a1e), repo anchor-sites, branch ^main$, config cloudbuild.yaml. Pushes to main now auto build→migrate→deploy. Deploys are NO LONGER manual. (Re-import the committed cloudbuild-trigger.yaml if the trigger ever needs recreating.)",

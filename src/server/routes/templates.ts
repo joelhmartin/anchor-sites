@@ -13,7 +13,16 @@ import {
   TemplateSlugConflictError,
 } from "../templates/repo.js";
 import { templateKindSchema, templateStatusSchema } from "../templates/schema.js";
+import { brandTokensSchema } from "../../blocks/brand-tokens.js";
+import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-site.js";
+import { getBoss, TEMPLATE_MATERIALIZE } from "../jobs/index.js";
 import type { Block } from "../../blocks/types.js";
+
+/** Enqueue a template-materialization job. Injectable so tests stub pg-boss. */
+export type MaterializeEnqueue = (input: {
+  siteId: string;
+  templateId: string;
+}) => Promise<{ id: string | null }>;
 
 /**
  * Template HTTP surface (Phase 7). Save a site (or page, 7.9) as a reusable
@@ -50,9 +59,20 @@ type SourcePageRow = {
   seo: Record<string, unknown>;
 };
 
+const fromTemplatePayload = z.object({
+  slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen"),
+  display_name: z.string().min(1).max(200),
+  template_id: z.string().uuid(),
+  /** Optional brand tokens for the new site. When omitted, the materialization
+   * job adopts the template's tokens (D-042). */
+  brand_tokens: brandTokensSchema.optional(),
+});
+
 export type TemplatesRouterOptions = {
   pool?: Pool;
   saveRateLimit?: RateLimitOptions;
+  /** Override the materialization enqueue (tests stub pg-boss). */
+  enqueueMaterialize?: MaterializeEnqueue;
 };
 
 export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
@@ -60,6 +80,20 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
   const router = Router();
   const admin = requireAdmin();
   const saveLimiter = rateLimit(opts.saveRateLimit ?? { max: 20, windowMs: 60_000 });
+
+  // Default enqueue → pg-boss, deduped per (site, template) so a double-submit
+  // doesn't run materialization twice (D-042). getBoss() is called lazily at
+  // request time so importing this module never requires a booted worker.
+  const enqueueMaterialize: MaterializeEnqueue =
+    opts.enqueueMaterialize ??
+    (async ({ siteId, templateId }) => {
+      const id = await getBoss().send(
+        TEMPLATE_MATERIALIZE,
+        { siteId, templateId },
+        { singletonKey: `${siteId}:${templateId}` },
+      );
+      return { id };
+    });
 
   // -------------------------------------------------------------------------
   // POST /api/sites/:siteId/save-as-template — capture a site as a reusable
@@ -156,6 +190,95 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
           return;
         }
         next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/from-template — create a new site from a site template
+  // (P7-T7.6). Creates the site + canonical domains (reusing the shared
+  // primitive), then enqueues materialization of the template's pages (D-042).
+  // Does NOT provision the public hostname — that stays the explicit
+  // /provision step. The UI polls site detail (pages_count) for completion.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/from-template",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = fromTemplatePayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+      const { slug, display_name, template_id, brand_tokens } = parsed.data;
+
+      const found = await getTemplate(template_id, { pool }).catch((err) => {
+        next(err);
+        return undefined;
+      });
+      if (res.headersSent) return;
+      if (!found) {
+        res.status(404).json({ error: "template not found" });
+        return;
+      }
+      if (found.template.kind !== "site") {
+        res.status(400).json({ error: "template is not a site template" });
+        return;
+      }
+      if (found.template.status !== "active") {
+        res.status(400).json({ error: "template is archived" });
+        return;
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const { siteId, canonical } = await createSiteWithDomains(client, {
+          slug,
+          displayName: display_name,
+          brandTokens: brand_tokens,
+        });
+        await client.query("COMMIT");
+
+        // Enqueue after commit so the job sees the committed site. Best-effort:
+        // the site exists regardless; a failed enqueue is reported so the
+        // operator can retry rather than losing the created site.
+        let job: { queued: boolean; id?: string | null; error?: string };
+        try {
+          const r = await enqueueMaterialize({ siteId, templateId: template_id });
+          job = { queued: true, id: r.id };
+        } catch (e) {
+          job = { queued: false, error: e instanceof Error ? e.message : String(e) };
+        }
+
+        res.status(201).json({
+          site: {
+            id: siteId,
+            slug,
+            display_name,
+            status: "active",
+            default_brand_tokens: brand_tokens ?? {},
+            canonical_hostname: canonical,
+          },
+          template_id,
+          job,
+        });
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        if (err instanceof SiteSlugConflictError) {
+          res.status(409).json({ error: "slug already in use" });
+          return;
+        }
+        next(err);
+      } finally {
+        client.release();
       }
     },
   );
