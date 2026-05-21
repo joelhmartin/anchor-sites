@@ -27,6 +27,29 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-21 — Phase 7 template system: save-as-template + new-from-template
+**Milestone ID:** phase7-complete-prod
+**Phase/Task:** Phase 7 complete (7.1–7.10)
+**Commit:** pushed `85a2848..1568865` → CI deploying (trigger `anchor-sites-main`)
+
+**What to look at:** (at **https://studio.anchorcorps.com**, or `studio.localhost:3000` locally)
+- **New site → "Start from":** pick **Starter** (or any saved template) instead of *Blank site*. The wizard skips the brand-colors step, creates the site, shows "Creating pages…" while the materialization job runs, then drops you on the populated Pages tab.
+- **Save as template:** open any site → header **"Save as template"** → name it, pick which pages → it becomes a reusable template.
+- **Add from template:** a site's **Pages** tab → **"Add from template"** → insert a single-page template into the site.
+- API: `GET /api/templates`, `POST /api/sites/from-template`, `POST /api/sites/:id/save-as-template` (admin token).
+
+**What's new since last demo:**
+- Whole template layer: `templates` + `template_pages` tables, save-as-template (site + page), list/detail/archive, create-site-from-template via an idempotent pg-boss materialization job, page-from-template, and the Studio UI for all of it. (Phases 5 + 6 — the Puck visual editor and the AI editing layer — also landed between this and the Phase-4 entry; their demos were given in chat.)
+- A built-in **Starter** template seed.
+
+**Known limitations:**
+- **Prod picker is empty until you run `npm run db:seed-templates` against prod** (CI does not auto-seed).
+- Media is shared by reference (D-043) — a template's images render from the source site's immutable GCS URLs; no per-site media copy yet (Phase 12 follow-up).
+- Auth is still the interim `X-Admin-Token` (Phase 8). Live AI still needs `ANTHROPIC_API_KEY` (prod = stub).
+
+**Next visible thing coming:**
+Phase 7.5 — plugin / integration framework (D-016): enable/disable per-site integrations from Studio.
+
 ### 2026-05-20 — Phase 4 admin control hub LIVE in prod + CI auto-deploy
 **Milestone ID:** phase4-complete-prod-live
 **Phase/Task:** Phase 4 complete (4.1–4.16) + D-035
