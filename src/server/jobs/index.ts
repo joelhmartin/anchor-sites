@@ -5,8 +5,13 @@ import {
   handleMediaProcessUpload,
   type MediaProcessUploadInput,
 } from "./media-process-upload.js";
+import {
+  handleMaterializeTemplate,
+  type MaterializeTemplateInput,
+} from "./materialize-template.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
+export const TEMPLATE_MATERIALIZE = "template.materialize";
 
 /**
  * pg-boss bootstrap (D-030, P3-T3.8).
@@ -136,6 +141,12 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(MEDIA_PROCESS_UPLOAD);
   await boss.work<MediaProcessUploadInput>(MEDIA_PROCESS_UPLOAD, async ([job]) => {
     await handleMediaProcessUpload(job.data, { pool: defaultPool });
+  });
+
+  // P7-T7.5: template materialization (D-042).
+  await boss.createQueue(TEMPLATE_MATERIALIZE);
+  await boss.work<MaterializeTemplateInput>(TEMPLATE_MATERIALIZE, async ([job]) => {
+    await handleMaterializeTemplate(job.data, { pool: defaultPool });
   });
 }
 

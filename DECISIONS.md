@@ -662,3 +662,38 @@ So the precise state: the Cloud Build GitHub App **is** installed/configured on 
 - **Apply is the operator's explicit action**, and it reuses the **existing** `POST …/pages/:pageId` save endpoint with **`source:"ai"`** — no new endpoint. That endpoint already re-validates the blocks (the shared validator, D-039) and writes a `page_revisions` row, so an AI edit gets the same validation + revision/undo guarantees as a manual save, tagged `ai` in history. The editor panel (6.6) drives this: preview → operator reviews the diff → Apply (`save(proposed_blocks, source:"ai")`) → editor reloads; Reject discards.
 
 **Rationale:** Operator-in-the-loop on every machine edit; one save path means one validation + one revision mechanism (no drift); `source` distinguishes AI edits in the revision panel for trust/audit; undo is free (restore a prior revision). **Rejected:** auto-save on propose (no review; unsafe); a dedicated AI-apply endpoint (duplicates save + revision logic for no gain).
+
+### D-041: Template data model — normalized `templates` + `template_pages` (P7-T7.1)
+
+**Context:** Phase 7 (template system) needs to store a reusable snapshot of pages (block JSON) + brand tokens. Two shapes were on the table (confirmed with the operator 2026-05-21): normalized two tables vs. a single `templates` row with a `snapshot jsonb` document. Operator took the recommendation: normalized.
+
+**Decision:** Two tables (migration `1747574000000_templates.cjs`):
+- **`templates`** — `id`, `slug` UNIQUE, `name`, `description`, `source_site_id` FK → `sites.id` **ON DELETE SET NULL** (deleting the captured-from site keeps the template), `kind` CHECK `'site' | 'page'` (default `'site'`), `brand_tokens` jsonb, `status` CHECK `'active' | 'archived'` (default `'active'` — delete is a soft archive), `created_at`/`updated_at` (reusing the shared `touch_updated_at` trigger).
+- **`template_pages`** — `id`, `template_id` FK → `templates.id` **ON DELETE CASCADE**, `slug`, `title`, `blocks` jsonb, `seo` jsonb, `sort_order` int; `UNIQUE(template_id, slug)`, `GIN(blocks)`, `INDEX(template_id, sort_order)`. Mirrors `pages` so block JSON stays the source of truth (D-001).
+
+**Rationale:** Consistency with the existing `sites`/`pages` schema; GIN-queryable blocks across templates; per-page operations (ordered listing, page-level templates per 7.9). The single-JSONB-document alternative was simpler to read but loses per-page queryability and grows one large blob. `kind` distinguishes whole-site templates (many pages + brand tokens, materialized by a job) from single-page templates (inserted into an existing site, 7.9).
+
+**How to apply:** `src/server/templates/{schema,repo}.ts` own the Zod + repository layer; captured page blocks are re-validated through the shared registry validator (D-039) on create, so a template can never hold blocks the save path would reject.
+
+### D-042: Template materialization is a pg-boss job; idempotent by construction (P7-T7.5)
+
+**Context:** D-019 listed "template materialization" as a pg-boss workload. Phase 7 confirmed the execution model with the operator 2026-05-21 (took the recommendation): async via pg-boss rather than synchronous in the create-from-template request.
+
+**Decision:** `template.materialize` pg-boss queue, handler `src/server/jobs/materialize-template.ts` (`{ siteId, templateId }`). The create-site-from-template endpoint (7.6) creates the empty site + domains, then enqueues this job; the UI polls for completion. The handler is **idempotent by construction** so pg-boss retries and re-runs are safe:
+- Pages insert with `ON CONFLICT (site_id, slug) DO NOTHING` (counts created vs. skipped); each created page gets an initial `page_revisions` row `source:'import'`.
+- Brand tokens are **adopted only when the site has none yet** — the first run sets them, later runs leave them; this also preserves brand tokens the operator chose at site-creation time.
+- After commit, the resolver cache is evicted for every `site_domains` hostname so the renderer sees the new pages + tokens.
+
+Registered in `src/server/jobs/index.ts` (one greppable handler list, D-030).
+
+**Rationale:** Honors the recorded D-019 decision; scales to large/multi-page templates and future media work without request-timeout risk; idempotency makes retries and double-sends harmless. Synchronous-in-request (the alternative) is simpler for tiny templates but deviates from D-019 and risks timeouts on big ones.
+
+### D-043: Templates share media by reference (immutable URLs), no copy in v1 (P7-T7.5)
+
+**Context:** Captured page blocks (image, hero-slider) reference `media_assets` by `asset_id`. When a template materializes into a new site, those references could be copied per-site or shared. Confirmed with the operator 2026-05-21 (took the recommendation): share immutable URLs in v1.
+
+**Decision:** Captured blocks keep their **source `asset_id`s verbatim**. Referenced images render from the existing immutable, content-hashed, public GCS variant URLs (D-031), so a materialized site displays correctly with zero media work. No `media_assets` rows are cloned and no GCS objects are copied.
+
+**Trade-off (recorded):** the new site's media library does not "own" those assets, and deleting the source site cascades its `media_assets` rows (the variant objects in GCS persist, but the DB references the new site relies on do not). Full per-site media copy (clone `media_assets` rows with fresh ids + re-point block `asset_id`s, reusing the same immutable objects) is a documented **Phase-12 follow-up**.
+
+**Rationale:** Renders correctly day one with no GCS-copy complexity; variant URLs are already immutable + public so sharing the bytes is safe. The isolation downside is acceptable for v1 (templates are typically captured from long-lived seed/demo sites), and the copy path is an additive future change that doesn't alter the data model.
