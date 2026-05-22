@@ -51,6 +51,11 @@ steps:
   #     `jobs execute` would run the migration files baked into whatever
   #     image the job last used (stale). Without this step a deploy can
   #     ship code expecting columns its migration step never created.
+  #     Also (re)assert the job command = `npm run deploy:db` so the job runs
+  #     migrate:up THEN db:seed-templates (idempotent built-in "Starter"
+  #     template — scoped to the `starter` slug, never recreates demo sites or
+  #     touches user templates). Set here so it's config-as-code and survives
+  #     the job ever being recreated — no manual `gcloud` step, like migrations.
   - id: migrate-image
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -61,10 +66,13 @@ steps:
       - ${_SERVICE}-migrate
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
       - --region=${_REGION}
+      - --command=npm
+      - --args=run,deploy:db
 
-  # 3b. Run DB migrations as a one-off job before swapping traffic.
-  #     Reads DATABASE_URL from Secret Manager via the Cloud Run Job
-  #     (created out-of-band in docs/deploy.md).
+  # 3b. Run DB migrations + seed built-in templates as a one-off job before
+  #     swapping traffic. Reads DATABASE_URL from Secret Manager via the Cloud
+  #     Run Job (created out-of-band in docs/deploy.md). Executes `npm run
+  #     deploy:db` (migrate:up && db:seed-templates) per the command set in 3a.
   - id: migrate
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud

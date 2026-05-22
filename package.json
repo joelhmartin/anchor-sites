@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "migrate:up": "node-pg-migrate -m db/migrations up",
     "migrate:down": "node-pg-migrate -m db/migrations down",
+    "deploy:db": "npm run migrate:up && npm run db:seed-templates",
     "db:seed": "tsx db/seed.ts",
     "db:seed-templates": "tsx db/seed-templates.ts",
     "provision": "tsx scripts/provision-site.ts",

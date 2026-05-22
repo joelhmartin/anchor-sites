@@ -103,15 +103,21 @@ done
 
 ## 5 — Migration job
 
-Migrations run once per deploy via a Cloud Run **Job** named
-`anchor-sites-migrate`. Create it once; the build pipeline triggers it.
+Migrations (and built-in template seeding) run once per deploy via a Cloud Run
+**Job** named `anchor-sites-migrate`. Create it once; the build pipeline
+triggers it. The job runs `npm run deploy:db` = `migrate:up && db:seed-templates`,
+so every deploy applies pending migrations AND upserts the built-in "Starter"
+template (idempotent, scoped to the `starter` slug — it never recreates demo
+tenant sites or touches user-created templates). `cloudbuild.yaml`'s
+`migrate-image` step re-asserts `--command/--args` on every build, so even if
+the job is recreated with a different command it self-corrects to `deploy:db`.
 
 ```bash
 gcloud run jobs create anchor-sites-migrate \
   --image=us-central1-docker.pkg.dev/$(gcloud config get-value project)/anchor/anchor-sites:bootstrap \
   --region=us-central1 \
   --command="npm" \
-  --args="run,migrate:up" \
+  --args="run,deploy:db" \
   --add-cloudsql-instances="$(gcloud config get-value project):us-central1:anchor-postgres" \
   --set-secrets=DATABASE_URL=DATABASE_URL:latest \
   --max-retries=1 \
@@ -119,9 +125,10 @@ gcloud run jobs create anchor-sites-migrate \
 ```
 
 > The `:bootstrap` tag is a placeholder so the job exists before the first
-> build. CI updates the image tag on every run via
-> `gcloud run jobs update ... --image=...:$SHORT_SHA` if you want it pinned
-> to the current build (optional — using `:latest` is fine).
+> build. CI updates the image tag + command on every run via the `migrate-image`
+> step (`gcloud run jobs update ... --image=...:$SHORT_SHA --command=npm
+> --args=run,deploy:db`), so the job always runs the freshly-built image with
+> the right command.
 
 ## 6 — Cloud Build trigger
 
@@ -181,8 +188,15 @@ gcloud run services describe anchor-sites --region=us-central1 --format='value(s
 
 ## 8 — Seed the prod DB
 
-The migration job populates the schema. Seeding (sites + pages + domains)
-is a separate one-off:
+> **Built-in templates seed automatically.** `db:seed-templates` (the "Starter"
+> template) runs as part of the migrate job on every deploy (see §5), so you
+> don't seed it by hand. The step below is only the **tenant demo-site** seed
+> (`db:seed` → muldoon/demo sites + pages + domains), which is deliberately
+> NOT in the pipeline — it's a one-off bootstrap you run only if you actually
+> want those demo tenants in this environment.
+
+The migration job populates the schema. The tenant demo-site seed (sites +
+pages + domains) is a separate one-off:
 
 ```bash
 gcloud run jobs create anchor-sites-seed \
