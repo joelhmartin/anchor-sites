@@ -27,6 +27,28 @@
 
 <!-- Routine appends demos below this line. Newest on top. -->
 
+### 2026-05-26 — Phase 7.5 plugin / integration framework
+**Milestone ID:** phase7_5-complete-plugins
+**Phase/Task:** Phase 7.5 complete (7.5.0–7.5.10)
+**Commit:** `a96fc6d` (local; NOT yet pushed — awaiting operator go for the first prod-deploying push)
+
+**What to look at:** (locally — set `ENABLE_EXAMPLE_PLUGIN=true` when running `npm run dev`, then at `studio.localhost:3000`)
+- **Site Detail → Plugins tab:** lists available plugins (the `example` reference plugin appears when the env flag is on), with a per-plugin **Enabled** toggle and a config form generated from the plugin's schema (a `greeting` text field + an `api_key` **password** field marked *(not set)* / *(set — leave blank to keep)*). Save persists via the admin API.
+- **Tenant route gating:** with `example` enabled for a site, `GET http://<slug>.localhost:3000/api/plugins/example/ping` returns `{ ok, site, greeting }`; disabled → 403; unknown host → 404.
+- **Secrets:** the `api_key` is encrypted at rest (`site_plugins.config_encrypted`) and never returned by the API — only its set/unset status.
+- API: `GET /api/plugins`, `GET/PUT /api/sites/:id/plugins[/:name]` (admin token).
+
+**What's new since last demo:**
+- A real plugin framework: manifest contract + `registerPlugin()` registry + boot loader, `site_plugins` table, per-site enable/disable + encrypted config, admin API + Studio tab, and an in-repo reference plugin proving it end-to-end.
+- Test suite split into isolated node + jsdom vitest projects (ended the FLAKE-RESOLVESITE warm-cache flake). 506 tests/75 files.
+
+**Known limitations:**
+- No concrete plugins yet (Stripe/PayPal/booking are post-7.5 packages). The `example` plugin is opt-in via `ENABLE_EXAMPLE_PLUGIN` and off in prod.
+- Dynamic discovery of `@anchorcorps/plugin-*` packages is deferred to the first real plugin.
+- Live secret encryption in prod needs `PLUGIN_CONFIG_ENC_KEY` in Secret Manager (only when a key-bearing plugin is enabled).
+
+**Next visible thing coming:** Phase 8 — studio Google-OAuth login + per-site auth/blog/events copy-in.
+
 ### 2026-05-21 — Phase 7 template system: save-as-template + new-from-template
 **Milestone ID:** phase7-complete-prod
 **Phase/Task:** Phase 7 complete (7.1–7.10)
