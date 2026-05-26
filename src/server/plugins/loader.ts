@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { getPlugin, listPlugins } from "./registry.js";
 import { hasBlock, registerBlock } from "../../blocks/registry.js";
+import { resolveSite } from "../../middleware/resolveSite.js";
 
 /**
  * Plugin loader / boot composition (P7.5-T7.5.4, D-016 / D-045).
@@ -81,6 +82,11 @@ export function loadPlugins(
   const mounted: string[] = [];
   const blocksRegistered: string[] = [];
 
+  // Plugin routers are tenant-facing: resolve the site (pass-through on miss so
+  // non-tenant/unknown hosts still reach the router, which 404s via its guard)
+  // so plugin routes can gate on `req.site.plugins` (P7.5-T7.5.5/7).
+  const resolver = resolveSite({ pool, passThroughOnMiss: true });
+
   for (const name of names) {
     const manifest = getPlugin(name);
     if (!manifest) continue;
@@ -94,7 +100,7 @@ export function loadPlugins(
     }
 
     if (manifest.createRouter) {
-      app.use(`/api/plugins/${name}`, manifest.createRouter({ pool, pluginName: name }));
+      app.use(`/api/plugins/${name}`, resolver, manifest.createRouter({ pool, pluginName: name }));
     }
     mounted.push(name);
   }

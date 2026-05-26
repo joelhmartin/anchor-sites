@@ -6,6 +6,7 @@ import { mountViteDev } from "./vite-dev.js";
 import { pool } from "./db.js";
 import { bootJobs, stopJobs } from "./jobs/index.js";
 import { verifyPluginMigrations } from "./plugins/loader.js";
+import { registerBuiltinPlugins } from "./plugins/builtin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -13,6 +14,10 @@ const PORT = Number(process.env.PORT ?? 3000);
 const isProd = process.env.NODE_ENV === "production";
 
 async function main() {
+  // Register repo-bundled plugins (the example plugin is opt-in via env) before
+  // verification (P7.5-T7.5.7).
+  registerBuiltinPlugins();
+
   // Verify registered plugins (env + migrations) before composing the app, so
   // only properly-installed plugins mount (P7.5-T7.5.4, fail-soft).
   let activePlugins: string[] | undefined;

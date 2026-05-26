@@ -129,7 +129,7 @@ thin add when the first real plugin ships.
     `secretConfigKeys`, upsert `site_plugins`, evict the site's resolve cache.
   Idempotent. Supertest coverage incl. validation failure + redaction.
 
-- [ ] **7.5.7 — Reference plugin (proves the contract).**
+- [x] **7.5.7 — Reference plugin (proves the contract).**
   In-repo `@anchorcorps/plugin-example` (a `packages/plugin-example/` workspace,
   or `src/server/plugins/example/` if lighter) exercising EVERY manifest field:
   one `ac-`-prefixed block (`example/banner`), a `createRouter` exposing
@@ -306,3 +306,24 @@ admin-sites convention.)
 **Notes:** 496/73 green cold; typecheck clean. Secret values never cross the
 API boundary; the encrypted blob in `config_encrypted` was asserted free of the
 plaintext secret.
+
+### 2026-05-26 09:38 UTC — Task 7.5.7
+**Commit:** _pending sha-record follow-up_
+**Done:** In-repo reference plugin `src/server/plugins/example/` exercising
+EVERY manifest field: namespaced `ac-`-prefixed block `example/banner`
+(`block.tsx`); router (`router.ts`) with `/ping` (echoes site slug + non-secret
+`greeting` config) + `/notes` GET/POST using its owned `plg_example_notes`
+table; migration `1747576000000_plg_example.cjs`; `configSchema` with a secret
+`api_key`; `requiredEnv: ["EXAMPLE_PLUGIN_API_BASE"]`. Added reusable
+`requireSitePlugin(name)` guard (`guard.ts`) — 404 no site / 403 not enabled.
+Loader now runs `resolveSite` (pass-through) ahead of plugin routers so they
+get tenant context. `builtin.ts` `registerBuiltinPlugins()` registers the
+example ONLY when `ENABLE_EXAMPLE_PLUGIN=true` (default off → clean prod), wired
+into `index.ts` boot before verification.
+**Tests added:** 6 (`tests/integration/plugin-example.test.ts`) — block
+registered, 403 when not enabled, 404 unknown host, 200 + config echo when
+enabled, notes POST→GET round-trip, 403 again after disable.
+**Next:** 7.5.8 — Studio Plugins tab.
+**Notes:** 502/74 green cold; typecheck clean. Migration verified up on dev +
+test. The example plugin ships its migration everywhere but stays inert in prod
+unless the env flag is set.
