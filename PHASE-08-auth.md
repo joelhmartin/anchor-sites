@@ -154,7 +154,7 @@
   (body = `Block[]`). Only `published` items are public; unknown slug → 404.
   Tests (supertest, seeded site).
 
-- [ ] **8.12 — Provision-time copy-in hook.**
+- [x] **8.12 — Provision-time copy-in hook.**
   Extend `createSiteWithDomains` (or a post-create hook reusing the
   materialization pattern, D-042) to seed per-site defaults at provision: a
   `tenant_auth_config` row (default providers) + optional starter blog index +
@@ -269,3 +269,10 @@
 **Tests added:** 5 (`tests/integration/blog-events-render.test.ts`) — /blog lists published (hides drafts), /blog/:slug renders body via the block renderer, draft → 404, /events list + detail, unknown host falls through to downstream.
 **Next:** 8.12 — provision-time copy-in hook (seed tenant_auth_config + starter content).
 **Notes:** 574/88 cold-green; typecheck clean. `/blog`/`/events` are reserved paths (a page with slug "blog" would be shadowed — acceptable convention).
+
+### 2026-05-26 16:03 UTC — Task 8.12
+**Commit:** _(this commit)_
+**Done:** `src/server/sites/copy-in.ts` (`seedSiteCopyIn`) — the per-site "copy-in" (D-047): seeds `tenant_auth_config` (default providers = email+password) + a **draft** "welcome" post, idempotently (`ON CONFLICT DO NOTHING`), inside the caller's transaction. Wired into `createSiteWithDomains`, so EVERY provisioned site (wizard + from-template) gets it. Draft (not published) so a fresh client site shows no stray public blog.
+**Tests added:** 3 (`tests/integration/site-copy-in.test.ts`) — config row with default providers, draft welcome post, idempotent re-run.
+**Next:** 8.13 — Studio Blog/Events/Members tabs + admin API.
+**Notes:** 577/89 cold-green; typecheck clean — no regression to the admin-sites/from-template suites that share `createSiteWithDomains`. This is "auth/blog/events copied into each site" under one renderer = config + content, not forked code (D-047).

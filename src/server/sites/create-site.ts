@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
+import { seedSiteCopyIn } from "./copy-in.js";
 
 /**
  * Shared site-creation primitive (P7-T7.6). Extracted from the inline logic in
@@ -52,6 +53,9 @@ export async function createSiteWithDomains(
      VALUES ($1, $2, false, 'verified', 'active')`,
     [siteId, localhostName],
   );
+
+  // P8-T8.12 (D-047): per-site copy-in — tenant auth config + starter content.
+  await seedSiteCopyIn(client, siteId);
 
   return { siteId, canonical };
 }
