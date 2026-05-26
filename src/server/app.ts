@@ -10,6 +10,7 @@ import { siteResolveRouter } from "./routes/site-resolve.js";
 import { mediaRouter } from "./routes/media.js";
 import { adminSitesRouter } from "./routes/admin-sites.js";
 import { templatesRouter } from "./routes/templates.js";
+import { pluginsRouter } from "./routes/plugins.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 
@@ -59,6 +60,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // P7: template system — save-as-template, list/inspect/archive, from-template.
   app.use("/api", templatesRouter());
+
+  // P7.5: admin plugins API — list available, per-site enable/disable + config.
+  app.use("/api", pluginsRouter());
 
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces

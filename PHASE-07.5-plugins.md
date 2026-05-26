@@ -118,7 +118,7 @@ thin add when the first real plugin ships.
   (7.5.6) so toggles take effect without waiting out the TTL. Integration tests
   asserting enabled plugins appear and disabled ones don't.
 
-- [ ] **7.5.6 — Admin plugins API.**
+- [x] **7.5.6 — Admin plugins API.**
   `src/server/routes/plugins.ts`, mounted under `/api`, `requireAdmin`-gated:
   - `GET /api/plugins` — list registered/available plugins (name, version,
     config schema shape, required env).
@@ -284,3 +284,25 @@ plugins, enabled-included/disabled-excluded, disable-after-evict reflects.
 **Notes:** 488/72 green cold; typecheck clean. Chose the single-query
 json_agg over a second `getEnabledPlugins` call so the existing resolveSite
 query-count caching test stays valid AND the hot path stays at one query.
+
+### 2026-05-26 09:32 UTC — Task 7.5.6
+**Commit:** _pending sha-record follow-up_
+**Done:** `src/server/routes/plugins.ts` (mounted at `/api`, `requireAdmin`):
+`GET /api/plugins` (available plugins — version, required_env, secret_config_keys,
+blocks, `config_schema` via zod-to-json-schema); `GET /api/sites/:siteId/plugins`
+(per-site state, secrets REDACTED — only `secrets_set` key names);
+`PUT /api/sites/:siteId/plugins/:name` (install/enable/disable + set config —
+validates against the plugin's configSchema, splits secret vs non-secret,
+encrypts the secret subset via D-044 crypto, upserts, evicts the site cache).
+Added `evictSiteCacheForSite(pool, siteId)` to resolveSite (evicts all of a
+site's hostnames: domains + `<slug>.<base>` + `<slug>.localhost`). Mounted
+`pluginsRouter()` in createApp before the per-plugin routers + catch-all.
+**Tests added:** 8 (`tests/integration/plugins-api.test.ts`) — auth gate, list,
+install+enable encrypts secret + never echoes it + encrypted at rest, per-site
+state redacted, disable preserves config, invalid-config 400, unregistered
+plugin 404, unknown site 404. (Builds a minimal app with the test pool, per the
+admin-sites convention.)
+**Next:** 7.5.7 — reference plugin (proves the contract end-to-end).
+**Notes:** 496/73 green cold; typecheck clean. Secret values never cross the
+API boundary; the encrypted blob in `config_encrypted` was asserted free of the
+plaintext secret.

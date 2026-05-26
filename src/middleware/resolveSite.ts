@@ -1,7 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../server/db.js";
-import { subdomainPattern } from "../config/domain.js";
+import { hostnameForSlug, subdomainPattern } from "../config/domain.js";
 
 // Reserved per D-016 — Phase 7.5 will populate this from `site_plugins`. Empty
 // array in Phase 1 so downstream consumers can already iterate without retrofit.
@@ -52,6 +52,36 @@ export function evictSiteCache(hostname: string): void {
 /** Number of entries currently cached. Exposed for debug/admin endpoints. */
 export function resolveSiteCacheSize(): number {
   return cache.size;
+}
+
+/**
+ * Evict every hostname that resolves to a given site — its explicit
+ * `site_domains` rows plus the canonical `<slug>.<base>` + `<slug>.localhost`
+ * subdomain forms. Call after mutating a site's plugins (P7.5-T7.5.6) so the
+ * next request re-resolves `req.site.plugins` instead of waiting out the TTL.
+ * Idempotent; uncached hosts are no-ops.
+ */
+export async function evictSiteCacheForSite(pool: Pool, siteId: string): Promise<void> {
+  const res = await pool.query<{ slug: string; hostname: string | null }>(
+    `SELECT s.slug, d.hostname
+       FROM sites s
+       LEFT JOIN site_domains d ON d.site_id = s.id
+      WHERE s.id = $1`,
+    [siteId],
+  );
+  const hosts = new Set<string>();
+  for (const row of res.rows) {
+    if (row.slug) {
+      try {
+        hosts.add(hostnameForSlug(row.slug));
+      } catch {
+        /* invalid slug for hostname — skip */
+      }
+      hosts.add(`${row.slug}.localhost`);
+    }
+    if (row.hostname) hosts.add(row.hostname.toLowerCase());
+  }
+  for (const h of hosts) evictSiteCache(h);
 }
 
 /**
