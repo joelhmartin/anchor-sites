@@ -766,3 +766,19 @@ Registered in `src/server/jobs/index.ts` (one greppable handler list, D-030).
 **Rationale:** Honors D-003 (no per-site deploys or renderers); reuses everything already built (renderer, Puck, AI editor, plugin framework, pg-boss materialization); still delivers real per-client customization (per-site content + provider config + plugins). Literal per-site forked code (D-008's letter) would require per-site bundles or dynamic per-site code loading — a direct violation of D-003 and a major v1 pivot.
 
 **Alternatives considered:** Literal forked code per site (rejected — breaks D-003; needs per-site deploys/dynamic code loading); schema-per-site for tenant auth (rejected for v1 — runtime DDL + N Postgres schemas; shared tables + `site_id` is simpler ops — D-048); a thin-slice that defers public blog/events rendering (offered, operator chose the full build).
+
+### D-048: Tenant Better-auth multi-tenancy = shared tables + `site_id`, scoped by wrapping Better-auth's adapter (Phase 8 Track B — P8-T8.8)
+
+**Context:** D-047 chose multi-tenant tenant auth by `site_id`. Better-auth has no built-in multi-tenancy, and because `tenant_auth_user` is `UNIQUE(site_id, email)` (the same email can be a member of two sites), every Better-auth query MUST be constrained to the current `site_id` — otherwise a `findOne`-by-email during sign-in could match another site's user (a cross-tenant leak). Session lookup is by globally-unique `token` (safe), but email/account/verification lookups are not.
+
+**Decision:**
+- **Shared `tenant_auth_*` tables + a `site_id` column** (P8-T8.7), NOT schema-per-site.
+- **`getTenantAuth(siteId)`** (`src/server/auth/tenant-auth.ts`) builds + caches a per-site Better-auth instance whose `database` is a **scoped adapter**.
+- **`scopedAdapter(base, siteId)` WRAPS Better-auth's own adapter** rather than reimplementing one: `site_id` is declared as an `additionalField` (`input:false, required`) on all four models (so Better-auth's adapter persists + returns it), the wrapper **injects `site_id` into `data` on `create`** and **appends `{ field:"site_id", value:siteId }` to `where`** on `findOne/findMany/update/updateMany/delete/deleteMany/count/consumeOne`, and recursively re-scopes the `transaction` adapter. The underlying CRUD/field-mapping is Better-auth's, so there's nothing to re-implement.
+- A single **base adapter per Pool** is built once (`betterAuth({ database: pool })` → `$context.adapter`) and shared by all per-site wrappers.
+- **v1 providers = email+password** (`tenant_auth_config.providers` can toggle). Per-site **social OAuth** (needs per-site Google client IDs) is a future refinement.
+- **HTTP handler mounting is DEFERRED** until a tenant member-login surface consumes it — nothing in Phase 8 calls tenant auth over HTTP (the Studio "Members" tab, 8.13, is an admin read of `tenant_auth_user`, not a tenant-facing login). When added, it mounts `/api/auth/*` on TENANT hosts only (`!isAdminHost`), resolving `site_id` from `req.site` before `express.json()`.
+
+**Rationale:** Wrapping the existing adapter is ~80 lines and reuses Better-auth's battle-tested CRUD + field mapping — far lower risk than a hand-written `createAdapterFactory` adapter, and correct isolation is proven by test (incl. a cross-site lookup by the other site's primary key returning `null`). Honors D-003 (one renderer, shared tables) and reuses the P8-T8.7 schema.
+
+**Alternatives considered:** Full custom adapter via `createAdapterFactory` (rejected — reimplements every CRUD op + `where`/operator translation; high risk for no gain); a Kysely query-transform plugin injecting `site_id` into the AST (rejected — AST manipulation is brittle); schema-per-site (rejected — runtime `CREATE SCHEMA`/DDL per provision + N schemas, and discards the 8.7 shared-table migration); `databaseHooks` only (rejected — hooks cover create/update/delete, NOT reads, so they can't scope `findOne`/`findMany`).

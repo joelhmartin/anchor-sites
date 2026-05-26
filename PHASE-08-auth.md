@@ -124,14 +124,14 @@
   providers jsonb, …)` for per-site provider enablement. Forward + rollback;
   test up/down.
 
-- [ ] **8.8 — Request-scoped tenant Better-auth.**
+- [x] **8.8 — Request-scoped tenant Better-auth.**
   `src/server/auth/tenant-auth.ts`: `getTenantAuth(siteId)` → a per-site Better-
   auth instance (cached by `site_id`) whose adapter is constrained to that
-  `site_id` (shared-tables + `site_id` scoping — finalize the exact mechanism,
-  record **D-048**), with providers from `tenant_auth_config`. Mount the tenant
-  auth handler at `/api/auth/*` on TENANT hosts only (via `req.site`), distinct
-  from the studio handler. Tests (mocked): two sites' users isolated; per-site
-  provider config respected.
+  `site_id` (shared-tables + `site_id` scoping — **D-048**, by wrapping
+  Better-auth's own adapter), with providers from `tenant_auth_config`. Tests
+  (mocked): two sites' users isolated. NOTE: the HTTP handler mount on tenant
+  hosts is **deferred** (D-048) — nothing in Phase 8 consumes tenant auth over
+  HTTP; it mounts when a tenant member-login surface needs it.
 
 - [ ] **8.9 — Blog data model + repo.**
   Migration: `posts (id, site_id FK ON DELETE CASCADE, slug, title, excerpt,
@@ -241,3 +241,10 @@
 **Tests added:** 2 (`tests/integration/tenant-auth-schema.test.ts`) — five tables exist; same email allowed across two sites but rejected twice within one site. Migrate up→down→up verified by hand.
 **Next:** 8.8 — request-scoped tenant Better-auth (`getTenantAuth(siteId)` + the D-048 site_id scoping mechanism).
 **Notes:** 556/84 cold-green; typecheck clean. Better-auth round-trip against these tables (incl. how `site_id` gets injected/scoped) is proven in 8.8 — this task is schema + decision only. Not pushed (Track B batches).
+
+### 2026-05-26 15:46 UTC — Task 8.8
+**Commit:** _(this commit)_
+**Done:** `src/server/auth/tenant-auth.ts` — per-site Better-auth via `getTenantAuth(siteId)` (cached per site). **D-048** scoping: declares `site_id` as an `additionalField` on all four models and **wraps Better-auth's own adapter** (`scopedAdapter`) to inject `site_id` into `create` data and append it to the `where` on every read/write (findOne/findMany/update/updateMany/delete/deleteMany/count/consumeOne + recursive `transaction`). One base adapter per Pool, shared by all per-site wrappers. v1 = email+password (provider toggle via `tenant_auth_config`). Recorded **D-048**.
+**Tests added:** 2 (`tests/integration/tenant-auth.test.ts`) — `site_id` auto-injected on create + same email allowed in two sites; a lookup in site A never returns site B's user, **even by site B's primary key** (the isolation proof).
+**Next:** 8.9 — blog data model (`posts`, body = `Block[]`).
+**Notes:** HTTP handler mounting DEFERRED (D-048) — no Phase-8 consumer; mounts when a tenant member-login surface lands. Wrapping the existing adapter (vs a hand-written `createAdapterFactory` adapter) kept this ~80 lines + low-risk; tenant-auth return types are inferred from builder fns (betterAuth generic-variance, cf. D-046).
