@@ -348,6 +348,24 @@ serialized JSON Schema (not `zod-fields`, which is server/Puck-oriented and
 takes a live Zod schema) — recorded as the practical reading of D-045's
 "Zod-driven form."
 
+### 2026-05-26 09:45 UTC — Task 7.5.10 (PHASE COMPLETE)
+**Commit:** 5d4001a (wrap) + this sha-record follow-up
+**Done:** Phase wrap. Final `npm run typecheck` clean + full COLD suite green +
+deterministic (506 tests/75 files). Ticked the PLAN.md Phase 7.5 box (with a
+completion summary). Added the DEMO-LOG entry (`phase7_5-complete-plugins`).
+STATE: `current_task=null`, rewrote `tests.notes` for the 7.5 close, recorded
+the demo milestone + a follow-up.
+**Tests added:** 0 (wrap). Final: 506/75 cold-green.
+**Next:** PHASE COMPLETE — STOP at the 7.5→8 boundary. **NOT pushed:** the
+phase's first prod-deploying push is gated on operator confirmation (CI
+auto-deploys main; ships the `site_plugins` + `plg_example` migrations, which
+run in the CI migrate step before the new image deploys). Phase 8 (studio
+Google-OAuth login + per-site auth/blog/events copy-in) needs a FRESH
+`.routine/NEXT-PHASE-APPROVED` (hard rule #1).
+**Notes:** Operator prereq for live plugin secrets in prod (deferred):
+`PLUGIN_CONFIG_ENC_KEY` in Secret Manager — only when a key-bearing plugin is
+enabled. New decisions this phase: D-044, D-045.
+
 ### 2026-05-26 09:44 UTC — Task 7.5.9
 **Commit:** 83eb72f
 **Done:** `docs/plugins.md` — the full framework reference: manifest contract
