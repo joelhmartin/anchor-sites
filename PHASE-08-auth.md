@@ -141,7 +141,7 @@
   {schema,repo}.ts` (Zod + pool-injected repo); body re-validated through the
   shared block validator (D-039) on write. Tests.
 
-- [ ] **8.10 — Events data model + repo.**
+- [x] **8.10 — Events data model + repo.**
   Migration: `events (id, site_id FK ON DELETE CASCADE, slug, title, description
   jsonb = Block[], starts_at, ends_at nullable, location, status, created/
   updated; UNIQUE(site_id, slug); INDEX(site_id, starts_at))`. Forward+rollback.
@@ -255,3 +255,10 @@
 **Tests added:** 7 (`tests/integration/blog-repo.test.ts`) — draft vs published stamping, list+status filter, publish transition, per-site slug uniqueness, invalid-body rejection, site-scoped reads, scoped delete.
 **Next:** 8.10 — events data model + repo.
 **Notes:** 565/86 cold-green; typecheck clean. Repo imports `blocks/index.js` for the registry side-effect (validateBlocks needs registered types, same as templates repo). `PostInput`/`PostPatch` are `z.input` types so defaults are optional for callers.
+
+### 2026-05-26 15:55 UTC — Task 8.10
+**Commit:** _(this commit)_
+**Done:** Events model, mirroring blog. Migration `1747580000000_events.cjs` — `events` (`site_id` FK→sites CASCADE, `description jsonb`=Block[], `starts_at` NOT NULL, `ends_at`, `location`, `status` CHECK draft|published; `UNIQUE(site_id,slug)`, `INDEX(site_id,starts_at)`, touch trigger). `src/server/events/{schema,repo}.ts` — Zod (dates via `z.coerce.date()`) + pool-injected repo (create/list/getBySlug/getById/update/delete), site-scoped, description re-validated (D-039). `docs/data-model.md` updated.
+**Tests added:** 4 (`tests/integration/events-repo.test.ts`) — ISO-date coercion + starts_at ordering, per-site slug uniqueness, invalid-description rejection, scoped update/read/delete.
+**Next:** 8.11 — public blog/events rendering on tenant hosts.
+**Notes:** 569/87 cold-green; typecheck clean. `z.coerce.date()` types the input as `Date`, so typed callers pass `Date`; HTTP handlers parse `unknown` and the coercion handles ISO strings.

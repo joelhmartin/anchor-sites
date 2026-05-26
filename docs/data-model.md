@@ -140,9 +140,7 @@ Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's ow
 
 - **`posts`** — per-site blog posts (`site_id` FK → `sites` CASCADE). `body jsonb` = `Block[]` (D-001), re-validated through the shared registry validator (D-039) on write. `status` CHECK `draft|published`; `published_at` stamped on first publish, cleared on revert to draft. `author_id` → `tenant_auth_user` ON DELETE SET NULL. `UNIQUE(site_id, slug)`, `GIN(body)`, `INDEX(site_id, status, published_at)`. Repo: `src/server/blog/{schema,repo}.ts` (every query scoped by `site_id`).
 
-## Future schema (reserved, NOT yet migrated)
-
-- **`events`** — per-site events (Track B, P8-T8.10, D-047). Scoped by `site_id`; description = `Block[]`.
+- **`events`** (P8-T8.10) — per-site events (`site_id` FK → `sites` CASCADE). `description jsonb` = `Block[]` (validated via D-039). `starts_at` (NOT NULL, ordering), `ends_at`, `location`, `status` CHECK `draft|published`. `UNIQUE(site_id, slug)`, `INDEX(site_id, starts_at)`. Repo: `src/server/events/{schema,repo}.ts`.
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
 ## Migration commands
