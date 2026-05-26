@@ -308,7 +308,7 @@ API boundary; the encrypted blob in `config_encrypted` was asserted free of the
 plaintext secret.
 
 ### 2026-05-26 09:38 UTC — Task 7.5.7
-**Commit:** _pending sha-record follow-up_
+**Commit:** 971e4b5
 **Done:** In-repo reference plugin `src/server/plugins/example/` exercising
 EVERY manifest field: namespaced `ac-`-prefixed block `example/banner`
 (`block.tsx`); router (`router.ts`) with `/ping` (echoes site slug + non-secret
