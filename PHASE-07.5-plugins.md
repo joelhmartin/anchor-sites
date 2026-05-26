@@ -231,7 +231,7 @@ invalid-manifest throw, reset).
 router factory, Zod schema) so it's intentionally only partly Zod-validated.
 
 ### 2026-05-26 09:18 UTC — Task 7.5.3
-**Commit:** _pending sha-record follow-up_
+**Commit:** 77a3279
 **Done:** `src/server/plugins/crypto.ts` — `encryptConfig`/`decryptConfig`
 (AES-256-GCM via `node:crypto`, envelope `{v:1,iv,tag,ciphertext}` base64) +
 `isConfigKeyConfigured()`. Key from `PLUGIN_CONFIG_ENC_KEY` (base64 32 bytes);
