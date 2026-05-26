@@ -44,7 +44,7 @@ d("Studio auth_* schema (P8-T8.2)", () => {
   }, 60_000);
 
   afterAll(async () => {
-    await pool.query(`DELETE FROM auth_user WHERE email LIKE 'p8t82-%'`).catch(() => undefined);
+    await pool.query(`DELETE FROM auth_user WHERE email LIKE 'p8t8%'`).catch(() => undefined);
     await pool.end().catch(() => undefined);
   });
 
@@ -105,5 +105,31 @@ d("Studio auth_* schema (P8-T8.2)", () => {
       where: [{ field: "email", value: email }],
     });
     expect(gone).toBeNull();
+  });
+
+  // P8-T8.3 — the team gate must fire through Better-auth's REAL create
+  // pipeline (databaseHooks.user.create.before), not just the pure predicate.
+  it("team gate blocks a non-Workspace email at user creation", async () => {
+    const auth = createStudioAuth({ pool, env: GOOGLE_ENV });
+    const ctx = await auth.$context;
+    await expect(
+      ctx.internalAdapter.createUser({
+        email: `p8t83-outsider-${Date.now()}@gmail.com`,
+        name: "Outsider",
+        emailVerified: false,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("team gate allows a Workspace email at user creation", async () => {
+    const auth = createStudioAuth({ pool, env: GOOGLE_ENV });
+    const ctx = await auth.$context;
+    const email = `p8t83-team-${Date.now()}@anchorcorps.com`;
+    const user = await ctx.internalAdapter.createUser({
+      email,
+      name: "Teammate",
+      emailVerified: false,
+    });
+    expect(user).toBeTruthy();
   });
 });

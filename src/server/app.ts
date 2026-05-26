@@ -13,6 +13,8 @@ import { templatesRouter } from "./routes/templates.js";
 import { pluginsRouter } from "./routes/plugins.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
+import { mountStudioAuth } from "./auth/studio-auth-mount.js";
+import type { StudioAuth } from "./auth/studio-auth.js";
 
 export type CreateAppOptions = {
   /**
@@ -21,6 +23,12 @@ export type CreateAppOptions = {
    * Omitted (tests) → load every registered plugin.
    */
   activePlugins?: string[];
+  /**
+   * Studio Better-auth instance for the auth handler (P8-T8.3). Omitted →
+   * the process singleton via `getStudioAuth()` (null in dev/disabled mode).
+   * Tests inject a fresh instance to avoid env/cache coupling.
+   */
+  studioAuth?: StudioAuth | null;
 };
 
 export function createApp(opts: CreateAppOptions = {}): Express {
@@ -28,6 +36,12 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors());
+
+  // Studio Google-OAuth handler (D-034/D-046). MUST precede express.json() —
+  // Better-auth reads the raw body. Gated to the Studio host; no-op in
+  // dev/disabled mode (requireAdmin covers those).
+  mountStudioAuth(app, opts.studioAuth !== undefined ? { auth: opts.studioAuth } : {});
+
   app.use(express.json({ limit: "1mb" }));
   app.use(pinoHttp({ autoLogging: { ignore: (req) => req.url === "/healthz" } }));
 

@@ -22,6 +22,7 @@
  * (operator prereq; see docs/studio-auth.md / PHASE-08-auth.md).
  */
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { studioHost } from "../../config/admin-host.js";
@@ -78,6 +79,45 @@ export function resolveStudioAuthMode(env: NodeJS.ProcessEnv = process.env): Stu
 }
 
 /**
+ * The Google Workspace domain whose members may sign into Studio. Defaults to
+ * `anchorcorps.com` (D-034); override with `STUDIO_ALLOWED_DOMAIN`.
+ */
+export function studioAllowedDomain(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.STUDIO_ALLOWED_DOMAIN?.trim() || "anchorcorps.com").toLowerCase();
+}
+
+/** The optional non-Workspace allowlist (`ADMIN_ALLOWED_EMAILS`, comma-sep). */
+export function adminAllowedEmails(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set(
+    (env.ADMIN_ALLOWED_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Team gate (D-034): a Google sign-in is allowed only when the account is in
+ * the Workspace domain (email domain === `studioAllowedDomain`) OR explicitly
+ * allow-listed via `ADMIN_ALLOWED_EMAILS`. Pure + greppable so it is unit-
+ * tested directly; the Better-auth `user.create.before` hook is thin glue that
+ * calls it and rejects account creation for anyone else (so a non-team person
+ * can never establish a session).
+ */
+export function isAllowedStudioEmail(
+  email: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  const at = normalized.lastIndexOf("@");
+  if (at === -1) return false;
+  const domain = normalized.slice(at + 1);
+  if (domain === studioAllowedDomain(env)) return true;
+  return adminAllowedEmails(env).has(normalized);
+}
+
+/**
  * Build a Studio Better-auth instance. Pure factory (no module state) so tests
  * can construct with injected env + pool. Only valid when the env resolves to
  * "google" mode — callers in "dev"/"disabled" must not build an instance (no
@@ -114,6 +154,25 @@ export function createStudioAuth(opts: {
     session: { modelName: STUDIO_AUTH_TABLES.session },
     account: { modelName: STUDIO_AUTH_TABLES.account },
     verification: { modelName: STUDIO_AUTH_TABLES.verification },
+    // Team gate (D-034): block account creation for anyone outside the
+    // Workspace domain / allowlist. Fires on the FIRST sign-in (user create);
+    // since a non-team account can never be created, it can never get a
+    // session — so gating creation gates all access.
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (user: { email?: string | null }) => {
+            if (!isAllowedStudioEmail(user.email, env)) {
+              throw new APIError("FORBIDDEN", {
+                message: "This Google account is not authorized for Studio.",
+              });
+            }
+            // undefined → proceed unchanged.
+            return undefined;
+          },
+        },
+      },
+    },
     advanced: {
       // host-only cookie (no Domain attr) is Better-auth's default — the
       // D-032 boundary keeps the Studio session off tenant hosts.

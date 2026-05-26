@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pool } from "../db.js";
 import {
   __resetStudioAuthForTests,
+  adminAllowedEmails,
   createStudioAuth,
   getStudioAuth,
+  isAllowedStudioEmail,
   resolveStudioAuthMode,
   STUDIO_AUTH_BASE_PATH,
   STUDIO_AUTH_TABLES,
+  studioAllowedDomain,
   studioCallbackUrl,
   studioOrigin,
 } from "./studio-auth.js";
@@ -77,6 +80,42 @@ describe("createStudioAuth", () => {
       account: "auth_account",
       verification: "auth_verification",
     });
+  });
+});
+
+describe("team gate (isAllowedStudioEmail) — P8-T8.3 / D-034", () => {
+  it("allows the Workspace domain (case-insensitive), rejects others", () => {
+    expect(isAllowedStudioEmail("jmartin@anchorcorps.com", {})).toBe(true);
+    expect(isAllowedStudioEmail("JMartin@AnchorCorps.com", {})).toBe(true);
+    expect(isAllowedStudioEmail("someone@gmail.com", {})).toBe(false);
+    expect(isAllowedStudioEmail("evil@notanchorcorps.com", {})).toBe(false);
+  });
+
+  it("honors the ADMIN_ALLOWED_EMAILS allowlist for non-Workspace accounts", () => {
+    const env = { ADMIN_ALLOWED_EMAILS: "Contractor@gmail.com, vendor@example.org" };
+    expect(isAllowedStudioEmail("contractor@gmail.com", env)).toBe(true);
+    expect(isAllowedStudioEmail("vendor@example.org", env)).toBe(true);
+    expect(isAllowedStudioEmail("stranger@gmail.com", env)).toBe(false);
+  });
+
+  it("honors a STUDIO_ALLOWED_DOMAIN override", () => {
+    const env = { STUDIO_ALLOWED_DOMAIN: "example.com" };
+    expect(studioAllowedDomain(env)).toBe("example.com");
+    expect(isAllowedStudioEmail("a@example.com", env)).toBe(true);
+    expect(isAllowedStudioEmail("a@anchorcorps.com", env)).toBe(false);
+  });
+
+  it("rejects empty / malformed emails", () => {
+    expect(isAllowedStudioEmail(undefined, {})).toBe(false);
+    expect(isAllowedStudioEmail("", {})).toBe(false);
+    expect(isAllowedStudioEmail("no-at-sign", {})).toBe(false);
+  });
+
+  it("parses ADMIN_ALLOWED_EMAILS (trim, lowercase, drop blanks)", () => {
+    expect(adminAllowedEmails({ ADMIN_ALLOWED_EMAILS: " A@b.com , ,C@D.com " })).toEqual(
+      new Set(["a@b.com", "c@d.com"]),
+    );
+    expect(adminAllowedEmails({})).toEqual(new Set());
   });
 });
 

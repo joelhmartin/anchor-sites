@@ -77,7 +77,7 @@
   Confirm `deploy:db` (migrate step) picks it up. Test up→down→up clean against
   `anchor_test`. Reconcile the `auth_* RESERVED` note in `docs/data-model.md`.
 
-- [ ] **8.3 — Mount studio auth handler on the Studio host only + team-gating.**
+- [x] **8.3 — Mount studio auth handler on the Studio host only + team-gating.**
   Mount Better-auth's request handler (`/api/auth/*` + the `/auth/google/callback`
   redirect) behind the `isAdminHost` short-circuit (mirror `src/server/routes/
   page.ts`), so tenant hosts never expose it. Team-gating via a Better-auth hook
@@ -206,3 +206,10 @@
 **Tests added:** 3 (`tests/integration/auth-studio-schema.test.ts`) — all four tables exist; camelCase columns preserved; **Better-auth's real adapter round-trips a user** (create→findOne→delete) against the migrated columns (the meaningful proof that the DDL matches Kysely's quoted identifiers). Also verified migrate up→down→up by hand on anchor_test.
 **Next:** 8.3 — mount the Studio auth handler on the Studio host + callback shim + team-gating.
 **Notes:** Better-auth generates string `id`s, so `id` is `text` (not uuid). No `touch_updated_at` trigger — Better-auth manages `updatedAt` itself; DB `now()` defaults cover inserts.
+
+### 2026-05-26 14:38 UTC — Task 8.3
+**Commit:** _(this commit)_
+**Done:** Mounted the Studio Better-auth handler. `src/server/auth/studio-auth-mount.ts` (`mountStudioAuth`) registers `/api/auth/*` + a `/auth/google/callback`→`/api/auth/callback/google` forwarding shim (matches the D-034 prereq URI), both gated to the Studio host via `isAdminHost` (tenant hosts `next()` through, leaving `/api/auth/*` free for Track-B tenant auth). Wired into `createApp` BEFORE `express.json()` (Better-auth reads the raw body); added `studioAuth?` to `CreateAppOptions` for test injection; no-op in dev/disabled mode. Team gate added to `studio-auth.ts`: pure `isAllowedStudioEmail` (Workspace domain `studioAllowedDomain`/`STUDIO_ALLOWED_DOMAIN` + `ADMIN_ALLOWED_EMAILS` allowlist) wired into Better-auth's `databaseHooks.user.create.before` (throws `APIError` FORBIDDEN), so non-team accounts can never be created → never get a session.
+**Tests added:** 11 — 5 predicate unit tests (domain/allowlist/override/malformed/parse, in studio-auth.test.ts), 4 mount tests (studio-host handled / tenant-host falls through / callback shim reaches Better-auth / dev no-op, studio-auth-mount.test.ts), 2 gate integration tests driving Better-auth's REAL `internalAdapter.createUser` pipeline (non-Workspace rejected, Workspace allowed).
+**Next:** 8.4 — flip `requireAdmin` to dual-mode (Studio session OR X-Admin-Token) + local dev session.
+**Notes:** 532/78 cold-green; typecheck clean. Mounting uses `createApp({ studioAuth })` injection in tests to avoid env/singleton coupling; prod boot uses the `getStudioAuth()` singleton (null in dev/disabled → handler not mounted).
