@@ -86,7 +86,7 @@
   `ADMIN_ALLOWED_EMAILS`. Tests (supertest, Google round-trip MOCKED): team
   email allowed; non-team `hd` rejected (no session); allowlisted email allowed.
 
-- [ ] **8.4 — Flip `requireAdmin` to dual-mode (session OR token).**
+- [x] **8.4 — Flip `requireAdmin` to dual-mode (session OR token).**
   Rewrite `src/middleware/requireAdmin.ts`: (1) valid studio Better-auth session
   → allow; (2) else valid `X-Admin-Token` header → allow (CI/service/break-glass
   path); (3) local/non-prod with neither → auto-grant dev session; else 401.
@@ -213,3 +213,10 @@
 **Tests added:** 11 — 5 predicate unit tests (domain/allowlist/override/malformed/parse, in studio-auth.test.ts), 4 mount tests (studio-host handled / tenant-host falls through / callback shim reaches Better-auth / dev no-op, studio-auth-mount.test.ts), 2 gate integration tests driving Better-auth's REAL `internalAdapter.createUser` pipeline (non-Workspace rejected, Workspace allowed).
 **Next:** 8.4 — flip `requireAdmin` to dual-mode (Studio session OR X-Admin-Token) + local dev session.
 **Notes:** 532/78 cold-green; typecheck clean. Mounting uses `createApp({ studioAuth })` injection in tests to avoid env/singleton coupling; prod boot uses the `getStudioAuth()` singleton (null in dev/disabled → handler not mounted).
+
+### 2026-05-26 14:43 UTC — Task 8.4
+**Commit:** _(this commit)_
+**Done:** Rewrote `src/middleware/requireAdmin.ts` to DUAL-MODE, priority-ordered: (1) valid Studio Better-auth session → allow (sets `req.studioUser`); (2) `X-Admin-Token` match → allow (CI/service/break-glass marker); (3) local dev auto-grant ONLY when `mode === "dev"` AND no `ADMIN_API_TOKEN` configured (so the integration suite, which sets the token, still enforces it); (4) else 401. Session check is `auth.api.getSession({ headers: fromNodeHeaders(req.headers) })`, wrapped so a backend error falls through. Added `req.studioUser` to the Express Request augmentation; `requireAdmin({ getAuth, getMode })` is injectable for tests. Anti-lock-out: because the token path always works while `ADMIN_API_TOKEN` is set, provisioning the Google secrets later can never 401 the admin surface.
+**Tests added:** 7 (`src/middleware/requireAdmin.test.ts`) — session-allow, token-allow, 401 (token configured but missing/wrong), dev auto-grant (dev + no token), fail-closed (disabled + no token + no session), session-over-token precedence, session-backend-error → token fallback.
+**Next:** 8.5 — Studio "Sign in with Google" client flow + break-glass token paste.
+**Notes:** 539/79 cold-green — no regression across the admin integration suite (all set `ADMIN_API_TOKEN`, so they still gate on the token and assert 401 without it). The `getStudioAuth()` singleton is null in test env (no Google secrets) → session check is a fast no-op there.
