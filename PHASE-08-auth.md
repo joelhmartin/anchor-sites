@@ -57,7 +57,7 @@
 
 ## Track A — Studio control-hub login (D-034)
 
-- [ ] **8.1 — Install + pin Better-auth; studio auth instance + mode switch.**
+- [x] **8.1 — Install + pin Better-auth; studio auth instance + mode switch.**
   Install `better-auth` at an EXACT pin (`--save-exact`, per the D-036/D-038 pin
   convention; bump deliberately). Create `src/server/auth/studio-auth.ts`:
   `betterAuth()` configured against the existing `pg` Pool, Google social
@@ -192,3 +192,10 @@
 ## Completion log
 
 <!-- Routine appends timestamped entries here as tasks complete. -->
+
+### 2026-05-26 14:24 UTC — Task 8.1
+**Commit:** _(this commit)_
+**Done:** Installed `better-auth@1.6.11` (exact pin) + built `src/server/auth/studio-auth.ts` — the Studio Better-auth instance factory (`createStudioAuth`), cached singleton (`getStudioAuth`), env-driven mode switch (`resolveStudioAuthMode`: google/dev/disabled), Studio origin + `/auth/google/callback` helpers, and the `auth_*` table-name map. Recorded **D-046**; added the four new env vars (blank) to `.env.example`.
+**Tests added:** 12 (`src/server/auth/studio-auth.test.ts`) — mode resolution (google/dev/disabled + partial config), origin/callback derivation (incl. the documented `/auth/google/callback` path, not Better-auth's default), instance construction (handler+api, no DB I/O), cached-singleton null-in-dev / instance-in-google.
+**Next:** 8.2 — Studio Better-auth tables migration (`auth_*`, forward + rollback).
+**Notes:** No DB use yet (instance is config-only). Mounting on the Studio host + the callback-forwarding shim + team-gating are 8.3; the `requireAdmin` dual-mode flip is 8.4. Prod stays on the X-Admin-Token until the operator provisions `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`BETTER_AUTH_SECRET` (mode "disabled" → token path; no lock-out). `createStudioAuth` return type is inferred (betterAuth generic-variance, see D-046).

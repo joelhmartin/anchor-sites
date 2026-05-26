@@ -34,6 +34,7 @@
     "@tiptap/react": "3.23.5",
     "@tiptap/starter-kit": "3.23.5",
     "axios": "^1.7.0",
+    "better-auth": "1.6.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "cors": "^2.8.5",
