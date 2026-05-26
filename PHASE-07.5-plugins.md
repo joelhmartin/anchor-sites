@@ -249,7 +249,7 @@ via the workspace's `unstubEnvs`).
 `encryptConfig` on the secret subset.
 
 ### 2026-05-26 09:23 UTC — Task 7.5.4
-**Commit:** _pending sha-record follow-up_
+**Commit:** 0cfb0ce
 **Done:** `src/server/plugins/loader.ts` — two phases kept separate so
 `createApp` stays sync: `verifyPluginMigrations(pool)` (ASYNC, boot) checks each
 plugin's `requiredEnv` + declared `plg_<name>_` tables exist via
