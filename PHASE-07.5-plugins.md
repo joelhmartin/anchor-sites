@@ -77,7 +77,7 @@ thin add when the first real plugin ships.
   `setConfig(...)`. Move `site_plugins` from "reserved" → real in
   `docs/data-model.md`. Unit + integration tests.
 
-- [ ] **7.5.2 — Plugin manifest contract + `registerPlugin()` registry.**
+- [x] **7.5.2 — Plugin manifest contract + `registerPlugin()` registry.**
   `src/server/plugins/manifest.ts` — Zod-typed `PluginManifest`:
   `{ name (kebab, unique), version (semver), blocks?: BlockRegistryEntry[]
   keyed by namespaced type, createRouter?: (ctx) => express.Router,
@@ -210,3 +210,22 @@ scoping, unique-constraint violation, CASCADE on site delete.
 **Notes:** 459/67 green cold; typecheck clean. Repo stays crypto-agnostic
 (treats `config_encrypted` as opaque); the route layer (7.5.6) owns
 encrypt/redact via the manifest's `secretConfigKeys`.
+
+### 2026-05-26 09:16 UTC — Task 7.5.2
+**Commit:** _pending sha-record follow-up_
+**Done:** Manifest contract `src/server/plugins/manifest.ts` — `PluginManifest`
+type (name, version, blocks, createRouter, migrations.tables, configSchema,
+secretConfigKeys, requiredEnv), `pluginMetaSchema` (Zod for the serializable
+metadata), `validatePluginManifest()` (Zod meta + structural rules Zod can't
+express: block-type namespacing `<name>/`, table prefix `plg_<name>_`,
+secretConfigKeys ⊆ ZodObject configSchema, UPPER_SNAKE env, function
+createRouter), and `pluginTablePrefix`/`pluginBlockPrefix` helpers. Runtime
+registry `src/server/plugins/registry.ts` — `registerPlugin` (validates +
+uniqueness), `getPlugin`/`listPlugins`/`hasPlugin`/`__resetPluginsForTests`,
+mirroring the block registry. Per D-045.
+**Tests added:** 14 (`manifest.test.ts` ×10 — prefixes, valid manifest, and
+each rejection path; `registry.test.ts` ×4 — register/read, duplicate throw,
+invalid-manifest throw, reset).
+**Next:** 7.5.3 — per-site config encryption helper (AES-256-GCM, D-044).
+**Notes:** 473 total; typecheck clean. Manifest holds live values (components,
+router factory, Zod schema) so it's intentionally only partly Zod-validated.
