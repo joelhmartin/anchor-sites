@@ -349,7 +349,7 @@ takes a live Zod schema) — recorded as the practical reading of D-045's
 "Zod-driven form."
 
 ### 2026-05-26 09:44 UTC — Task 7.5.9
-**Commit:** _pending sha-record follow-up_
+**Commit:** 83eb72f
 **Done:** `docs/plugins.md` — the full framework reference: manifest contract
 (field table), runtime registry + loader + boot order, per-site enablement
 (`site_plugins`, `req.site.plugins`, `requireSitePlugin`), config + secret
