@@ -147,7 +147,7 @@
   updated; UNIQUE(site_id, slug); INDEX(site_id, starts_at))`. Forward+rollback.
   `src/server/events/{schema,repo}.ts`. Tests.
 
-- [ ] **8.11 — Public blog/events rendering on tenant hosts.**
+- [x] **8.11 — Public blog/events rendering on tenant hosts.**
   Routes `/blog`, `/blog/:slug`, `/events`, `/events/:slug` resolved via
   `req.site` (mounted after `resolveSite`, before the catch-all page router,
   tenant hosts only — never Studio). SSR through the existing block renderer
@@ -262,3 +262,10 @@
 **Tests added:** 4 (`tests/integration/events-repo.test.ts`) — ISO-date coercion + starts_at ordering, per-site slug uniqueness, invalid-description rejection, scoped update/read/delete.
 **Next:** 8.11 — public blog/events rendering on tenant hosts.
 **Notes:** 569/87 cold-green; typecheck clean. `z.coerce.date()` types the input as `Date`, so typed callers pass `Date`; HTTP handlers parse `unknown` and the coercion handles ISO strings.
+
+### 2026-05-26 16:00 UTC — Task 8.11
+**Commit:** _(this commit)_
+**Done:** `src/server/routes/blog-events.ts` (`blogEventsRouter`) — public `/blog`, `/blog/:slug`, `/events`, `/events/:slug` on TENANT hosts, mounted in `createApp` before the catch-all page router. Detail pages render the post/event `body` (`Block[]`) through the SAME `renderPage` shell + block renderer + media hydration as pages; list pages render a synthesized rich-text index (escaped). Published-only; unknown slug → site 404; admin/unknown host → `next()` (no hijack of Studio/SPA).
+**Tests added:** 5 (`tests/integration/blog-events-render.test.ts`) — /blog lists published (hides drafts), /blog/:slug renders body via the block renderer, draft → 404, /events list + detail, unknown host falls through to downstream.
+**Next:** 8.12 — provision-time copy-in hook (seed tenant_auth_config + starter content).
+**Notes:** 574/88 cold-green; typecheck clean. `/blog`/`/events` are reserved paths (a page with slug "blog" would be shadowed — acceptable convention).

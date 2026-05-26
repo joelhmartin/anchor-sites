@@ -5,6 +5,7 @@ import pinoHttp from "pino-http";
 import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 import { pageRouter } from "./routes/page.js";
+import { blogEventsRouter } from "./routes/blog-events.js";
 import { adminPagesRouter } from "./routes/admin-pages.js";
 import { siteResolveRouter } from "./routes/site-resolve.js";
 import { mediaRouter } from "./routes/media.js";
@@ -89,6 +90,11 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Admin-only debug endpoint for tenant resolution. P3-T3.2.
   app.use(siteResolveRouter());
+
+  // P8-T8.11: public blog/events on tenant hosts (/blog, /events). Before the
+  // catch-all page renderer so these reserved paths resolve; non-matching paths
+  // + admin/unknown hosts fall through.
+  app.use(blogEventsRouter());
 
   // Tenant page renderer. Registered last so all named admin/probe routes
   // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
