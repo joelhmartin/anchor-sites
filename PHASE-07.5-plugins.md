@@ -169,7 +169,7 @@ thin add when the first real plugin ships.
 <!-- Routine appends timestamped entries below as tasks complete -->
 
 ### 2026-05-26 09:06 UTC — Task 7.5.0
-**Commit:** _pending sha-record follow-up_
+**Commit:** 9b0f299
 **Done:** Split the root vitest project into isolated `node` + `jsdom` projects
 so the two environments never share a worker fork (root cause of the
 FLAKE-RESOLVESITE class). `vitest.workspace.ts` now defines `node` (server/
