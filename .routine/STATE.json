@@ -1,10 +1,10 @@
 {
   "_comment": "Routine state. Update atomically. Never edit by hand once routine is running.",
   "notify_email": "jmartin@anchorcorps.com",
-  "current_phase": 7,
-  "current_phase_file": "PHASE-07-templates.md",
-  "current_task": null,
-  "phase_started_at": "2026-05-21T15:26:44Z",
+  "current_phase": 7.5,
+  "current_phase_file": "PHASE-07.5-plugins.md",
+  "current_task": "7.5.0",
+  "phase_started_at": "2026-05-26T00:00:00Z",
   "last_commit_sha": "b8b856b",
   "last_email_sent_at": null,
   "emails_sent": [],
@@ -66,5 +66,7 @@
   "phase_6_approved": true,
   "phase_6_approved_note": "Operator approved Phase 6 verbally in chat 2026-05-20 after the EXPAND+CONFIRM gate. Confirmed: model=claude-sonnet-4-6 (cost/latency sweet spot, swappable pin), edit-contract=tool-use ops (insert/update/delete/move_block), propose-then-apply (preview+diff, no auto-save). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 344/52 cold green. Advanced to current_phase=6, current_task=6.1.",
   "phase_7_approved": true,
-  "phase_7_approved_note": "Operator approved Phase 7 (template system) verbally in chat 2026-05-21 after the EXPAND+CONFIRM gate, signing off on PHASE-07-templates.md (tasks 7.1-7.10) + four design forks (operator took the recommendation on three, chose include-now on the fourth): storage=normalized templates+template_pages (D-041); materialization=pg-boss async per D-019 (D-042); media on materialize=share immutable GCS variant URLs in v1, keep source asset_ids, per-site media copy deferred to Phase 12 (D-043); page-level templates=included now (thin slice, task 7.9). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 394/58 cold green (2026-05-21). Advanced to current_phase=7, current_task=7.1. STOP at the 7->7.5 boundary (Phase 7.5 plugin framework, D-016, is a separate later phase)."
+  "phase_7_approved_note": "Operator approved Phase 7 (template system) verbally in chat 2026-05-21 after the EXPAND+CONFIRM gate, signing off on PHASE-07-templates.md (tasks 7.1-7.10) + four design forks (operator took the recommendation on three, chose include-now on the fourth): storage=normalized templates+template_pages (D-041); materialization=pg-boss async per D-019 (D-042); media on materialize=share immutable GCS variant URLs in v1, keep source asset_ids, per-site media copy deferred to Phase 12 (D-043); page-level templates=included now (thin slice, task 7.9). Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Baseline 394/58 cold green (2026-05-21). Advanced to current_phase=7, current_task=7.1. STOP at the 7->7.5 boundary (Phase 7.5 plugin framework, D-016, is a separate later phase).",
+  "phase_7_5_approved": true,
+  "phase_7_5_approved_note": "Operator approved Phase 7.5 (plugin/integration framework, D-016) verbally in chat 2026-05-26 after the EXPAND+CONFIRM gate. Operator FIRST chose to run 7.5 BEFORE Phase 8 (honoring PLAN.md ordering; the pasted kickoff was Phase 8 but routine surfaced the ordering fork). Signed off on PHASE-07.5-plugins.md (tasks 7.5.0-7.5.10) + four design forks (operator took the recommendation on all): (A) config secret encryption=app-level AES-256-GCM with a Secret Manager key PLUGIN_CONFIG_ENC_KEY, refines D-016 KMS->SM-held key for v1 (new D-0xx); (B) loader scope=manifest contract + registerPlugin() runtime API + loader composing registered manifests against site_plugins, proven by ONE in-repo reference plugin, AR dynamic discovery deferred to first-real-plugin (new D-0xx); (C) test-isolation hardening FIRST as task 7.5.0 (split root vitest into node+jsdom projects to kill FLAKE-RESOLVESITE); plus design notes: blocks register global+namespaced with per-site availability via site_plugins (new D-0xx), config UI = Zod-driven form not Puck, plugin migrations via standard migrate:up with plg_<name>_ prefix. Routine created then consumed .routine/NEXT-PHASE-APPROVED to honor hard-rule #1. Advanced to current_phase=7.5, current_task=7.5.0. STOP at the 7.5->8 boundary."
 }

@@ -1,0 +1,190 @@
+# Phase 7.5 — Plugin / integration framework
+
+> Expanded + confirmed with the operator 2026-05-26 (verbal sign-off in chat
+> after the EXPAND+CONFIRM gate; operator chose to run 7.5 before Phase 8, per
+> PLAN.md ordering). Implements **D-016** — the general-purpose backend
+> integration framework. Builds on the runtime `registerBlock()` API reserved
+> in Phase 1 (`src/blocks/registry.ts`), the `req.site.plugins` field reserved
+> in `resolveSite.ts`, the pg-boss boot (D-019/D-030), and the Phase-4 Studio
+> admin shell + API. **Not** the concrete plugins (Stripe, PayPal, booking) —
+> those are POST-7.5 packages, not this phase. **Not** Phase 8 auth.
+
+## What this phase delivers
+
+A framework that treats integrations as self-describing plugins: each plugin
+ships a single **manifest** declaring what it contributes (blocks, routes,
+migrations, config schema, required env). The renderer composes enabled plugins
+at boot; per-site enablement + encrypted config lives in `site_plugins`; Studio
+gets enable/disable + a config form. One in-repo **reference plugin** proves the
+contract end-to-end. Distribution as versioned Artifact Registry packages
+(`@anchorcorps/plugin-<name>`, same channel as `@anchorcorps/components`) is
+documented + scaffolded; dynamic discovery of installed plugin packages is a
+thin add when the first real plugin ships.
+
+## Confirmed design decisions (operator, 2026-05-26)
+
+1. **Config secret encryption — app-level AES-256-GCM** with a 32-byte key from
+   Secret Manager (`PLUGIN_CONFIG_ENC_KEY`). `node:crypto`, zero new deps; dev/
+   test key local; the prod secret is a prereq only when the first key-bearing
+   plugin lands. Refines D-016's "KMS-managed key" → SM-held key for v1, KMS
+   upgrade path documented. → new **D-0xx**.
+2. **Loader scope — contract + loader + one in-repo reference plugin** (Fork B).
+   Build the manifest contract, a `registerPlugin()` runtime API mirroring
+   `registerBlock`, and a loader composing registered manifests against
+   `site_plugins`. AR distribution documented; dynamic `@anchorcorps/plugin-*`
+   discovery deferred to first-real-plugin. → new **D-0xx**.
+3. **Test-isolation hardening first** (Fork C) — split the root vitest project
+   into `node` + `jsdom` sub-projects so they never share a fork; kills the
+   FLAKE-RESOLVESITE warm-cache class before 7.5 piles on more DB tests.
+4. **Block registration — global + namespaced, per-site availability.** Plugin
+   blocks register into the one global registry at boot under a namespaced type
+   (`<plugin>/<block>`); per-site *availability* (editor palette, route
+   mounting, render gating) is driven by `site_plugins` / `req.site.plugins`.
+   → new **D-0xx**.
+5. **Config UI — Zod-driven form** (reuse `src/editor/zod-fields.ts` field
+   generation), NOT the full Puck editor. Plugin config is a flat form from the
+   plugin's `configSchema`.
+6. **Plugin migrations (v1) — standard `migrate:up` run, `plg_<name>_` table
+   prefix.** Plugins own/prefix their tables and must NOT alter core tables
+   (D-016). A per-install dynamic migration runner is a documented future
+   refinement; the loader *verifies* a plugin's tables exist before mounting.
+
+## Tasks
+
+- [x] **7.5.0 — Test-isolation hardening (do first).**
+  Split the root `vitest.config.ts` (currently one `singleFork` node project
+  that `include`s both `tests/**` and `src/**`, while 14 files use the
+  `@vitest-environment jsdom` pragma → node + jsdom share one fork, the
+  FLAKE-RESOLVESITE root cause). Move to two projects so node and jsdom never
+  share a fork: a `node` project (server/integration, `pool:forks`+`singleFork`
+  to keep DB access serialized) and a `jsdom` project (the 14 component/UI
+  files). Keep the existing `packages/components` workspace project as-is. Add
+  `restoreMocks`/`unstubGlobals`/`unstubEnvs`. Re-confirm the suite is green
+  COLD (`rm -rf node_modules/.vite/vitest` then `npm test`) and deterministic.
+  No feature code. Record the approach in the completion log; if it fully
+  resolves the flake, note FLAKE-RESOLVESITE resolved.
+
+- [ ] **7.5.1 — `site_plugins` table + migration + repo.**
+  New table `site_plugins` (`id` uuid PK `gen_random_uuid()`, `site_id` uuid FK
+  → `sites.id` ON DELETE CASCADE, `plugin_name` text, `version` text,
+  `enabled` bool default false, `config_encrypted` jsonb nullable (envelope
+  `{v,iv,tag,ciphertext}`), `installed_at` timestamptz default now(),
+  `updated_at` timestamptz + reuse `touch_updated_at` trigger;
+  `UNIQUE(site_id, plugin_name)`; `INDEX(site_id) WHERE enabled`). Forward +
+  rollback migration `db/migrations/<ts>_site_plugins.cjs`. Repo module
+  `src/server/plugins/repo.ts` (pool-injected): `listSitePlugins(siteId)`,
+  `getSitePlugin(siteId, name)`, `upsertSitePlugin(...)`, `setEnabled(...)`,
+  `setConfig(...)`. Move `site_plugins` from "reserved" → real in
+  `docs/data-model.md`. Unit + integration tests.
+
+- [ ] **7.5.2 — Plugin manifest contract + `registerPlugin()` registry.**
+  `src/server/plugins/manifest.ts` — Zod-typed `PluginManifest`:
+  `{ name (kebab, unique), version (semver), blocks?: BlockRegistryEntry[]
+  keyed by namespaced type, createRouter?: (ctx) => express.Router,
+  migrations?: { tables: string[] } (the plg_<name>_ tables it owns),
+  configSchema?: ZodTypeAny, secretConfigKeys?: string[], requiredEnv?:
+  string[] }`. `src/server/plugins/registry.ts` — `registerPlugin(manifest)` /
+  `getPlugin(name)` / `listPlugins()`, mirroring the block registry (global
+  Map, uniqueness-enforced, `__resetPluginsForTests`). Unit tests for the
+  schema + registry.
+
+- [ ] **7.5.3 — Per-site config encryption helper (D-0xx, Fork A).**
+  `src/server/plugins/crypto.ts` — `encryptConfig(plaintextObj)` /
+  `decryptConfig(envelope)` using `node:crypto` AES-256-GCM. Key resolved from
+  `PLUGIN_CONFIG_ENC_KEY` (base64 32 bytes); a dev/test key is generated/used
+  when unset in non-prod, and the helper throws in production if the env is
+  missing (never silently downgrades). Authenticated (GCM tag) so tampered
+  ciphertext fails closed. Only `secretConfigKeys` fields are encrypted;
+  non-secret config stays plaintext for queryability. Never logs plaintext.
+  Round-trip + tamper-detection + missing-key unit tests.
+
+- [ ] **7.5.4 — Plugin loader / boot composition.**
+  `src/server/plugins/loader.ts` — `loadPlugins({ app, pool })` called from the
+  boot path: for every registered plugin, register its blocks into the global
+  registry (namespaced types); mount its router at `/api/plugins/<name>`
+  (router exists once globally; per-site enablement is checked inside via
+  `req.site.plugins`); verify its declared `plg_<name>_` tables exist (fail-soft
+  + structured log if a plugin's migration hasn't run — skip mounting, don't
+  crash boot); validate `requiredEnv`. Idempotent (guarded so repeated boots /
+  tests don't double-register). Wired into `createApp()` (routers) and the
+  block registration into the existing import-time path. Integration tests with
+  the reference plugin (7.5.7).
+
+- [ ] **7.5.5 — Populate `req.site.plugins` from `site_plugins`.**
+  Replace the hardcoded `plugins: []` in `resolveSite.ts` with the enabled
+  plugins for the resolved site (`name` + `version` per `PluginInstance`),
+  fetched in the same lookup and cached with the site (respecting the 60s TTL).
+  `evictSiteCache(host)` already exists — call it from the enable/disable path
+  (7.5.6) so toggles take effect without waiting out the TTL. Integration tests
+  asserting enabled plugins appear and disabled ones don't.
+
+- [ ] **7.5.6 — Admin plugins API.**
+  `src/server/routes/plugins.ts`, mounted under `/api`, `requireAdmin`-gated:
+  - `GET /api/plugins` — list registered/available plugins (name, version,
+    config schema shape, required env).
+  - `GET /api/sites/:siteId/plugins` — per-site install/enable state (config
+    returned with secret fields **redacted**, never decrypted to the client).
+  - `PUT /api/sites/:siteId/plugins/:name` — install/enable/disable + set
+    config: validate config against the plugin's `configSchema`, encrypt
+    `secretConfigKeys`, upsert `site_plugins`, evict the site's resolve cache.
+  Idempotent. Supertest coverage incl. validation failure + redaction.
+
+- [ ] **7.5.7 — Reference plugin (proves the contract).**
+  In-repo `@anchorcorps/plugin-example` (a `packages/plugin-example/` workspace,
+  or `src/server/plugins/example/` if lighter) exercising EVERY manifest field:
+  one `ac-`-prefixed block (`example/banner`), a `createRouter` exposing
+  `GET /api/plugins/example/ping` (gated by site enablement), a migration
+  creating `plg_example_notes`, a `configSchema` with one normal + one secret
+  field (`api_key`), and a `requiredEnv` entry. Registered via
+  `registerPlugin`. This is the end-to-end test target for 7.5.4–7.5.6.
+
+- [ ] **7.5.8 — Studio Plugins tab.**
+  New "Plugins" tab on Site Detail (`src/admin/pages/site-tabs/PluginsTab.tsx`):
+  list available plugins, enable/disable toggle, and a config form generated
+  from the plugin's Zod `configSchema` (reuse `zod-fields.ts` field generation;
+  secret fields render as password inputs, show "set/unset" not the value).
+  Save → admin API (7.5.6). jsdom tests with fetch mocked; Puck stubbed per
+  D-036 (not used here, but keep the test env consistent). No visual claims —
+  operator QA at studio.localhost:3000.
+
+- [ ] **7.5.9 — Packaging/distribution + docs.**
+  Document + scaffold how a plugin builds/publishes to Artifact Registry like
+  `@anchorcorps/components` (tsup build, `manifest` as the package entry, semver
+  tags). Provide a thin documented seam for future dynamic discovery of
+  installed `@anchorcorps/plugin-*` packages (the loader currently composes
+  explicitly-registered manifests). `docs/plugins.md`: manifest contract,
+  lifecycle (publish → install → enable → configure), config + secret handling,
+  migration ordering/prefix rule, block namespacing, security notes.
+
+- [ ] **7.5.10 — Phase wrap.**
+  `npm run typecheck` clean + full COLD suite green + deterministic. Tick the
+  PLAN.md Phase 7.5 box. Update STATE (`current_task=null`, test counts,
+  followups). DEMO-LOG entry (Studio Plugins tab + reference plugin enable/
+  disable). Confirm with the operator before the phase's first prod-deploying
+  push (CI auto-deploys on push to main, D-035 — the `site_plugins` migration
+  runs in the migrate step). STOP at the 7.5→8 boundary.
+
+## Completion log
+
+<!-- Routine appends timestamped entries below as tasks complete -->
+
+### 2026-05-26 09:06 UTC — Task 7.5.0
+**Commit:** _pending sha-record follow-up_
+**Done:** Split the root vitest project into isolated `node` + `jsdom` projects
+so the two environments never share a worker fork (root cause of the
+FLAKE-RESOLVESITE class). `vitest.workspace.ts` now defines `node` (server/
+integration/smoke + pure-logic unit tests, `singleFork` to serialize test-DB
+access) and `jsdom` (`src/admin/**` + the 3 editor component tests), plus the
+unchanged `@anchorcorps/components` project. Added `restoreMocks` +
+`unstubGlobals` + `unstubEnvs` to both as defense-in-depth. Deleted the
+superseded `vitest.config.ts` (was only referenced by the workspace).
+**Tests added:** 0 (test-infra change). Suite unchanged at 451/66; ran COLD =
+green; node project run 3× WARM = 325/42 green every time with no `/healthz`
+403 (the flake's signature). Typecheck clean.
+**Next:** 7.5.1 — `site_plugins` table + migration + repo.
+**Notes:** FLAKE-RESOLVESITE class considered RESOLVED — the node↔jsdom
+cross-fork global-state leak is now structurally impossible (separate pools).
+Suite is also ~35% faster (projects run in parallel). Block/jsdom file
+membership is glob-driven in `vitest.workspace.ts`; new Studio/editor UI tests
+under `src/admin/**` or `src/editor/custom-fields/**` land in jsdom
+automatically.
