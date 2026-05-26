@@ -127,9 +127,13 @@ Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's ow
 
 - **`touch_updated_at()`** — generic BEFORE-UPDATE trigger function. Attached to `pages` (`pages_touch_updated_at`), `templates` (`templates_touch_updated_at`), and `site_plugins` (`site_plugins_touch_updated_at`). Reusable when other tables grow an `updated_at` column.
 
-## Future schema (reserved, NOT in this migration)
+## Studio auth (P8-T8.2 — D-034 / D-046)
 
-- **`auth_*`** — auth tables (users, sessions, etc.). Added in Phase 8 per D-020 (Better-auth ships its own schema).
+- **`auth_user` / `auth_session` / `auth_account` / `auth_verification`** — Better-auth's core schema for the STUDIO internal-team Google login. Authored verbatim from `getAuthTables()` (better-auth@1.6.11). **Column names are camelCase** (`emailVerified`, `userId`, `createdAt`, …) because Better-auth's Kysely adapter quotes identifiers; the migration creates them case-preserved so queries match. `id` is `text` (Better-auth generates string ids). This is the internal-admin auth surface — the per-site visitor auth (`tenant_auth_*`, P8-T8.7) is a SEPARATE set keyed by `site_id`.
+
+## Future schema (reserved, NOT yet migrated)
+
+- **`tenant_auth_*`** (+ `site_id`) / **`posts`** / **`events`** — per-site auth/blog/events (Track B, P8-T8.7–8.10, D-008/D-020/D-047). Scoped by `site_id` under the one shared renderer (D-003).
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
 ## Migration commands

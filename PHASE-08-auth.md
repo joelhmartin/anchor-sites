@@ -70,7 +70,7 @@
   Record **D-046** (pin + config + mode + callback path). Unit-test instance
   construction + mode resolution (no network, no key).
 
-- [ ] **8.2 — Studio Better-auth tables migration (forward + rollback).**
+- [x] **8.2 — Studio Better-auth tables migration (forward + rollback).**
   Author `db/migrations/<ts>_auth_studio.cjs` creating Better-auth's schema as
   `auth_user`, `auth_session`, `auth_account`, `auth_verification` (map
   Better-auth's table names to the `auth_*` convention). Rollback drops them.
@@ -199,3 +199,10 @@
 **Tests added:** 12 (`src/server/auth/studio-auth.test.ts`) — mode resolution (google/dev/disabled + partial config), origin/callback derivation (incl. the documented `/auth/google/callback` path, not Better-auth's default), instance construction (handler+api, no DB I/O), cached-singleton null-in-dev / instance-in-google.
 **Next:** 8.2 — Studio Better-auth tables migration (`auth_*`, forward + rollback).
 **Notes:** No DB use yet (instance is config-only). Mounting on the Studio host + the callback-forwarding shim + team-gating are 8.3; the `requireAdmin` dual-mode flip is 8.4. Prod stays on the X-Admin-Token until the operator provisions `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`BETTER_AUTH_SECRET` (mode "disabled" → token path; no lock-out). `createStudioAuth` return type is inferred (betterAuth generic-variance, see D-046).
+
+### 2026-05-26 14:30 UTC — Task 8.2
+**Commit:** _(this commit)_
+**Done:** Authored `db/migrations/1747577000000_auth_studio.cjs` — Better-auth's `auth_user`/`auth_session`/`auth_account`/`auth_verification` tables, fields taken verbatim from `getAuthTables()` (better-auth@1.6.11). Column names kept CAMELCASE (created case-preserved/quoted) so they match Better-auth's Kysely quoted queries. FKs `auth_session.userId`/`auth_account.userId` → `auth_user` ON DELETE CASCADE; indexes on the userId/identifier/provider lookups; `email`/`token` unique. `deploy:db` (= `migrate:up`) globs the dir, so it's picked up with no script change. Updated `docs/data-model.md` (auth_* shipped; tenant_auth_*/posts/events moved to reserved).
+**Tests added:** 3 (`tests/integration/auth-studio-schema.test.ts`) — all four tables exist; camelCase columns preserved; **Better-auth's real adapter round-trips a user** (create→findOne→delete) against the migrated columns (the meaningful proof that the DDL matches Kysely's quoted identifiers). Also verified migrate up→down→up by hand on anchor_test.
+**Next:** 8.3 — mount the Studio auth handler on the Studio host + callback shim + team-gating.
+**Notes:** Better-auth generates string `id`s, so `id` is `text` (not uuid). No `touch_updated_at` trigger — Better-auth manages `updatedAt` itself; DB `now()` defaults cover inserts.
