@@ -212,7 +212,7 @@ scoping, unique-constraint violation, CASCADE on site delete.
 encrypt/redact via the manifest's `secretConfigKeys`.
 
 ### 2026-05-26 09:16 UTC — Task 7.5.2
-**Commit:** _pending sha-record follow-up_
+**Commit:** 68a5b52
 **Done:** Manifest contract `src/server/plugins/manifest.ts` — `PluginManifest`
 type (name, version, blocks, createRouter, migrations.tables, configSchema,
 secretConfigKeys, requiredEnv), `pluginMetaSchema` (Zod for the serializable
