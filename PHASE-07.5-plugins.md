@@ -286,7 +286,7 @@ json_agg over a second `getEnabledPlugins` call so the existing resolveSite
 query-count caching test stays valid AND the hot path stays at one query.
 
 ### 2026-05-26 09:32 UTC — Task 7.5.6
-**Commit:** _pending sha-record follow-up_
+**Commit:** d5a161b
 **Done:** `src/server/routes/plugins.ts` (mounted at `/api`, `requireAdmin`):
 `GET /api/plugins` (available plugins — version, required_env, secret_config_keys,
 blocks, `config_schema` via zod-to-json-schema); `GET /api/sites/:siteId/plugins`
