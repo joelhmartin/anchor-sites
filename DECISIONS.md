@@ -750,3 +750,19 @@ Registered in `src/server/jobs/index.ts` (one greppable handler list, D-030).
 **Rationale:** One greppable library pin + an env-driven mode switch keeps dev/test free of any Google round-trip and lets prod cut over by adding secrets (no code change), matching the email/AI service pattern. Aligning the callback to the already-documented URI avoids a redundant operator Console step. The `auth_*` vs `tenant_auth_*` split keeps the internal-team and per-site auth surfaces cleanly separated.
 
 **Alternatives considered:** Better-auth's default `/api/auth/callback/google` callback (rejected — would force the operator to re-register the redirect URI already specified in D-034); enabling email+password on Studio (rejected — D-034 is Google-only for the internal team); reading the pin from env (rejected — the pin is a recorded decision, not an ops toggle); a shared auth table set for both Studio and tenant auth with a discriminator (rejected — different surfaces, lifecycles, and provider policies; separate table sets are clearer).
+
+### D-047: Per-site auth/blog/events = multi-tenant by `site_id` + plugins (Phase 8 Track B; reconciles D-008 ↔ D-003)
+
+**Context:** **D-008** said auth/blog/events are **copied** into each provisioned site, **editable per-client**. **D-003** says there is **one** renderer service resolved by Host → `site_id`, **no per-site deploys**. These pull in opposite directions, and **D-011** revealed the starting repo never actually had auth/blog/events code — so there was nothing literal to "copy"; Phase 8 both builds the surface and defines what "per-site copy" means. Operator chose (chat, 2026-05-26, took the recommendation) **multi-tenant by `site_id` + plugins** over literal forked code.
+
+**Decision:** ONE shared renderer (D-003 intact). auth/blog/events are **features of the renderer with data scoped by `site_id`**:
+- **Auth:** Better-auth runs **per-site** — a request-scoped instance keyed by `req.site.id`, backed by shared `tenant_auth_*` tables that carry a `site_id` column with per-site-scoped uniqueness (the exact scoping mechanism is **D-048**, P8-T8.8). Per-site provider choice lives in `tenant_auth_config`.
+- **Blog / events:** `posts` / `events` tables scoped by `site_id`; **body is `Block[]`** (D-001) so they render through the existing block renderer and are editable with Puck (D-017) + AI (Phase 6), re-validated through the shared block validator (D-039).
+- **"Copy-in" =** seeding per-site **config + starter content** at provision time (reusing the Phase-7 materialization pattern, D-042), **NOT forked source code**.
+- **Per-client behavioral divergence** (custom auth flows, paid memberships, bespoke logic) rides the **plugin framework** (D-016/D-045), not core forks.
+
+**This amends D-008's wording:** "copied per-site / editable per-client" now means **per-site data + config + plugins under one renderer**, not per-site source forks. This is the same lesson D-016 already drew — shared infra is versioned/multi-tenant, and per-client customization happens through data/config/plugins, not copy-paste code.
+
+**Rationale:** Honors D-003 (no per-site deploys or renderers); reuses everything already built (renderer, Puck, AI editor, plugin framework, pg-boss materialization); still delivers real per-client customization (per-site content + provider config + plugins). Literal per-site forked code (D-008's letter) would require per-site bundles or dynamic per-site code loading — a direct violation of D-003 and a major v1 pivot.
+
+**Alternatives considered:** Literal forked code per site (rejected — breaks D-003; needs per-site deploys/dynamic code loading); schema-per-site for tenant auth (rejected for v1 — runtime DDL + N Postgres schemas; shared tables + `site_id` is simpler ops — D-048); a thin-slice that defers public blog/events rendering (offered, operator chose the full build).

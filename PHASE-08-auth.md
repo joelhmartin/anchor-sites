@@ -116,7 +116,7 @@
 
 ## Track B — Per-site auth/blog/events (D-008/D-020, multi-tenant by site_id)
 
-- [ ] **8.7 — Reconciliation decision + tenant-auth data model.**
+- [x] **8.7 — Reconciliation decision + tenant-auth data model.**
   Record **D-047** (amends D-008 per the confirmed reconciliation above). Migration
   `db/migrations/<ts>_tenant_auth.cjs`: `tenant_auth_user/session/account/
   verification`, each with `site_id` (FK → `sites.id` ON DELETE CASCADE) and
@@ -233,4 +233,11 @@
 **Done:** Added `docs/studio-auth.md` — the full Studio auth reference: dual-mode gate, the `google`/`dev`/`disabled` mode switch, env/secrets table, team gate, the exact `/auth/google/callback` redirect URI, the operator Console+Secret-Manager prerequisite, and a **zero-lock-out cutover runbook** (token works before/during/after the Google-secret flip) + break-glass instructions. Updated `docs/admin-ui.md` auth section to the Phase-8 reality (dual-mode), the local-run note (dev = no auth), and the Phase-8 hand-off (✅).
 **Tests added:** none (docs-only; baseline unchanged at 554/83).
 **Next:** 8.7 — Track B begins (reconciliation decision D-047 + tenant-auth data model).
-**Notes:** **Track A (studio Google login, D-034) is complete (8.1–8.6).** Live cutover gated on the operator provisioning GOOGLE_CLIENT_ID/SECRET + BETTER_AUTH_SECRET; prod runs `disabled` (token) until then. Nothing pushed yet — all local commits; first prod-deploying push needs operator confirmation (ships auth_* migration + dual-mode requireAdmin).
+**Notes:** **Track A (studio Google login, D-034) is complete (8.1–8.6).** Live cutover gated on the operator provisioning GOOGLE_CLIENT_ID/SECRET + BETTER_AUTH_SECRET; prod runs `disabled` (token) until then. PUSHED to main 2026-05-26 (ab86515..58c731e, operator-approved) — CI deploying.
+
+### 2026-05-26 15:09 UTC — Task 8.7 (TRACK B begins)
+**Commit:** _(this commit)_
+**Done:** Recorded **D-047** (the D-008↔D-003 reconciliation: one renderer, auth/blog/events scoped by `site_id`, "copy-in" = per-site config + starter content at provision, divergence via plugins; amends D-008's "copied code" wording). Migration `1747578000000_tenant_auth.cjs`: `tenant_auth_user/session/account/verification` (Better-auth schema + `site_id` FK→sites CASCADE, camelCase columns) with **per-site uniqueness** (`UNIQUE(site_id,email)`, `UNIQUE(site_id,providerId,accountId)`) + `tenant_auth_config(site_id PK, providers jsonb)`. Updated `docs/data-model.md`.
+**Tests added:** 2 (`tests/integration/tenant-auth-schema.test.ts`) — five tables exist; same email allowed across two sites but rejected twice within one site. Migrate up→down→up verified by hand.
+**Next:** 8.8 — request-scoped tenant Better-auth (`getTenantAuth(siteId)` + the D-048 site_id scoping mechanism).
+**Notes:** 556/84 cold-green; typecheck clean. Better-auth round-trip against these tables (incl. how `site_id` gets injected/scoped) is proven in 8.8 — this task is schema + decision only. Not pushed (Track B batches).

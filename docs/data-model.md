@@ -131,9 +131,14 @@ Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's ow
 
 - **`auth_user` / `auth_session` / `auth_account` / `auth_verification`** — Better-auth's core schema for the STUDIO internal-team Google login. Authored verbatim from `getAuthTables()` (better-auth@1.6.11). **Column names are camelCase** (`emailVerified`, `userId`, `createdAt`, …) because Better-auth's Kysely adapter quotes identifiers; the migration creates them case-preserved so queries match. `id` is `text` (Better-auth generates string ids). This is the internal-admin auth surface — the per-site visitor auth (`tenant_auth_*`, P8-T8.7) is a SEPARATE set keyed by `site_id`.
 
+## Tenant (per-site) auth (P8-T8.7 — D-047)
+
+- **`tenant_auth_user` / `tenant_auth_session` / `tenant_auth_account` / `tenant_auth_verification`** — Better-auth's schema, **multi-tenant by `site_id`** (FK → `sites` ON DELETE CASCADE), camelCase columns like the Studio set. Uniqueness is **per-site**: `UNIQUE(site_id, email)` on users (the same person can be a member of two tenant sites), `UNIQUE(site_id, providerId, accountId)` on accounts. A request-scoped Better-auth instance per `req.site.id` reads/writes only its own rows (D-048, P8-T8.8). Separate from the Studio `auth_*` set.
+- **`tenant_auth_config`** — per-site `providers jsonb` (which login methods a tenant enables), seeded at provision (P8-T8.12).
+
 ## Future schema (reserved, NOT yet migrated)
 
-- **`tenant_auth_*`** (+ `site_id`) / **`posts`** / **`events`** — per-site auth/blog/events (Track B, P8-T8.7–8.10, D-008/D-020/D-047). Scoped by `site_id` under the one shared renderer (D-003).
+- **`posts`** / **`events`** — per-site blog/events (Track B, P8-T8.9–8.10, D-047). Scoped by `site_id`; body = `Block[]` (rendered by the shared renderer).
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
 ## Migration commands
