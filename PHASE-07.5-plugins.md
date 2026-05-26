@@ -147,7 +147,7 @@ thin add when the first real plugin ships.
   D-036 (not used here, but keep the test env consistent). No visual claims —
   operator QA at studio.localhost:3000.
 
-- [ ] **7.5.9 — Packaging/distribution + docs.**
+- [x] **7.5.9 — Packaging/distribution + docs.**
   Document + scaffold how a plugin builds/publishes to Artifact Registry like
   `@anchorcorps/components` (tsup build, `manifest` as the package entry, semver
   tags). Provide a thin documented seam for future dynamic discovery of
@@ -347,3 +347,20 @@ enable+save sends typed secret; blank secret omitted on save) and a
 serialized JSON Schema (not `zod-fields`, which is server/Puck-oriented and
 takes a live Zod schema) — recorded as the practical reading of D-045's
 "Zod-driven form."
+
+### 2026-05-26 09:44 UTC — Task 7.5.9
+**Commit:** _pending sha-record follow-up_
+**Done:** `docs/plugins.md` — the full framework reference: manifest contract
+(field table), runtime registry + loader + boot order, per-site enablement
+(`site_plugins`, `req.site.plugins`, `requireSitePlugin`), config + secret
+handling (config/config_encrypted split, AES-GCM, `PLUGIN_CONFIG_ENC_KEY`,
+redaction, secret-merge-on-save), block namespacing, the `plg_<name>_` migration
+prefix rule, distribution (the `@anchorcorps/plugin-<name>` AR package layout +
+tsup, the in-repo reference plugin + `ENABLE_EXAMPLE_PLUGIN`, where dynamic
+discovery would wire — deferred per D-045), the Studio Plugins tab, the admin API
+table, and security notes.
+**Tests added:** 0 (docs only). Suite unchanged at 506/75.
+**Next:** 7.5.10 — phase wrap.
+**Notes:** Documented the distribution pattern + the deferred dynamic-discovery
+seam (`builtin.ts`) so the first real `@anchorcorps/plugin-*` package has a clear
+path.
