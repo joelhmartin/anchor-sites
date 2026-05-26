@@ -5,6 +5,7 @@ import { createApp } from "./app.js";
 import { mountViteDev } from "./vite-dev.js";
 import { pool } from "./db.js";
 import { bootJobs, stopJobs } from "./jobs/index.js";
+import { verifyPluginMigrations } from "./plugins/loader.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -12,7 +13,21 @@ const PORT = Number(process.env.PORT ?? 3000);
 const isProd = process.env.NODE_ENV === "production";
 
 async function main() {
-  const app = createApp();
+  // Verify registered plugins (env + migrations) before composing the app, so
+  // only properly-installed plugins mount (P7.5-T7.5.4, fail-soft).
+  let activePlugins: string[] | undefined;
+  try {
+    const { active, skipped } = await verifyPluginMigrations({ pool });
+    activePlugins = active;
+    for (const s of skipped) {
+      console.warn(`[plugins] skipping "${s.name}": ${s.reason}`);
+    }
+  } catch (err) {
+    console.error("[plugins] verify failed; starting with no plugins", err);
+    activePlugins = [];
+  }
+
+  const app = createApp({ activePlugins });
 
   if (isProd) {
     app.use(express.static(path.join(ROOT, "dist")));

@@ -98,7 +98,7 @@ thin add when the first real plugin ships.
   non-secret config stays plaintext for queryability. Never logs plaintext.
   Round-trip + tamper-detection + missing-key unit tests.
 
-- [ ] **7.5.4 — Plugin loader / boot composition.**
+- [x] **7.5.4 — Plugin loader / boot composition.**
   `src/server/plugins/loader.ts` — `loadPlugins({ app, pool })` called from the
   boot path: for every registered plugin, register its blocks into the global
   registry (namespaced types); mount its router at `/api/plugins/<name>`
@@ -247,3 +247,24 @@ via the workspace's `unstubEnvs`).
 **Notes:** 480 total; typecheck clean. Repo stays opaque to crypto; route layer
 (7.5.6) splits secret vs non-secret via the manifest `secretConfigKeys`, calls
 `encryptConfig` on the secret subset.
+
+### 2026-05-26 09:23 UTC — Task 7.5.4
+**Commit:** _pending sha-record follow-up_
+**Done:** `src/server/plugins/loader.ts` — two phases kept separate so
+`createApp` stays sync: `verifyPluginMigrations(pool)` (ASYNC, boot) checks each
+plugin's `requiredEnv` + declared `plg_<name>_` tables exist via
+`information_schema`, returns `{active, skipped:{name,reason}}` (fail-soft, never
+crashes boot); `loadPlugins(app, {only})` (SYNC) registers each active plugin's
+namespaced blocks (guarded by `hasBlock` → idempotent) + mounts its router at
+`/api/plugins/<name>`. Wired into `createApp({activePlugins})` BEFORE the
+catch-all `pageRouter`; `src/server/index.ts` boot now verifies plugins (logs
+skips) and passes the active set. Per-site enablement is enforced inside plugin
+routers (next tasks), not at mount. D-045.
+**Tests added:** 5 (`tests/integration/plugin-loader.test.ts`) — verify
+active/skipped (missing tables, missing env), loadPlugins registers block +
+mounts router (supertest), idempotent re-load, `only` filter, createApp mounts
+plugin routes before the renderer. Uses the reset+re-register-core registry
+pattern for determinism.
+**Next:** 7.5.5 — populate `req.site.plugins` from `site_plugins`.
+**Notes:** 485/71 green cold; typecheck clean. createApp gained an optional
+`activePlugins` arg (default = all registered) — existing call sites unchanged.

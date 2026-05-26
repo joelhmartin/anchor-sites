@@ -11,8 +11,18 @@ import { mediaRouter } from "./routes/media.js";
 import { adminSitesRouter } from "./routes/admin-sites.js";
 import { templatesRouter } from "./routes/templates.js";
 import { resolveSite } from "../middleware/resolveSite.js";
+import { loadPlugins } from "./plugins/loader.js";
 
-export function createApp(): Express {
+export type CreateAppOptions = {
+  /**
+   * Plugin names the loader should mount (P7.5-T7.5.4). At boot this is the
+   * `active` set from `verifyPluginMigrations` (env + migrations verified).
+   * Omitted (tests) → load every registered plugin.
+   */
+  activePlugins?: string[];
+};
+
+export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
 
   app.use(helmet({ contentSecurityPolicy: false }));
@@ -49,6 +59,12 @@ export function createApp(): Express {
 
   // P7: template system — save-as-template, list/inspect/archive, from-template.
   app.use("/api", templatesRouter());
+
+  // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
+  // page renderer so plugin API routes resolve. Each plugin's router enforces
+  // per-site enablement internally (D-016 / D-045). `activePlugins` is the
+  // boot-verified set; omitted → every registered plugin.
+  loadPlugins(app, { only: opts.activePlugins });
 
   // Admin-only debug endpoint for tenant resolution. P3-T3.2.
   app.use(siteResolveRouter());
