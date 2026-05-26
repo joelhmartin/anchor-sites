@@ -94,11 +94,23 @@ type SiteRow = {
   slug: string;
   display_name: string;
   default_brand_tokens: Record<string, unknown> | null;
+  plugins: PluginInstance[] | null;
 };
+
+// The site's ENABLED plugins, aggregated in the SAME query as the site lookup
+// (P7.5-T7.5.5, D-016) so the hot resolve path stays at one round-trip per
+// cache miss. Cached with the site for the TTL; enable/disable evicts the host
+// (the plugins admin route calls `evictSiteCache`) so toggles take effect.
+const PLUGINS_SUBQUERY = `COALESCE((
+  SELECT json_agg(json_build_object('name', sp.plugin_name, 'version', sp.version)
+                  ORDER BY sp.plugin_name)
+    FROM site_plugins sp
+   WHERE sp.site_id = s.id AND sp.enabled = true
+), '[]'::json) AS plugins`;
 
 async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | null> {
   const domainRes = await pool.query<SiteRow>(
-    `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens
+    `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, ${PLUGINS_SUBQUERY}
        FROM site_domains d
        JOIN sites s ON s.id = d.site_id
       WHERE d.hostname = $1 AND s.status = 'active'
@@ -113,8 +125,8 @@ async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | 
   if (match) {
     const slug = match[1].toLowerCase();
     const slugRes = await pool.query<SiteRow>(
-      `SELECT id, slug, display_name, default_brand_tokens
-         FROM sites WHERE slug = $1 AND status = 'active' LIMIT 1`,
+      `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, ${PLUGINS_SUBQUERY}
+         FROM sites s WHERE s.slug = $1 AND s.status = 'active' LIMIT 1`,
       [slug],
     );
     if (slugRes.rowCount && slugRes.rowCount > 0) {
@@ -132,7 +144,7 @@ function toResolvedSite(row: SiteRow, matched_via: ResolvedSite["matched_via"]):
     display_name: row.display_name,
     default_brand_tokens: row.default_brand_tokens ?? {},
     matched_via,
-    plugins: [],
+    plugins: row.plugins ?? [],
   };
 }
 

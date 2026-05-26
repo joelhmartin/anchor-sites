@@ -110,7 +110,7 @@ thin add when the first real plugin ships.
   block registration into the existing import-time path. Integration tests with
   the reference plugin (7.5.7).
 
-- [ ] **7.5.5 — Populate `req.site.plugins` from `site_plugins`.**
+- [x] **7.5.5 — Populate `req.site.plugins` from `site_plugins`.**
   Replace the hardcoded `plugins: []` in `resolveSite.ts` with the enabled
   plugins for the resolved site (`name` + `version` per `PluginInstance`),
   fetched in the same lookup and cached with the site (respecting the 60s TTL).
@@ -268,3 +268,19 @@ pattern for determinism.
 **Next:** 7.5.5 — populate `req.site.plugins` from `site_plugins`.
 **Notes:** 485/71 green cold; typecheck clean. createApp gained an optional
 `activePlugins` arg (default = all registered) — existing call sites unchanged.
+
+### 2026-05-26 09:26 UTC — Task 7.5.5
+**Commit:** _pending sha-record follow-up_
+**Done:** `resolveSite` now populates `req.site.plugins` with the resolved
+site's ENABLED plugins (`{name, version}`). Fetched in the SAME query as the
+site lookup via a `json_agg` subquery over `site_plugins` (one round-trip per
+cache miss — the resolve path is hot), cached with the site for the 60s TTL.
+`evictSiteCache(host)` (already exists) is the toggle path: the plugins admin
+route (7.5.6) calls it so enable/disable takes effect without waiting out the
+TTL. Disabled plugins never appear.
+**Tests added:** 3 (`tests/integration/resolveSite-plugins.test.ts`) — no
+plugins, enabled-included/disabled-excluded, disable-after-evict reflects.
+**Next:** 7.5.6 — admin plugins API.
+**Notes:** 488/72 green cold; typecheck clean. Chose the single-query
+json_agg over a second `getEnabledPlugins` call so the existing resolveSite
+query-count caching test stays valid AND the hot path stays at one query.
