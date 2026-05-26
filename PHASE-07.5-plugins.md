@@ -156,7 +156,7 @@ thin add when the first real plugin ships.
   lifecycle (publish → install → enable → configure), config + secret handling,
   migration ordering/prefix rule, block namespacing, security notes.
 
-- [ ] **7.5.10 — Phase wrap.**
+- [x] **7.5.10 — Phase wrap.**
   `npm run typecheck` clean + full COLD suite green + deterministic. Tick the
   PLAN.md Phase 7.5 box. Update STATE (`current_task=null`, test counts,
   followups). DEMO-LOG entry (Studio Plugins tab + reference plugin enable/
