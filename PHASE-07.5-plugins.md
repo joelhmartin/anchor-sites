@@ -190,7 +190,7 @@ under `src/admin/**` or `src/editor/custom-fields/**` land in jsdom
 automatically.
 
 ### 2026-05-26 09:12 UTC — Task 7.5.1
-**Commit:** _pending sha-record follow-up_
+**Commit:** 3516351
 **Done:** `site_plugins` table (D-016, refined by D-044): `db/migrations/
 1747575000000_site_plugins.cjs` (forward+rollback verified up/down/up on dev) —
 `(site_id FK CASCADE, plugin_name, version, enabled, config jsonb, config_
