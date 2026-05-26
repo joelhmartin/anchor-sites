@@ -103,7 +103,7 @@
   token-paste reachable at `/login?mode=token`. jsdom tests (fetch mocked):
   session present → app; absent → Google button; sign-out clears.
 
-- [ ] **8.6 — Studio-auth docs + cutover runbook.**
+- [x] **8.6 — Studio-auth docs + cutover runbook.**
   Update the auth section of `docs/admin-ui.md`; add `docs/studio-auth.md`
   (env/secrets, the redirect URI, dual-mode, break-glass, the cutover runbook).
   Record the operator prereq state (Google Client ID + `BETTER_AUTH_SECRET` in
@@ -227,3 +227,10 @@
 **Tests added:** 15 — `/api/me` integration (3: token/401/dev-grant), `session.ts` (5: fetchMe ok/401, Google redirect ok/throws, signOut), `RequireAdmin` async guard (3: authed/null/throw), `LoginPage` (4: Google default, OAuth start, error, break-glass token). Updated `AdminApp.test` to mock `useStudioSession` (routing stays deterministic).
 **Next:** 8.6 — studio-auth docs + cutover runbook (closes Track A).
 **Notes:** 554/83 cold-green; typecheck clean. The break-glass token form keeps the operator's chosen X-Admin-Token path reachable in the UI. Real Google sign-in is operator-verified at studio.anchorcorps.com once the Client ID + BETTER_AUTH_SECRET land (still mocked here).
+
+### 2026-05-26 14:53 UTC — Task 8.6 (TRACK A COMPLETE)
+**Commit:** _(this commit)_
+**Done:** Added `docs/studio-auth.md` — the full Studio auth reference: dual-mode gate, the `google`/`dev`/`disabled` mode switch, env/secrets table, team gate, the exact `/auth/google/callback` redirect URI, the operator Console+Secret-Manager prerequisite, and a **zero-lock-out cutover runbook** (token works before/during/after the Google-secret flip) + break-glass instructions. Updated `docs/admin-ui.md` auth section to the Phase-8 reality (dual-mode), the local-run note (dev = no auth), and the Phase-8 hand-off (✅).
+**Tests added:** none (docs-only; baseline unchanged at 554/83).
+**Next:** 8.7 — Track B begins (reconciliation decision D-047 + tenant-auth data model).
+**Notes:** **Track A (studio Google login, D-034) is complete (8.1–8.6).** Live cutover gated on the operator provisioning GOOGLE_CLIENT_ID/SECRET + BETTER_AUTH_SECRET; prod runs `disabled` (token) until then. Nothing pushed yet — all local commits; first prod-deploying push needs operator confirmation (ships auth_* migration + dual-mode requireAdmin).
