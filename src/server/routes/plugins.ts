@@ -167,17 +167,28 @@ export function pluginsRouter(opts: PluginsRouterOptions = {}): Router {
           }
           const validated = cfgParse.data as Record<string, unknown>;
           const secretKeys = new Set(manifest.secretConfigKeys ?? []);
+
+          // Preserve previously-stored secrets the form didn't resend (the API
+          // never returns secret values, so a config form can't echo them back).
+          // A non-empty value updates the secret; an omitted/empty one keeps it.
+          let mergedSecret: Record<string, unknown> = {};
+          if (existing?.config_encrypted) {
+            try {
+              mergedSecret = decryptConfig(existing.config_encrypted);
+            } catch {
+              mergedSecret = {};
+            }
+          }
           const nonSecret: Record<string, unknown> = {};
-          const secret: Record<string, unknown> = {};
           for (const [k, v] of Object.entries(validated)) {
             if (secretKeys.has(k)) {
-              if (v !== undefined && v !== "") secret[k] = v;
+              if (typeof v === "string" && v !== "") mergedSecret[k] = v;
             } else {
               nonSecret[k] = v;
             }
           }
           configToStore = nonSecret;
-          configEncrypted = Object.keys(secret).length > 0 ? encryptConfig(secret) : null;
+          configEncrypted = Object.keys(mergedSecret).length > 0 ? encryptConfig(mergedSecret) : null;
         }
 
         const enabled = parsed.data.enabled ?? existing?.enabled ?? false;

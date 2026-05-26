@@ -138,7 +138,7 @@ thin add when the first real plugin ships.
   field (`api_key`), and a `requiredEnv` entry. Registered via
   `registerPlugin`. This is the end-to-end test target for 7.5.4–7.5.6.
 
-- [ ] **7.5.8 — Studio Plugins tab.**
+- [x] **7.5.8 — Studio Plugins tab.**
   New "Plugins" tab on Site Detail (`src/admin/pages/site-tabs/PluginsTab.tsx`):
   list available plugins, enable/disable toggle, and a config form generated
   from the plugin's Zod `configSchema` (reuse `zod-fields.ts` field generation;
@@ -327,3 +327,23 @@ enabled, notes POST→GET round-trip, 403 again after disable.
 **Notes:** 502/74 green cold; typecheck clean. Migration verified up on dev +
 test. The example plugin ships its migration everywhere but stays inert in prod
 unless the env flag is set.
+
+### 2026-05-26 09:42 UTC — Task 7.5.8
+**Commit:** _pending sha-record follow-up_
+**Done:** Studio "Plugins" tab — `src/admin/pages/site-tabs/PluginsTab.tsx`
+(new tab in `SiteDetailPage`, between Media and Settings). Lists available
+plugins (`GET /api/plugins`) + per-site state (`GET /api/sites/:id/plugins`);
+per-plugin enable/disable toggle + a config form generated from the plugin's
+`config_schema` (the server's zod-to-json-schema output — secret fields render
+as password inputs showing set/"leave blank to keep"; enum → select). Save →
+`PUT`. ALSO refined the PUT route (7.5.6) to MERGE secrets: a blank/omitted
+secret preserves the stored value (the API never echoes secrets, so a form
+can't resend them) — motivated by this config form.
+**Tests added:** 4 — `PluginsTab.test.tsx` ×3 (renders fields + secret hint;
+enable+save sends typed secret; blank secret omitted on save) and a
+`plugins-api` preserve-secret-on-omit test. SiteDetailPage tab test still green.
+**Next:** 7.5.9 — packaging/distribution + docs.
+**Notes:** 506/75 green cold; typecheck clean. Config form renders from the
+serialized JSON Schema (not `zod-fields`, which is server/Puck-oriented and
+takes a live Zod schema) — recorded as the practical reading of D-045's
+"Zod-driven form."

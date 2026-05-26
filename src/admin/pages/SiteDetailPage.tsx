@@ -10,6 +10,7 @@ import { cn } from "../ui/cn.js";
 import { PagesTab } from "./site-tabs/PagesTab.js";
 import { MediaTab } from "./site-tabs/MediaTab.js";
 import { SettingsTab } from "./site-tabs/SettingsTab.js";
+import { PluginsTab } from "./site-tabs/PluginsTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
@@ -21,6 +22,7 @@ const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
 const TABS = [
   { key: "pages", label: "Pages" },
   { key: "media", label: "Media" },
+  { key: "plugins", label: "Plugins" },
   { key: "settings", label: "Settings" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
@@ -134,6 +136,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           <div role="tabpanel">
             {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
             {tab === "media" && <MediaTab siteId={site.id} />}
+            {tab === "plugins" && <PluginsTab siteId={site.id} />}
             {tab === "settings" && <SettingsTab site={site} />}
           </div>
         </>

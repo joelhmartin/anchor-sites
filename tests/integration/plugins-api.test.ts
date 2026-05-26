@@ -124,6 +124,18 @@ d("admin plugins API (P7.5-T7.5.6)", () => {
     expect(res.body.plugin.secrets_set).toEqual(["api_key"]); // preserved
   });
 
+  it("preserves an existing secret when a later config save omits it", async () => {
+    // api_key was set earlier. Re-save config without resending it.
+    const res = await auth(
+      request(app)
+        .put(`/api/sites/${siteId}/plugins/apitest`)
+        .send({ config: { label: "Renamed", api_key: "" } }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.plugin.config).toEqual({ label: "Renamed" });
+    expect(res.body.plugin.secrets_set).toEqual(["api_key"]); // still set
+  });
+
   it("rejects config that fails the plugin schema", async () => {
     const res = await auth(
       request(app).put(`/api/sites/${siteId}/plugins/apitest`).send({ config: { label: 123 } }),
