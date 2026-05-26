@@ -133,7 +133,7 @@
   hosts is **deferred** (D-048) — nothing in Phase 8 consumes tenant auth over
   HTTP; it mounts when a tenant member-login surface needs it.
 
-- [ ] **8.9 — Blog data model + repo.**
+- [x] **8.9 — Blog data model + repo.**
   Migration: `posts (id, site_id FK ON DELETE CASCADE, slug, title, excerpt,
   body jsonb = Block[], status CHECK draft|published, published_at, author_id →
   tenant_auth_user nullable, created/updated; UNIQUE(site_id, slug); GIN(body);
@@ -248,3 +248,10 @@
 **Tests added:** 2 (`tests/integration/tenant-auth.test.ts`) — `site_id` auto-injected on create + same email allowed in two sites; a lookup in site A never returns site B's user, **even by site B's primary key** (the isolation proof).
 **Next:** 8.9 — blog data model (`posts`, body = `Block[]`).
 **Notes:** HTTP handler mounting DEFERRED (D-048) — no Phase-8 consumer; mounts when a tenant member-login surface lands. Wrapping the existing adapter (vs a hand-written `createAdapterFactory` adapter) kept this ~80 lines + low-risk; tenant-auth return types are inferred from builder fns (betterAuth generic-variance, cf. D-046).
+
+### 2026-05-26 15:51 UTC — Task 8.9
+**Commit:** _(this commit)_
+**Done:** Blog model. Migration `1747579000000_posts.cjs` — `posts` (`site_id` FK→sites CASCADE, slug, title, excerpt, `body jsonb`=Block[], `status` CHECK draft|published, `published_at`, `author_id`→tenant_auth_user SET NULL; `UNIQUE(site_id,slug)`, `GIN(body)`, `INDEX(site_id,status,published_at)`, touch trigger). `src/server/blog/{schema,repo}.ts` — Zod input schemas + pool-injected repo (create/list/getBySlug/getById/update/delete), EVERY query scoped by `site_id`, body re-validated via `validateBlocks` (D-039), `published_at` stamped on first publish / cleared on revert. `docs/data-model.md` updated.
+**Tests added:** 7 (`tests/integration/blog-repo.test.ts`) — draft vs published stamping, list+status filter, publish transition, per-site slug uniqueness, invalid-body rejection, site-scoped reads, scoped delete.
+**Next:** 8.10 — events data model + repo.
+**Notes:** 565/86 cold-green; typecheck clean. Repo imports `blocks/index.js` for the registry side-effect (validateBlocks needs registered types, same as templates repo). `PostInput`/`PostPatch` are `z.input` types so defaults are optional for callers.

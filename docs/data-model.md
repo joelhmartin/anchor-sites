@@ -136,9 +136,13 @@ Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's ow
 - **`tenant_auth_user` / `tenant_auth_session` / `tenant_auth_account` / `tenant_auth_verification`** — Better-auth's schema, **multi-tenant by `site_id`** (FK → `sites` ON DELETE CASCADE), camelCase columns like the Studio set. Uniqueness is **per-site**: `UNIQUE(site_id, email)` on users (the same person can be a member of two tenant sites), `UNIQUE(site_id, providerId, accountId)` on accounts. A request-scoped Better-auth instance per `req.site.id` reads/writes only its own rows (D-048, P8-T8.8). Separate from the Studio `auth_*` set.
 - **`tenant_auth_config`** — per-site `providers jsonb` (which login methods a tenant enables), seeded at provision (P8-T8.12).
 
+## Blog (P8-T8.9 — D-047)
+
+- **`posts`** — per-site blog posts (`site_id` FK → `sites` CASCADE). `body jsonb` = `Block[]` (D-001), re-validated through the shared registry validator (D-039) on write. `status` CHECK `draft|published`; `published_at` stamped on first publish, cleared on revert to draft. `author_id` → `tenant_auth_user` ON DELETE SET NULL. `UNIQUE(site_id, slug)`, `GIN(body)`, `INDEX(site_id, status, published_at)`. Repo: `src/server/blog/{schema,repo}.ts` (every query scoped by `site_id`).
+
 ## Future schema (reserved, NOT yet migrated)
 
-- **`posts`** / **`events`** — per-site blog/events (Track B, P8-T8.9–8.10, D-047). Scoped by `site_id`; body = `Block[]` (rendered by the shared renderer).
+- **`events`** — per-site events (Track B, P8-T8.10, D-047). Scoped by `site_id`; description = `Block[]`.
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
 ## Migration commands
