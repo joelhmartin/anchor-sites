@@ -1,5 +1,5 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { useAdminToken } from "./lib/adminToken.js";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { signOut } from "./lib/session.js";
 import { cn } from "./ui/cn.js";
 
 /**
@@ -7,7 +7,11 @@ import { cn } from "./ui/cn.js";
  * inside `<RequireAdmin>` so it only shows for authenticated sessions.
  */
 export function AdminLayout() {
-  const { clearToken } = useAdminToken();
+  const navigate = useNavigate();
+  async function handleSignOut() {
+    await signOut();
+    navigate("/login", { replace: true });
+  }
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900">
       <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white">
@@ -33,7 +37,7 @@ export function AdminLayout() {
         <div className="border-t border-zinc-200 p-2">
           <button
             type="button"
-            onClick={clearToken}
+            onClick={handleSignOut}
             className="block w-full rounded-md px-3 py-2 text-left text-sm text-zinc-500 hover:bg-zinc-100"
           >
             Sign out

@@ -11,6 +11,7 @@ import { mediaRouter } from "./routes/media.js";
 import { adminSitesRouter } from "./routes/admin-sites.js";
 import { templatesRouter } from "./routes/templates.js";
 import { pluginsRouter } from "./routes/plugins.js";
+import { meRouter } from "./routes/me.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
@@ -61,9 +62,11 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     });
   }
 
-  // Admin API: save, list revisions, restore. Gated by requireAdmin() inside
-  // the router (X-Admin-Token vs ADMIN_API_TOKEN env). Phase 8 replaces with
-  // Better-auth sessions per D-020.
+  // P8-T8.5: who-am-I probe for the Studio client (session / token / dev).
+  app.use(meRouter());
+
+  // Admin API: save, list revisions, restore. Gated by requireAdmin() — now a
+  // Studio Better-auth session OR the X-Admin-Token (dual-mode, D-034/D-046).
   app.use("/api", adminPagesRouter());
 
   // P3-T3.9: media upload-url + complete callback under /api.

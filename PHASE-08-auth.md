@@ -94,7 +94,7 @@
   (session-only, token-only, both, neither, prod vs non-prod). All existing
   `/api` routes inherit the new gate unchanged.
 
-- [ ] **8.5 — Studio client login on Google.**
+- [x] **8.5 — Studio client login on Google.**
   Replace the token-paste `/login` with "Sign in with Google" (redirects to the
   Better-auth Google flow). `RequireAdmin.tsx` checks the session via
   `GET /api/auth/get-session` (or a small `/api/me`); `apiFetch.ts` uses
@@ -220,3 +220,10 @@
 **Tests added:** 7 (`src/middleware/requireAdmin.test.ts`) — session-allow, token-allow, 401 (token configured but missing/wrong), dev auto-grant (dev + no token), fail-closed (disabled + no token + no session), session-over-token precedence, session-backend-error → token fallback.
 **Next:** 8.5 — Studio "Sign in with Google" client flow + break-glass token paste.
 **Notes:** 539/79 cold-green — no regression across the admin integration suite (all set `ADMIN_API_TOKEN`, so they still gate on the token and assert 401 without it). The `getStudioAuth()` singleton is null in test env (no Google secrets) → session check is a fast no-op there.
+
+### 2026-05-26 14:51 UTC — Task 8.5
+**Commit:** _(this commit)_
+**Done:** Studio client now authenticates by session, uniformly across modes. Server: `GET /api/me` (`src/server/routes/me.ts`, gated by `requireAdmin`) returns `req.studioUser` — session user / dev user / token marker — mounted in `createApp`. Client: `src/admin/lib/session.ts` (`fetchMe`, `signInWithGoogle` via Better-auth `/api/auth/sign-in/social`, `signOut`); `useStudioSession` hook (async probe → loading/authed/unauthed); `RequireAdmin` rewritten to verify via the hook (spinner → Outlet/redirect); `LoginPage` rebuilt around a "Sign in with Google" button with a break-glass admin-token form (revealed via `?mode=token` or a link, verified against `/api/me`); `apiFetch` now sends `credentials:"include"` (cookie) alongside the optional `X-Admin-Token`; `AdminLayout` sign-out calls the real `signOut` then routes to /login.
+**Tests added:** 15 — `/api/me` integration (3: token/401/dev-grant), `session.ts` (5: fetchMe ok/401, Google redirect ok/throws, signOut), `RequireAdmin` async guard (3: authed/null/throw), `LoginPage` (4: Google default, OAuth start, error, break-glass token). Updated `AdminApp.test` to mock `useStudioSession` (routing stays deterministic).
+**Next:** 8.6 — studio-auth docs + cutover runbook (closes Track A).
+**Notes:** 554/83 cold-green; typecheck clean. The break-glass token form keeps the operator's chosen X-Admin-Token path reachable in the UI. Real Google sign-in is operator-verified at studio.anchorcorps.com once the Client ID + BETTER_AUTH_SECRET land (still mocked here).

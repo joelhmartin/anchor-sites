@@ -17,10 +17,11 @@ export type ApiFetchOptions = Omit<RequestInit, "body"> & {
 };
 
 /**
- * Fetch wrapper for the admin API (P4-T4.8). Attaches the `X-Admin-Token`
- * header, JSON-encodes the body, parses the JSON response, and maps
- * non-2xx to a typed `ApiError`. On 401 it clears the stored token so the
- * guard bounces the user back to /login.
+ * Fetch wrapper for the admin API (P4-T4.8; P8-T8.5). Sends the Studio session
+ * cookie (`credentials: "include"`) AND attaches the `X-Admin-Token` header
+ * when present (break-glass / service path) — `requireAdmin` accepts either.
+ * JSON-encodes the body, parses the response, maps non-2xx to a typed
+ * `ApiError`, and clears any stored token on 401 so the guard bounces to /login.
  */
 export async function apiFetch<T = unknown>(
   path: string,
@@ -35,6 +36,7 @@ export async function apiFetch<T = unknown>(
   };
 
   const res = await fetch(path, {
+    credentials: "include",
     ...opts,
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,

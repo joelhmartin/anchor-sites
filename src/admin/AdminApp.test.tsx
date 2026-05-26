@@ -7,8 +7,15 @@ import { MemoryRouter } from "react-router-dom";
 // editor — it only verifies route → component wiring, not the editor itself.
 vi.mock("../editor/index.js", () => ({ Puck: () => null }));
 
+// Control the auth probe so routing tests are deterministic + synchronous
+// (the real hook is exercised in RequireAdmin.test.tsx).
+const session: { status: "loading" | "authed" | "unauthed"; user: unknown } = {
+  status: "authed",
+  user: { id: "dev", email: "dev@studio.localhost" },
+};
+vi.mock("./auth/useStudioSession.js", () => ({ useStudioSession: () => session }));
+
 import { AdminApp } from "./AdminApp.js";
-import { clearAdminToken, setAdminToken } from "./lib/adminToken.js";
 
 function renderAt(path: string) {
   return render(
@@ -18,33 +25,31 @@ function renderAt(path: string) {
   );
 }
 
-describe("AdminApp routing (P4-T4.9)", () => {
+describe("AdminApp routing (P4-T4.9; P8-T8.5)", () => {
   const realFetch = global.fetch;
-  beforeEach(() => clearAdminToken());
+  beforeEach(() => {
+    session.status = "authed";
+  });
   afterEach(() => {
     cleanup();
-    clearAdminToken();
     global.fetch = realFetch;
   });
 
-  it("redirects to /login when no token is stored", () => {
+  it("redirects to /login when the session is unauthed", () => {
+    session.status = "unauthed";
     renderAt("/");
-    // LoginPage heading.
     expect(screen.getByText("AnchorCorps Studio")).toBeTruthy();
-    expect(screen.getByLabelText("Admin token")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Sign in with Google/i })).toBeTruthy();
   });
 
   it("renders the sites list + layout chrome when authenticated", () => {
-    setAdminToken("tok");
     renderAt("/");
-    // Sidebar brand + Sites nav + page heading.
     expect(screen.getByRole("link", { name: /Studio/ })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sites" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Sites" })).toBeTruthy();
   });
 
   it("renders the page editor on the page-edit route", () => {
-    setAdminToken("tok");
     // Never-resolving fetch keeps EditorPage in its loading state (no async
     // state update after mount) — we only assert the route → editor wiring.
     global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
@@ -53,13 +58,12 @@ describe("AdminApp routing (P4-T4.9)", () => {
   });
 
   it("renders NotFound for an unknown admin route", () => {
-    setAdminToken("tok");
     renderAt("/totally/unknown");
     expect(screen.getByRole("heading", { name: "Not found" })).toBeTruthy();
   });
 
-  it("shows the login screen at /login regardless of token", () => {
+  it("shows the Google sign-in screen at /login", () => {
     renderAt("/login");
-    expect(screen.getByLabelText("Admin token")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Sign in with Google/i })).toBeTruthy();
   });
 });
