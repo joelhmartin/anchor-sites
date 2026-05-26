@@ -329,7 +329,7 @@ test. The example plugin ships its migration everywhere but stays inert in prod
 unless the env flag is set.
 
 ### 2026-05-26 09:42 UTC — Task 7.5.8
-**Commit:** _pending sha-record follow-up_
+**Commit:** ce9a2f0
 **Done:** Studio "Plugins" tab — `src/admin/pages/site-tabs/PluginsTab.tsx`
 (new tab in `SiteDetailPage`, between Media and Settings). Lists available
 plugins (`GET /api/plugins`) + per-site state (`GET /api/sites/:id/plugins`);

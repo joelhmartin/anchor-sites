@@ -3,9 +3,9 @@
   "notify_email": "jmartin@anchorcorps.com",
   "current_phase": 7.5,
   "current_phase_file": "PHASE-07.5-plugins.md",
-  "current_task": "7.5.8",
+  "current_task": "7.5.9",
   "phase_started_at": "2026-05-26T00:00:00Z",
-  "last_commit_sha": "971e4b5",
+  "last_commit_sha": "ce9a2f0",
   "last_email_sent_at": null,
   "emails_sent": [],
   "demo_milestones_sent": [
@@ -36,12 +36,12 @@
   "blockers_open": 0,
   "tests": {
     "baseline_count": 39,
-    "current_pass": 502,
+    "current_pass": 506,
     "current_fail": 0,
     "current_skipped": 0,
-    "current_pass_root": 443,
+    "current_pass_root": 447,
     "current_pass_package_components": 59,
-    "last_run_at": "2026-05-26T09:38:00Z",
+    "last_run_at": "2026-05-26T09:42:00Z",
     "notes": "PHASE 7 COMPLETE (7.1-7.10, 2026-05-21): template system. Normalized templates + template_pages (D-041); save a site/page as a reusable template (blocks re-validated through the shared registry validator D-039); templates admin API (list/detail/archive); create site from template via shared createSiteWithDomains + idempotent template.materialize pg-boss job (D-019/D-042, media shared by reference D-043); add page from a page template synchronously; Studio UI (wizard 'Start from' template path + SaveAsTemplateDialog + Pages-tab 'Add from template'); built-in Starter seed (npm run db:seed-templates); docs/templates.md. 451 across 66 files (root 392, package 59); +57 over the 394/58 Phase-6 close. Typecheck clean; final full cold suite green + DETERMINISTIC under cleared sequencer cache (= CI cold order). current_task=null. PUSHED to main 2026-05-21 (85a2848..1568865, operator-approved go) — CI trigger anchor-sites-main build→migrate→deploy prod (the templates migration runs in the CI migrate step). Built-in 'Starter' template now seeds AUTOMATICALLY on deploy — the migrate Cloud Run Job runs `npm run deploy:db` (migrate:up && db:seed-templates), wired via package.json + cloudbuild.yaml migrate-image step (--command=npm --args=run,deploy:db); idempotent, scoped to the `starter` slug, never recreates demo sites. Takes effect on the next push to main; no manual prod seed needed. Rollback = redeploy a prior image tag. Phase-6 AI editing remains live (gated on operator ANTHROPIC_API_KEY; prod=stub until set). FLAKE: the pre-existing single-fork/shared-DB ordering flake (FLAKE-RESOLVESITE class) can now also surface in templates-api under a WARM local cache; cold/CI deterministic. Re-run cold (rm -rf node_modules/.vite/vitest) before investigating a non-resolveSite integration failure; isolation-hardening fix remains an open follow-up. Run: DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_dev TEST_DATABASE_URL=postgres://anchor:anchor@localhost:5434/anchor_test npm test"
   },
   "open_followups": [
