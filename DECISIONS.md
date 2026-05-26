@@ -697,3 +697,34 @@ Registered in `src/server/jobs/index.ts` (one greppable handler list, D-030).
 **Trade-off (recorded):** the new site's media library does not "own" those assets, and deleting the source site cascades its `media_assets` rows (the variant objects in GCS persist, but the DB references the new site relies on do not). Full per-site media copy (clone `media_assets` rows with fresh ids + re-point block `asset_id`s, reusing the same immutable objects) is a documented **Phase-12 follow-up**.
 
 **Rationale:** Renders correctly day one with no GCS-copy complexity; variant URLs are already immutable + public so sharing the bytes is safe. The isolation downside is acceptable for v1 (templates are typically captured from long-lived seed/demo sites), and the copy path is an additive future change that doesn't alter the data model.
+
+### D-044: Plugin config storage + secret encryption (Phase 7.5, refines D-016)
+
+**Context:** D-016 specified `site_plugins.config_encrypted JSONB` encrypted "with a KMS-managed key." Phase 7.5 ships the framework with NO key-bearing plugin yet; full Cloud KMS would add a dependency + an operator infra prereq (keyring/key/IAM) that gates the phase. Operator chose (chat, 2026-05-26, took the recommendation) app-level AES over KMS for v1.
+
+**Decision:**
+- **Config is split into two columns** on `site_plugins`: `config` (jsonb, **non-secret**, plaintext, queryable, no key required) and `config_encrypted` (jsonb nullable, the plugin's `secretConfigKeys` values only). This refines D-016's single `config_encrypted` column so non-secret config is storable/usable even when the encryption key is absent.
+- **Secret encryption is app-level AES-256-GCM** via `node:crypto` (zero new deps). The 32-byte key comes from `PLUGIN_CONFIG_ENC_KEY` (base64) provisioned in **Secret Manager** and wired to Cloud Run; in non-prod a dev/test key is used when unset; in production the helper **throws** if the env is missing (never silently downgrades). The stored envelope is `{ v:1, iv, tag, ciphertext }` (base64); the GCM tag makes tampered ciphertext fail closed.
+- **Only `secretConfigKeys` are encrypted**; the route layer (not the repo) splits secret/non-secret using the plugin manifest, encrypts, and persists. The repo treats `config_encrypted` as an opaque blob. Secrets are **redacted** (never decrypted to the client) on read APIs.
+
+**Operator prerequisite (deferred):** provisioning `PLUGIN_CONFIG_ENC_KEY` in Secret Manager is only needed once the first real key-bearing plugin is enabled in prod — the framework + reference plugin are built/tested locally with a dev key. Documented like the Phase-8 OAuth prereq.
+
+**Rationale:** Meets "encrypted at rest" with no KMS infra blocking the phase; node crypto adds no dependency; the column split keeps non-secret config queryable and decouples config storage from key availability. KMS/envelope upgrade is an additive future change (the `v` field reserves room for a key-rotation/algo bump).
+
+**Alternatives considered:** Cloud KMS envelope encryption (rejected for v1 — dependency + operator infra prereq for no plugin that needs it yet); plaintext config in v1 (rejected — the reference plugin already models a secret `api_key`, and shipping a secret-handling story now sets the contract correctly); single encrypted blob for the whole config (rejected — couples non-secret config storage to the key existing).
+
+### D-045: Plugin manifest contract, loader scope, and distribution (Phase 7.5, implements D-016)
+
+**Context:** D-016 set the plugin model (versioned AR packages, manifest, loader, per-site enablement) but Phase 7.5 builds the framework with NO concrete plugins (Stripe etc. are post-7.5). Operator chose (chat, 2026-05-26, took the recommendation) "contract + loader + one reference plugin" over building full dynamic package discovery for plugins that don't exist.
+
+**Decision:**
+- **Manifest contract** (`src/server/plugins/manifest.ts`, Zod-typed `PluginManifest`): `name` (kebab, unique), `version` (semver), optional `blocks` (registered into the global block registry under **namespaced** types `<plugin>/<block>`), `createRouter` (one Express router mounted at `/api/plugins/<name>`), `migrations.tables` (the `plg_<name>_` tables it owns), `configSchema` (Zod), `secretConfigKeys`, `requiredEnv`.
+- **`registerPlugin()` runtime registry** (`src/server/plugins/registry.ts`) mirrors the Phase-1 `registerBlock()` API (global Map, uniqueness-enforced, test reset hook). Plugins self-register at module load; the loader composes the registered set.
+- **Loader** (`loadPlugins({ app, pool })`): registers each plugin's blocks (namespaced) globally at boot, mounts its router once globally, verifies its `plg_<name>_` tables exist (fail-soft — skip mounting + log if its migration hasn't run, never crash boot), validates `requiredEnv`. **Per-site availability** (which sites actually get the plugin's routes/blocks honored) is driven by `site_plugins`/`req.site.plugins`, NOT by global registration — blocks register once, enablement gates use.
+- **Reference plugin** (in-repo `@anchorcorps/plugin-example`) exercises every manifest field and is the end-to-end test target. **Dynamic discovery** of installed `@anchorcorps/plugin-*` packages on Artifact Registry is documented as the contract but **deferred** to the first real plugin (the loader composes explicitly-registered manifests for now).
+- **Plugin migrations (v1)** run via the standard `migrate:up` pass with a `plg_<name>_` table-name prefix; plugins must not alter core tables. A per-install dynamic migration runner is a documented future refinement.
+- **Config UI** in Studio is a **Zod-driven form** generated from the plugin's `configSchema` (reuse `src/editor/zod-fields.ts` field generation), not the full Puck editor — plugin config is a flat form, not a page of blocks.
+
+**Rationale:** Builds the real framework (contract, loader, table, admin UI, boot composition) and proves it end-to-end with a reference plugin, without speculative dynamic-import machinery for plugins that don't exist. Namespaced global block registration + per-site availability reconciles the global block registry (D-016/D-002) with per-site enablement (D-008 spirit) without a per-site registry. Distribution stays on the same AR channel as `@anchorcorps/components` (D-005/D-026/D-027).
+
+**Alternatives considered:** Full dynamic `@anchorcorps/plugin-*` discovery now (rejected — nothing to discover; adds risk for no v1 value); per-site block registries (rejected — the registry is a process-global singleton by design, and namespacing + availability-gating is simpler); Puck-based config UI (rejected — config is a flat form, the zod-field generator already exists).

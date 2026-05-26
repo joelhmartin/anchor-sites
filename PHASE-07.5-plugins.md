@@ -27,12 +27,12 @@ thin add when the first real plugin ships.
    Secret Manager (`PLUGIN_CONFIG_ENC_KEY`). `node:crypto`, zero new deps; dev/
    test key local; the prod secret is a prereq only when the first key-bearing
    plugin lands. Refines D-016's "KMS-managed key" → SM-held key for v1, KMS
-   upgrade path documented. → new **D-0xx**.
+   upgrade path documented. → **D-044**.
 2. **Loader scope — contract + loader + one in-repo reference plugin** (Fork B).
    Build the manifest contract, a `registerPlugin()` runtime API mirroring
    `registerBlock`, and a loader composing registered manifests against
    `site_plugins`. AR distribution documented; dynamic `@anchorcorps/plugin-*`
-   discovery deferred to first-real-plugin. → new **D-0xx**.
+   discovery deferred to first-real-plugin. → **D-045**.
 3. **Test-isolation hardening first** (Fork C) — split the root vitest project
    into `node` + `jsdom` sub-projects so they never share a fork; kills the
    FLAKE-RESOLVESITE warm-cache class before 7.5 piles on more DB tests.
@@ -40,7 +40,7 @@ thin add when the first real plugin ships.
    blocks register into the one global registry at boot under a namespaced type
    (`<plugin>/<block>`); per-site *availability* (editor palette, route
    mounting, render gating) is driven by `site_plugins` / `req.site.plugins`.
-   → new **D-0xx**.
+   → **D-045**.
 5. **Config UI — Zod-driven form** (reuse `src/editor/zod-fields.ts` field
    generation), NOT the full Puck editor. Plugin config is a flat form from the
    plugin's `configSchema`.
@@ -64,7 +64,7 @@ thin add when the first real plugin ships.
   No feature code. Record the approach in the completion log; if it fully
   resolves the flake, note FLAKE-RESOLVESITE resolved.
 
-- [ ] **7.5.1 — `site_plugins` table + migration + repo.**
+- [x] **7.5.1 — `site_plugins` table + migration + repo.**
   New table `site_plugins` (`id` uuid PK `gen_random_uuid()`, `site_id` uuid FK
   → `sites.id` ON DELETE CASCADE, `plugin_name` text, `version` text,
   `enabled` bool default false, `config_encrypted` jsonb nullable (envelope
@@ -88,7 +88,7 @@ thin add when the first real plugin ships.
   Map, uniqueness-enforced, `__resetPluginsForTests`). Unit tests for the
   schema + registry.
 
-- [ ] **7.5.3 — Per-site config encryption helper (D-0xx, Fork A).**
+- [ ] **7.5.3 — Per-site config encryption helper (D-044, Fork A).**
   `src/server/plugins/crypto.ts` — `encryptConfig(plaintextObj)` /
   `decryptConfig(envelope)` using `node:crypto` AES-256-GCM. Key resolved from
   `PLUGIN_CONFIG_ENC_KEY` (base64 32 bytes); a dev/test key is generated/used
@@ -188,3 +188,25 @@ Suite is also ~35% faster (projects run in parallel). Block/jsdom file
 membership is glob-driven in `vitest.workspace.ts`; new Studio/editor UI tests
 under `src/admin/**` or `src/editor/custom-fields/**` land in jsdom
 automatically.
+
+### 2026-05-26 09:12 UTC — Task 7.5.1
+**Commit:** _pending sha-record follow-up_
+**Done:** `site_plugins` table (D-016, refined by D-044): `db/migrations/
+1747575000000_site_plugins.cjs` (forward+rollback verified up/down/up on dev) —
+`(site_id FK CASCADE, plugin_name, version, enabled, config jsonb, config_
+encrypted jsonb, installed_at, updated_at)`, `UNIQUE(site_id, plugin_name)`,
+partial `INDEX(site_id) WHERE enabled`, `touch_updated_at` trigger. Pool-
+injected repo `src/server/plugins/repo.ts` (`upsertSitePlugin`,
+`listSitePlugins`, `getSitePlugin`, `getEnabledPlugins`, `setEnabled`,
+`setConfig` + `EncryptedEnvelope`/`SitePluginRow` types). Config split into
+plaintext `config` + encrypted `config_encrypted` (D-044). `docs/data-model.md`
+updated (site_plugins reserved → real). Recorded **D-044** (config storage +
+secret crypto) and **D-045** (manifest contract + loader scope + distribution).
+**Tests added:** 8 (`tests/integration/site-plugins-repo.test.ts`) — install
+defaults, idempotent upsert/full-state update, get/null, enabled-only filter,
+setEnabled/setConfig incl. clearing secrets + no-op on uninstalled, per-site
+scoping, unique-constraint violation, CASCADE on site delete.
+**Next:** 7.5.2 — plugin manifest contract + `registerPlugin()` registry.
+**Notes:** 459/67 green cold; typecheck clean. Repo stays crypto-agnostic
+(treats `config_encrypted` as opaque); the route layer (7.5.6) owns
+encrypt/redact via the manifest's `secretConfigKeys`.

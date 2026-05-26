@@ -102,13 +102,33 @@ One row per page captured into a template. Mirrors `pages` (block JSON is still 
 - `INDEX(template_id, sort_order)` — ordered page listing
 - `GIN(blocks)` — structural block queries across templates
 
+### `site_plugins`
+Phase 7.5 (migration `1747575000000_site_plugins.cjs`). Per-site plugin enablement + config (D-016). One row per `(site_id, plugin_name)`. A plugin is "installed" when a row exists; `enabled` gates whether the loader mounts it for that site. See D-016 (framework) and the Phase-7.5 decisions (config split + AES-GCM secrets).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` (PK) | `gen_random_uuid()` |
+| `site_id` | `uuid` FK → `sites.id` | `ON DELETE CASCADE` |
+| `plugin_name` | `text` | The plugin's manifest `name` (kebab) |
+| `version` | `text` | Installed plugin version (semver) |
+| `enabled` | `bool` | Default `false`. Loader mounts the plugin for this site only when true |
+| `config` | `jsonb` | **Non-secret** per-site config, plaintext. Default `'{}'::jsonb` |
+| `config_encrypted` | `jsonb` nullable | The plugin's `secretConfigKeys` values, AES-256-GCM enveloped (`{v,iv,tag,ciphertext}`) by the crypto helper. Null when the plugin has no secret config set. **Refines** D-016's single `config_encrypted` into a plaintext/encrypted pair so non-secret config is storable without the key |
+| `installed_at` | `timestamptz` | Default `now()` |
+| `updated_at` | `timestamptz` | Maintained by `site_plugins_touch_updated_at` BEFORE-UPDATE trigger |
+
+**Constraints / indexes:**
+- `UNIQUE(site_id, plugin_name)` — `site_plugins_site_name_unique`
+- partial `INDEX(site_id) WHERE enabled` — `site_plugins_enabled_idx`, the loader/`resolveSite` hot path
+
+Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's own migration; they must NOT alter core tables (D-016).
+
 ## Triggers / functions
 
-- **`touch_updated_at()`** — generic BEFORE-UPDATE trigger function. Attached to `pages` (`pages_touch_updated_at`) and `templates` (`templates_touch_updated_at`). Reusable when other tables grow an `updated_at` column.
+- **`touch_updated_at()`** — generic BEFORE-UPDATE trigger function. Attached to `pages` (`pages_touch_updated_at`), `templates` (`templates_touch_updated_at`), and `site_plugins` (`site_plugins_touch_updated_at`). Reusable when other tables grow an `updated_at` column.
 
 ## Future schema (reserved, NOT in this migration)
 
-- **`site_plugins`** — per-site plugin enablement and encrypted config. Added in Phase 7.5 per D-016.
 - **`auth_*`** — auth tables (users, sessions, etc.). Added in Phase 8 per D-020 (Better-auth ships its own schema).
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
