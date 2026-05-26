@@ -270,7 +270,7 @@ pattern for determinism.
 `activePlugins` arg (default = all registered) — existing call sites unchanged.
 
 ### 2026-05-26 09:26 UTC — Task 7.5.5
-**Commit:** _pending sha-record follow-up_
+**Commit:** 1bae6e6
 **Done:** `resolveSite` now populates `req.site.plugins` with the resolved
 site's ENABLED plugins (`{name, version}`). Fetched in the SAME query as the
 site lookup via a `json_agg` subquery over `site_plugins` (one round-trip per
