@@ -88,7 +88,7 @@ thin add when the first real plugin ships.
   Map, uniqueness-enforced, `__resetPluginsForTests`). Unit tests for the
   schema + registry.
 
-- [ ] **7.5.3 — Per-site config encryption helper (D-044, Fork A).**
+- [x] **7.5.3 — Per-site config encryption helper (D-044, Fork A).**
   `src/server/plugins/crypto.ts` — `encryptConfig(plaintextObj)` /
   `decryptConfig(envelope)` using `node:crypto` AES-256-GCM. Key resolved from
   `PLUGIN_CONFIG_ENC_KEY` (base64 32 bytes); a dev/test key is generated/used
@@ -229,3 +229,21 @@ invalid-manifest throw, reset).
 **Next:** 7.5.3 — per-site config encryption helper (AES-256-GCM, D-044).
 **Notes:** 473 total; typecheck clean. Manifest holds live values (components,
 router factory, Zod schema) so it's intentionally only partly Zod-validated.
+
+### 2026-05-26 09:18 UTC — Task 7.5.3
+**Commit:** _pending sha-record follow-up_
+**Done:** `src/server/plugins/crypto.ts` — `encryptConfig`/`decryptConfig`
+(AES-256-GCM via `node:crypto`, envelope `{v:1,iv,tag,ciphertext}` base64) +
+`isConfigKeyConfigured()`. Key from `PLUGIN_CONFIG_ENC_KEY` (base64 32 bytes);
+production REQUIRES it (throws if missing/wrong-length, never downgrades);
+non-prod falls back to a deterministic sha256 dev key (warns once) so local/
+tests work without provisioning a secret. GCM tag → tampered ciphertext/tag
+fails closed. D-044.
+**Tests added:** 7 (`crypto.test.ts`) — round-trip, tampered ciphertext,
+tampered tag, unsupported version, prod-requires-key + isConfigKeyConfigured,
+explicit prod key round-trip, wrong key length. Uses `vi.stubEnv` (auto-reset
+via the workspace's `unstubEnvs`).
+**Next:** 7.5.4 — plugin loader / boot composition.
+**Notes:** 480 total; typecheck clean. Repo stays opaque to crypto; route layer
+(7.5.6) splits secret vs non-secret via the manifest `secretConfigKeys`, calls
+`encryptConfig` on the secret subset.
