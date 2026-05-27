@@ -7,6 +7,7 @@ import { NewSiteWizard } from "./pages/NewSiteWizard.js";
 import { SiteDetailPage } from "./pages/SiteDetailPage.js";
 import { EditorPage } from "./pages/EditorPage.js";
 import { PostEditorPage } from "./pages/PostEditorPage.js";
+import { EventEditorPage } from "./pages/EventEditorPage.js";
 import { NotFound } from "./pages/NotFound.js";
 
 /**
@@ -25,6 +26,7 @@ export function AdminApp() {
           <Route path="/sites/:slug" element={<SiteDetailPage />} />
           <Route path="/sites/:slug/pages/:pageId" element={<EditorPage />} />
           <Route path="/sites/:slug/posts/:postId" element={<PostEditorPage />} />
+          <Route path="/sites/:slug/events/:eventId" element={<EventEditorPage />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Route>
