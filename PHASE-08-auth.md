@@ -161,7 +161,7 @@
   sample post + events index. Idempotent (safe re-run). **This is the
   "copy-in."** Tests: new site gets the scaffolding; re-run is a no-op.
 
-- [ ] **8.13 — Studio UI: Blog + Events + Members tabs.**
+- [x] **8.13 — Studio UI: Blog + Events + Members tabs.**
   New site-detail tabs: Blog (list/create/edit posts — edit body via the Puck
   editor since body = `Block[]`), Events (list/create/edit), Members/Auth (view
   tenant users, toggle per-site providers). Admin API (gated by `requireAdmin`,
@@ -276,3 +276,16 @@
 **Tests added:** 3 (`tests/integration/site-copy-in.test.ts`) — config row with default providers, draft welcome post, idempotent re-run.
 **Next:** 8.13 — Studio Blog/Events/Members tabs + admin API.
 **Notes:** 577/89 cold-green; typecheck clean — no regression to the admin-sites/from-template suites that share `createSiteWithDomains`. This is "auth/blog/events copied into each site" under one renderer = config + content, not forked code (D-047).
+
+### 2026-05-27 — Task 8.13 (Studio Blog/Events/Members tabs + admin API)
+**Commits:** 6 sub-item commits `0e0182d`..`259c210` (per the per-subitem cadence).
+**Done:** The full Studio surface for per-tenant content, scoped by `site_id`, gated by dual-mode `requireAdmin`.
+- **8.13a `0e0182d`** — `src/server/routes/admin-tenant.ts` (`adminTenantRouter`, mounted at `/api` in `createApp`): blog posts CRUD (`GET/POST /api/sites/:siteId/posts`, `GET/PUT/DELETE …/posts/:postId`). List omits the heavy `body` Block[] (mirrors the pages list); slug conflict → 409, invalid block body → 400 (D-039).
+- **8.13b `d4217e8`** — events CRUD on the same router (`…/events[/:eventId]`); list omits `description`, soonest-first; ISO `starts_at` coerced.
+- **8.13c `5db8595`** — members + auth-config: `GET …/members` (read-only `tenant_auth_user`, site-scoped, camelCase cols quoted) + `GET/PUT …/auth-config` (per-site providers; `.strict()` rejects unknown keys; upsert; default email+password when no row).
+- **8.13d `47cd6b7`** — `BlockBodyEditor` (reusable Block[] editor wrapping the one Puck boundary, D-017) + `BlogTab` (list/create) + `PostEditorPage` at `/sites/:slug/posts/:postId` (metadata + body saved in one PUT). Wired into SiteDetailPage + AdminApp.
+- **8.13e `547801e`** — `EventsTab` + `EventEditorPage` at `/sites/:slug/events/:eventId` (datetime-local start/end + description Block[]).
+- **8.13f `259c210`** — `MembersTab` (member list + email+password provider toggle), read-only tab (no editor route).
+**Tests added:** 45 across 8 files — 3 API integration suites (`admin-tenant-{blog,events,members}.test.ts`, 22 tests: auth gate, site-scoping/isolation, 404/409/400, publish stamping, provider upsert) + 5 jsdom suites (`BlogTab`/`EventsTab`/`MembersTab` tabs, `PostEditorPage`/`EventEditorPage` with Puck stubbed per D-036) + SiteDetailPage tab-presence assertions.
+**Next:** 8.14 — per-client-divergence doc + `docs/tenant-sites.md` + data-model update + confirm D-047/D-048 recorded.
+**Notes:** 622/97 cold-green (+45/+8 over 577/89); typecheck clean. One renderer, one editor, one block registry — blog/events bodies are `Block[]` edited via the SAME Puck surface as pages (D-001/D-047). Track B remains LOCAL (batched push after 8.15, operator confirm).
