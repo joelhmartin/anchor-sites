@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool } from "pg";
+import { z } from "zod";
 import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { postInputSchema, postPatchSchema } from "../blog/schema.js";
@@ -49,9 +50,15 @@ function stripEventDescription(e: EventRecord): Omit<EventRecord, "description">
   return rest;
 }
 
-function zodDetails(err: import("zod").ZodError) {
+function zodDetails(err: z.ZodError) {
   return err.errors.map((e) => ({ path: e.path.join(".") || "(root)", message: e.message }));
 }
+
+// Per-site login providers (D-048, v1 = email+password). `.strict()` rejects
+// unknown provider keys so a typo can't silently disable a login method.
+const providersSchema = z.object({ emailPassword: z.boolean().optional() }).strict();
+const authConfigPutSchema = z.object({ providers: providersSchema });
+const DEFAULT_PROVIDERS = { emailPassword: true };
 
 export type AdminTenantOptions = { pool?: Pool };
 
@@ -316,6 +323,91 @@ export function adminTenantRouter(opts: AdminTenantOptions = {}): Router {
           return;
         }
         res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // ===========================================================================
+  // Members + auth config (tenant_auth_user / tenant_auth_config)
+  // ===========================================================================
+
+  // GET /api/sites/:siteId/members — this site's member accounts (read-only).
+  // tenant_auth_* columns are camelCase (Better-auth), so they're quoted.
+  router.get(
+    "/sites/:siteId/members",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        if (!(await siteExists(siteId))) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const result = await pool.query(
+          `SELECT id, name, email,
+                  "emailVerified" AS email_verified,
+                  "createdAt" AS created_at
+             FROM tenant_auth_user
+            WHERE site_id = $1
+            ORDER BY "createdAt" DESC`,
+          [siteId],
+        );
+        res.json({ members: result.rows });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // GET /api/sites/:siteId/auth-config — per-site login providers.
+  router.get(
+    "/sites/:siteId/auth-config",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        if (!(await siteExists(siteId))) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const result = await pool.query<{ providers: Record<string, unknown> }>(
+          `SELECT providers FROM tenant_auth_config WHERE site_id = $1`,
+          [siteId],
+        );
+        // No row yet (site predates copy-in) → report the v1 default.
+        res.json({ providers: result.rows[0]?.providers ?? DEFAULT_PROVIDERS });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // PUT /api/sites/:siteId/auth-config — set the per-site login providers.
+  router.put(
+    "/sites/:siteId/auth-config",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = authConfigPutSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid payload", details: zodDetails(parsed.error) });
+        return;
+      }
+      try {
+        const { siteId } = req.params;
+        if (!(await siteExists(siteId))) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const result = await pool.query<{ providers: Record<string, unknown> }>(
+          `INSERT INTO tenant_auth_config (site_id, providers)
+           VALUES ($1, $2::jsonb)
+           ON CONFLICT (site_id) DO UPDATE SET providers = EXCLUDED.providers
+           RETURNING providers`,
+          [siteId, JSON.stringify(parsed.data.providers)],
+        );
+        res.json({ providers: result.rows[0].providers });
       } catch (err) {
         next(err);
       }
