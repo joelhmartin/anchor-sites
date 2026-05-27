@@ -13,6 +13,17 @@ import {
   PostSlugConflictError,
   type Post,
 } from "../blog/repo.js";
+import { eventInputSchema, eventPatchSchema } from "../events/schema.js";
+import {
+  createEvent,
+  deleteEvent,
+  getEventById,
+  listEvents,
+  updateEvent,
+  EventSlugConflictError,
+  InvalidEventDescriptionError,
+  type EventRecord,
+} from "../events/repo.js";
 
 /**
  * Admin tenant-content API (P8-T8.13, D-047). The Studio surface for a site's
@@ -30,6 +41,11 @@ import {
 /** List rows omit the heavy `body`/`description` Block[] (mirrors the pages list). */
 function stripPostBody(p: Post): Omit<Post, "body"> {
   const { body: _body, ...rest } = p;
+  return rest;
+}
+
+function stripEventDescription(e: EventRecord): Omit<EventRecord, "description"> {
+  const { description: _description, ...rest } = e;
   return rest;
 }
 
@@ -169,6 +185,134 @@ export function adminTenantRouter(opts: AdminTenantOptions = {}): Router {
         const deleted = await deletePost(pool, siteId, postId);
         if (!deleted) {
           res.status(404).json({ error: "post not found for this site" });
+          return;
+        }
+        res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // ===========================================================================
+  // Events (mirrors posts; `description` is the Block[] field)
+  // ===========================================================================
+
+  // GET /api/sites/:siteId/events[?status=…] — list, soonest-first (description omitted).
+  router.get(
+    "/sites/:siteId/events",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        if (!(await siteExists(siteId))) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const status = req.query.status === "draft" || req.query.status === "published"
+          ? req.query.status
+          : undefined;
+        const events = await listEvents(pool, siteId, { status });
+        res.json({ events: events.map(stripEventDescription) });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/sites/:siteId/events — create an event.
+  router.post(
+    "/sites/:siteId/events",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = eventInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid payload", details: zodDetails(parsed.error) });
+        return;
+      }
+      try {
+        const { siteId } = req.params;
+        if (!(await siteExists(siteId))) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const event = await createEvent(pool, siteId, parsed.data);
+        res.status(201).json({ event });
+      } catch (err) {
+        if (err instanceof EventSlugConflictError) {
+          res.status(409).json({ error: "an event with that slug already exists on this site" });
+          return;
+        }
+        if (err instanceof InvalidEventDescriptionError) {
+          res.status(400).json({ error: "event description failed block validation", failures: err.failures });
+          return;
+        }
+        next(err);
+      }
+    },
+  );
+
+  // GET /api/sites/:siteId/events/:eventId — full event (incl. description).
+  router.get(
+    "/sites/:siteId/events/:eventId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId, eventId } = req.params;
+        const event = await getEventById(pool, siteId, eventId);
+        if (!event) {
+          res.status(404).json({ error: "event not found for this site" });
+          return;
+        }
+        res.json({ event });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // PUT /api/sites/:siteId/events/:eventId — update fields/description/status.
+  router.put(
+    "/sites/:siteId/events/:eventId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = eventPatchSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid payload", details: zodDetails(parsed.error) });
+        return;
+      }
+      try {
+        const { siteId, eventId } = req.params;
+        const event = await updateEvent(pool, siteId, eventId, parsed.data);
+        if (!event) {
+          res.status(404).json({ error: "event not found for this site" });
+          return;
+        }
+        res.json({ event });
+      } catch (err) {
+        if (err instanceof EventSlugConflictError) {
+          res.status(409).json({ error: "an event with that slug already exists on this site" });
+          return;
+        }
+        if (err instanceof InvalidEventDescriptionError) {
+          res.status(400).json({ error: "event description failed block validation", failures: err.failures });
+          return;
+        }
+        next(err);
+      }
+    },
+  );
+
+  // DELETE /api/sites/:siteId/events/:eventId — remove an event.
+  router.delete(
+    "/sites/:siteId/events/:eventId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId, eventId } = req.params;
+        const deleted = await deleteEvent(pool, siteId, eventId);
+        if (!deleted) {
+          res.status(404).json({ error: "event not found for this site" });
           return;
         }
         res.status(204).end();
