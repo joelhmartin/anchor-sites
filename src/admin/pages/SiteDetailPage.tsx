@@ -13,6 +13,7 @@ import { EventsTab } from "./site-tabs/EventsTab.js";
 import { MediaTab } from "./site-tabs/MediaTab.js";
 import { SettingsTab } from "./site-tabs/SettingsTab.js";
 import { PluginsTab } from "./site-tabs/PluginsTab.js";
+import { MembersTab } from "./site-tabs/MembersTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
@@ -25,6 +26,7 @@ const TABS = [
   { key: "pages", label: "Pages" },
   { key: "blog", label: "Blog" },
   { key: "events", label: "Events" },
+  { key: "members", label: "Members" },
   { key: "media", label: "Media" },
   { key: "plugins", label: "Plugins" },
   { key: "settings", label: "Settings" },
@@ -141,6 +143,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
             {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
             {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
+            {tab === "members" && <MembersTab siteId={site.id} />}
             {tab === "media" && <MediaTab siteId={site.id} />}
             {tab === "plugins" && <PluginsTab siteId={site.id} />}
             {tab === "settings" && <SettingsTab site={site} />}
