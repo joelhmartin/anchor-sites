@@ -141,6 +141,8 @@ Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's ow
 - **`posts`** — per-site blog posts (`site_id` FK → `sites` CASCADE). `body jsonb` = `Block[]` (D-001), re-validated through the shared registry validator (D-039) on write. `status` CHECK `draft|published`; `published_at` stamped on first publish, cleared on revert to draft. `author_id` → `tenant_auth_user` ON DELETE SET NULL. `UNIQUE(site_id, slug)`, `GIN(body)`, `INDEX(site_id, status, published_at)`. Repo: `src/server/blog/{schema,repo}.ts` (every query scoped by `site_id`).
 
 - **`events`** (P8-T8.10) — per-site events (`site_id` FK → `sites` CASCADE). `description jsonb` = `Block[]` (validated via D-039). `starts_at` (NOT NULL, ordering), `ends_at`, `location`, `status` CHECK `draft|published`. `UNIQUE(site_id, slug)`, `INDEX(site_id, starts_at)`. Repo: `src/server/events/{schema,repo}.ts`.
+
+> The full per-site auth/blog/events model — scoping (D-048), public rendering, provision copy-in, the Studio admin API + tabs, and the per-client-divergence boundary — is in **`docs/tenant-sites.md`** (D-047).
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
 ## Migration commands

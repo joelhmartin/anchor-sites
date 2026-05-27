@@ -168,7 +168,7 @@
   scoped by `site_id`) for blog/events/`tenant_auth_config` CRUD. jsdom tests
   (Puck stubbed per D-036, fetch mocked).
 
-- [ ] **8.14 — Per-client divergence (doc) + tenant docs + DECISIONS.**
+- [x] **8.14 — Per-client divergence (doc) + tenant docs + DECISIONS.**
   Document that deeper per-site behavior rides the plugin framework
   (D-016/D-045), NOT forked core code. Add `docs/tenant-sites.md` (the per-site
   auth/blog/events model). Update `docs/data-model.md` (`auth_*` now shipped;
@@ -289,3 +289,10 @@
 **Tests added:** 45 across 8 files — 3 API integration suites (`admin-tenant-{blog,events,members}.test.ts`, 22 tests: auth gate, site-scoping/isolation, 404/409/400, publish stamping, provider upsert) + 5 jsdom suites (`BlogTab`/`EventsTab`/`MembersTab` tabs, `PostEditorPage`/`EventEditorPage` with Puck stubbed per D-036) + SiteDetailPage tab-presence assertions.
 **Next:** 8.14 — per-client-divergence doc + `docs/tenant-sites.md` + data-model update + confirm D-047/D-048 recorded.
 **Notes:** 622/97 cold-green (+45/+8 over 577/89); typecheck clean. One renderer, one editor, one block registry — blog/events bodies are `Block[]` edited via the SAME Puck surface as pages (D-001/D-047). Track B remains LOCAL (batched push after 8.15, operator confirm).
+
+### 2026-05-27 — Task 8.14 (docs + per-client-divergence)
+**Commit:** _(this commit)_
+**Done:** New `docs/tenant-sites.md` — the full per-site auth/blog/events reference: the one-renderer rule, the data model, tenant Better-auth scoping (D-048), public `/blog`+`/events` rendering, provision copy-in, the Studio admin API + Blog/Events/Members tabs, and an explicit **per-client-divergence boundary** (deeper behavior rides plugins D-016/D-045, never core forks). Appended a "Shipped (P8-T8.7–8.13)" paragraph to **D-047** in DECISIONS. Added a cross-link from `docs/data-model.md` and refreshed the `docs/admin-ui.md` route/tab table (Blog/Events/Members tabs + post/event editor routes; corrected the stale "Phase 5 placeholder" line).
+**Tests added:** none (docs-only; baseline unchanged at 622/97).
+**Next:** 8.15 — phase wrap (cold suite + typecheck, tick PLAN box, close STATE), then the operator-confirmed batched Track B prod push.
+**Notes:** D-047 + D-048 confirmed present and current. `auth_*`, `tenant_auth_*`, `posts`, `events` all already documented in `docs/data-model.md` (P8-T8.2/8.7/8.9/8.10).

@@ -75,11 +75,15 @@ All admin routes live under the admin host (`src/admin/AdminApp.tsx`):
 | `/login`                       | Token paste           | Public; verifies before persisting      |
 | `/`                            | Sites list            | Table; row → detail; "+ New site"        |
 | `/sites/new`                   | New-site wizard       | 2-step: name+slug, then brand colors     |
-| `/sites/:slug`                 | Site detail + tabs    | Pages · Media · Settings                 |
-| `/sites/:slug/pages/:pageId`   | Editor placeholder    | **Phase 5** (Puck) lands here            |
+| `/sites/:slug`                 | Site detail + tabs    | Pages · Blog · Events · Members · Media · Plugins · Settings |
+| `/sites/:slug/pages/:pageId`   | Page editor (Puck)    | Phase 5 (D-017) + Ask-AI (Phase 6)       |
+| `/sites/:slug/posts/:postId`   | Post editor (Puck)    | **Phase 8** — `body` = `Block[]`         |
+| `/sites/:slug/events/:eventId` | Event editor (Puck)   | **Phase 8** — `description` = `Block[]`  |
 | `*`                            | Not found             |                                          |
 
-The detail tabs route by **slug**, but the detail/pages/media API endpoints key
+Blog/Events/Members (P8-T8.13) are per-tenant content tabs scoped by `site_id`
+via `adminTenantRouter`; the full model is `docs/tenant-sites.md`. The detail
+tabs route by **slug**, but the detail/pages/media API endpoints key
 off the site **UUID**. Studio resolves slug → id client-side from the (cheap)
 `GET /api/sites` list, then loads detail by id. The `:siteId` endpoints query a
 UUID column, so a slug must never be sent to them directly.
