@@ -12,6 +12,7 @@ import { mediaRouter } from "./routes/media.js";
 import { adminSitesRouter } from "./routes/admin-sites.js";
 import { templatesRouter } from "./routes/templates.js";
 import { pluginsRouter } from "./routes/plugins.js";
+import { adminTenantRouter } from "./routes/admin-tenant.js";
 import { meRouter } from "./routes/me.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
@@ -81,6 +82,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // P7.5: admin plugins API — list available, per-site enable/disable + config.
   app.use("/api", pluginsRouter());
+
+  // P8-T8.13: admin tenant-content API — per-site blog/events CRUD + members/
+  // auth-config. Scoped by :siteId, gated by requireAdmin (dual-mode).
+  app.use("/api", adminTenantRouter());
 
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces
