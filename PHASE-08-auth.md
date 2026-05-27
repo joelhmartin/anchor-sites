@@ -174,7 +174,7 @@
   auth/blog/events model). Update `docs/data-model.md` (`auth_*` now shipped;
   `tenant_auth_*`/`posts`/`events` added). Confirm D-047 + D-048 recorded.
 
-- [ ] **8.15 — Phase 8 wrap.**
+- [x] **8.15 — Phase 8 wrap.**
   Full COLD suite + typecheck green; tick PLAN Phase-8 box; close STATE; record
   the final baseline. Confirm the prod-deploy push with the operator (ships all
   auth migrations + dual-mode `requireAdmin` + tenant tables + public blog/events
@@ -296,3 +296,10 @@
 **Tests added:** none (docs-only; baseline unchanged at 622/97).
 **Next:** 8.15 — phase wrap (cold suite + typecheck, tick PLAN box, close STATE), then the operator-confirmed batched Track B prod push.
 **Notes:** D-047 + D-048 confirmed present and current. `auth_*`, `tenant_auth_*`, `posts`, `events` all already documented in `docs/data-model.md` (P8-T8.2/8.7/8.9/8.10).
+
+### 2026-05-27 — Task 8.15 (PHASE 8 WRAP)
+**Commit:** _(this commit)_
+**Done:** Final COLD suite **622/97 green**; typecheck clean. Ticked the PLAN Phase-8 box (full Track A + Track B summary). STATE closed (`current_task=null`, final baseline recorded). **PHASE 8 COMPLETE (8.1–8.15).**
+**Tests added:** none (wrap; baseline 622/97).
+**Next:** STOP at the 8→9 boundary. Phase 9 (SEO layer) requires a FRESH `.routine/NEXT-PHASE-APPROVED` (hard rule #1). **Operator action pending: confirm the batched Track B prod push** — it ships 3 migrations (`tenant_auth_*`, `posts`, `events`) + the `createSiteWithDomains` copy-in change + the new tenant routes/Studio tabs. Migrations run in the CI migrate step before the image deploys; `requireAdmin` is unchanged (no studio lockout). Track A is already in prod.
+**Notes:** Track B is 12 local feat/chore commits (`ed5784b`..) plus this wrap, all unpushed by operator decision (batch at phase end with confirm). Operator live-cutover prereqs unchanged: Google OAuth Client ID/secret + `BETTER_AUTH_SECRET` to flip Studio to Google sign-in (prod stays dual-mode on the token until then).
