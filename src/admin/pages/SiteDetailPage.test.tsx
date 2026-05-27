@@ -69,6 +69,9 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     expect(screen.getByRole("button", { name: "+ New page" })).toBeTruthy();
     expect(screen.queryByText(/arrive in Task 4.14/)).toBeNull();
 
+    // P8-T8.13 added the per-tenant content tabs.
+    expect(screen.getByRole("tab", { name: "Blog" })).toBeTruthy();
+
     fireEvent.click(screen.getByRole("tab", { name: "Media" }));
     expect(screen.getByRole("button", { name: "Upload image" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "+ New page" })).toBeNull();

@@ -8,6 +8,7 @@ import { Card, CardContent } from "../ui/card.js";
 import { Spinner } from "../ui/spinner.js";
 import { cn } from "../ui/cn.js";
 import { PagesTab } from "./site-tabs/PagesTab.js";
+import { BlogTab } from "./site-tabs/BlogTab.js";
 import { MediaTab } from "./site-tabs/MediaTab.js";
 import { SettingsTab } from "./site-tabs/SettingsTab.js";
 import { PluginsTab } from "./site-tabs/PluginsTab.js";
@@ -21,6 +22,7 @@ const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
 
 const TABS = [
   { key: "pages", label: "Pages" },
+  { key: "blog", label: "Blog" },
   { key: "media", label: "Media" },
   { key: "plugins", label: "Plugins" },
   { key: "settings", label: "Settings" },
@@ -135,6 +137,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
 
           <div role="tabpanel">
             {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
+            {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
             {tab === "media" && <MediaTab siteId={site.id} />}
             {tab === "plugins" && <PluginsTab siteId={site.id} />}
             {tab === "settings" && <SettingsTab site={site} />}
