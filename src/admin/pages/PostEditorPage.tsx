@@ -9,6 +9,8 @@ import { Card, CardContent } from "../ui/card.js";
 import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
 import { Spinner } from "../ui/spinner.js";
+import { SeoPanel } from "../components/SeoPanel.js";
+import type { SeoFields } from "../../server/seo/schema.js";
 
 type PostDetail = {
   id: string;
@@ -17,6 +19,7 @@ type PostDetail = {
   title: string;
   excerpt: string | null;
   body: Block[] | null;
+  seo: Record<string, unknown> | null;
   status: "draft" | "published";
 };
 
@@ -60,6 +63,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const [title, setTitle] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [status, setStatus] = useState<"draft" | "published">("draft");
+  const [seo, setSeo] = useState<SeoFields>({});
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -70,6 +74,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
       setTitle(post.title);
       setExcerpt(post.excerpt ?? "");
       setStatus(post.status);
+      setSeo((post.seo ?? {}) as SeoFields);
     }
   }, [post]);
 
@@ -79,7 +84,13 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
     try {
       await apiFetch(`/api/sites/${siteId}/posts/${postId}`, {
         method: "PUT",
-        body: { title: title.trim(), excerpt: excerpt.trim() || undefined, status, body: blocks },
+        body: {
+          title: title.trim(),
+          excerpt: excerpt.trim() || undefined,
+          status,
+          body: blocks,
+          seo,
+        },
       });
       setSavedAt(new Date().toISOString());
     } catch (err) {
@@ -144,9 +155,11 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         </CardContent>
       </Card>
 
+      <SeoPanel siteId={siteId} value={seo} onChange={setSeo} />
+
       <p className="text-xs text-zinc-500">
         Edit the post body below, then use the editor’s <strong>Publish</strong> button to save
-        (title, excerpt, status, and body are saved together).
+        (title, excerpt, status, SEO, and body are saved together).
       </p>
 
       <BlockBodyEditor siteId={siteId} value={post.body ?? []} onPublish={save} />
