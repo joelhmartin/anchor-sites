@@ -19,7 +19,7 @@
 ### Host + routing foundation
 
 - [ ] **4.1 — Provision `studio.anchorcorps.com` + admin-host routing**
-  - **gcloud/DNS (assistant runs):** Cloud Run domain mapping for `studio.anchorcorps.com` on the `anchor-sites` service; Kinsta CNAME → `ghs.googlehosted.com.`; confirm cert provisioning kicks off.
+  - **gcloud/DNS (assistant runs):** Cloud Run domain mapping for `studio.anchorcorps.com` on the `anchor-sites` service; DNS provider CNAME → `ghs.googlehosted.com.`; confirm cert provisioning kicks off.
   - **Server:** `src/config/admin-host.ts` → `isAdminHost(hostname)` recognizing `studio.anchorcorps.com`, `studio.localhost`, and a `STUDIO_HOST` env override. The page router (or a guard mounted before it) detects the admin host and serves the SPA instead of attempting tenant resolution. In dev, `studio.localhost:3000` serves the SPA; in prod the static `dist/index.html` serves for the admin host.
   - Append **D-032** to `DECISIONS.md`.
   - **Tests:** `isAdminHost` matches the three forms + rejects tenant hosts; an integration test that a request with `Host: studio.localhost` does NOT 404 as a missing tenant page.
@@ -251,5 +251,5 @@
 
 ### 2026-05-19 18:30 UTC — Task 4.1 (provision studio.anchorcorps.com + admin-host routing)
 **Commit:** 2965eb4
-**Done:** Cloud Run domain mapping `studio.anchorcorps.com` → `anchor-sites` + Kinsta CNAME → `ghs.googlehosted.com.` (DNS resolves; cert provisioning began). `src/config/admin-host.ts` (`isAdminHost` + `studioHost`, port-insensitive, `STUDIO_HOST` override, recognizes `studio.localhost`). `page.ts` short-circuits the admin host before `resolveSite` and passes through to the SPA. Appended **D-032** (cookie-boundary rationale + three-layer host model).
+**Done:** Cloud Run domain mapping `studio.anchorcorps.com` → `anchor-sites` + DNS provider CNAME → `ghs.googlehosted.com.` (DNS resolves; cert provisioning began). `src/config/admin-host.ts` (`isAdminHost` + `studioHost`, port-insensitive, `STUDIO_HOST` override, recognizes `studio.localhost`). `page.ts` short-circuits the admin host before `resolveSite` and passes through to the SPA. Appended **D-032** (cookie-boundary rationale + three-layer host model).
 **Tests added:** 7 admin-host unit + 1 integration (studio.localhost passthrough). Also fixed a latent Task-3.5 cross-file test-pollution bug (admin-pages persisted `brand_tokens_override` on muldoon home; now reset in beforeEach/afterAll). Full detail in commit 2965eb4's message.

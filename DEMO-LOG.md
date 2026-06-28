@@ -111,7 +111,7 @@ curl -sX POST https://anchor-sites-kqikza7ska-uc.a.run.app/api/sites/provision \
   -d '{"slug":"muldoon-dental"}'
 ```
 
-Returns a per-step status object showing the Postgres UPSERT, Kinsta CNAME create, and Cloud Run domain mapping create all succeeded. Re-running is idempotent.
+Returns a per-step status object showing the Postgres UPSERT, DNS provider CNAME upsert, and Cloud Run domain mapping create all succeeded. Re-running is idempotent.
 
 **Local fallback:**
 
@@ -123,11 +123,11 @@ Same orchestrator, gcloud-session auth, no API tokens burned.
 
 **Domain swap recipe:** set `SITES_DOMAIN_BASE=new.example.com` in env, re-deploy, re-seed. The legacy-cleanup in `db/seed.ts` removes old hostnames automatically.
 
-**Pending public verification:** The new full-slug URLs `https://muldoon-dental.sites.anchorcorps.com/` + `https://demo-site.sites.anchorcorps.com/` have Kinsta CNAMEs + Cloud Run mappings created; Cloud Run's `DomainRoutable` polling lag (~15-30 min) is the only thing between us and HTTPS responses.
+**Pending public verification:** The new full-slug URLs `https://muldoon-dental.sites.anchorcorps.com/` + `https://demo-site.sites.anchorcorps.com/` have DNS provider CNAMEs + Cloud Run mappings created; Cloud Run's `DomainRoutable` polling lag (~15-30 min) is the only thing between us and HTTPS responses.
 
 **Coming next:** drop `.routine/NEXT-PHASE-APPROVED` to start Phase 2 once you've eyeballed the new URLs.
 
-### 2026-05-19 — DNS records added via Kinsta API; certs issuing
+### 2026-05-19 — DNS records added via DNS provider API; certs issuing
 **Milestone ID:** phase1-dns-live
 **Phase/Task:** Phase 1, Task 1.8 (final step — domain mapping)
 **Commit:** 294267b
@@ -137,7 +137,7 @@ Same orchestrator, gcloud-session auth, no API tokens burned.
 - `demo.sites.anchorcorps.com` → CNAME → `ghs.googlehosted.com.` → Google IP (verified)
 - Cloud Run mappings: `DomainRoutable: True` for both. Let's Encrypt cert issuance in flight (typically 10–15 min on first request).
 
-**How:** Kinsta's public v2 API exposes record CRUD via the `/v2/domains/{id}/dns-records` endpoint (not under `/dns/*` or `/zones/*` as the docs imply). Both CNAMEs posted via the API; operation polling returned success. Public dig confirms propagation.
+**How:** DNS records were added via the DNS provider API (see BLOCKERS.md#B-002 for endpoint discovery notes). Both CNAMEs posted via the API; operation polling returned success. Public dig confirms propagation.
 
 **Expected within ~15 min of this entry:**
 

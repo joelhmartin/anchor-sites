@@ -510,7 +510,7 @@ Three clean layers result:
 - **Cookie / auth boundary (decisive).** `studio.anchorcorps.com` is NOT a DNS parent of any tenant host. Browsers send a parent domain's cookies down to subdomains, so an admin host *under* `sites.` (or the bare `sites.anchorcorps.com`) would make admin session cookies (Phase 8 / Better-auth) reachable by every `*.sites.anchorcorps.com` tenant by default. A top-level sibling can only leak via a deliberately `.anchorcorps.com`-scoped cookie — the safe behavior is the default behavior.
 - **Resolver isolation.** The tenant regex only matches `<label>.sites.anchorcorps.com`; `studio.anchorcorps.com` never collides. (A tenant literally named "studio" would be `studio.sites.anchorcorps.com` — distinct.)
 - **Product clarity.** "studio" frames the creative-editor surface and pairs with the Phase 5 Puck visual editor. Mixing admin into a tenant host's `/admin` path conflates two product surfaces + exposes `/admin` to tenant-site crawlers.
-- **No extra infra cost.** A `*.sites.anchorcorps.com` wildcard cert wouldn't cover the bare `sites.anchorcorps.com` anyway, so co-locating saves nothing. One Cloud Run domain mapping + one Kinsta CNAME — the same machinery the tenant provisioning orchestrator already uses.
+- **No extra infra cost.** A `*.sites.anchorcorps.com` wildcard cert wouldn't cover the bare `sites.anchorcorps.com` anyway, so co-locating saves nothing. One Cloud Run domain mapping + one DNS provider CNAME — the same machinery the tenant provisioning orchestrator already uses.
 
 **Alternatives considered:**
 - Path-based `/admin` on tenant hosts: rejected — cookie scoping per host breaks multi-site editing under real auth; conflated surfaces.
@@ -519,7 +519,9 @@ Three clean layers result:
 
 **How to apply:**
 - Served by the same single Express + Vite process. `src/config/admin-host.ts` `isAdminHost(hostname)` recognizes `studio.anchorcorps.com`, `studio.localhost` (local dev), and a `STUDIO_HOST` env override. The page router short-circuits the admin host before tenant resolution and serves the SPA.
-- Infra (provisioned 2026-05-19): Cloud Run domain mapping `studio.anchorcorps.com` → `anchor-sites` service; Kinsta CNAME `studio.anchorcorps.com` → `ghs.googlehosted.com.`. Cert provisioning began once DNS resolved.
+- Infra (provisioned 2026-05-19): Cloud Run domain mapping `studio.anchorcorps.com` → `anchor-sites` service; DNS provider CNAME `studio.anchorcorps.com` → `ghs.googlehosted.com.`. Cert provisioning began once DNS resolved.
+
+> **Superseded 2026-06-28:** DNS records are now managed through a pluggable `DnsProvider` (GoDaddy default; Cloud DNS interface-ready). See `docs/superpowers/specs/` for the removal design spec (2026-06-28).
 - Local dev: add `127.0.0.1 studio.localhost` to `/etc/hosts` (or rely on the OS resolving `*.localhost`), then visit `http://studio.localhost:3000`.
 - Phase 8 (Better-auth) sets host-only session cookies on this host. Phase 10/12 may add a managed cert / CDN refinement but the host name is stable.
 
