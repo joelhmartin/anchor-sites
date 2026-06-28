@@ -21,4 +21,13 @@ describe("resolveDnsProvider", () => {
       /GODADDY_API_KEY/,
     );
   });
+  it("throws on an unrecognized DNS_PROVIDER value", () => {
+    expect(() => resolveDnsProvider({ ...GD, DNS_PROVIDER: "kinsta" } as NodeJS.ProcessEnv)).toThrow(
+      /Unknown DNS_PROVIDER/,
+    );
+  });
+
+  it("honors DNS_PROVIDER=godaddy when creds are present", () => {
+    expect(resolveDnsProvider({ ...GD, DNS_PROVIDER: "godaddy" }).id).toBe("godaddy");
+  });
 });

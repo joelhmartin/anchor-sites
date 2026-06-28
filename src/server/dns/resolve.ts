@@ -21,5 +21,10 @@ export function resolveDnsProvider(env: NodeJS.ProcessEnv = process.env): DnsPro
     }
     return new GoDaddyDnsProvider(gd);
   }
+  if (mode) {
+    throw new Error(
+      `Unknown DNS_PROVIDER=${JSON.stringify(env.DNS_PROVIDER)}; valid values: godaddy, manual, cloud-dns`,
+    );
+  }
   return gd ? new GoDaddyDnsProvider(gd) : new ManualDnsProvider();
 }
