@@ -32,7 +32,7 @@ export function relativeName(fqdn: string, zone: string): string {
   const z = zone.replace(/\.+$/, "").toLowerCase();
   if (f === z) return "@";
   if (f.endsWith(`.${z}`)) return f.slice(0, f.length - z.length - 1);
-  return f;
+  throw new Error(`relativeName: ${JSON.stringify(fqdn)} is not within zone ${JSON.stringify(zone)}`);
 }
 
 /** Inverse of `relativeName`. `@` → the apex. */

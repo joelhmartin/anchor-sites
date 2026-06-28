@@ -206,6 +206,30 @@ d("provisionSiteHostname (integration)", () => {
     expect(cloudRun.waitForReady).not.toHaveBeenCalled();
   });
 
+  it("manual-mode provider: dns step is 'skipped' with detail listing records", async () => {
+    const manualDns: DnsProvider = {
+      id: "manual",
+      ensureRecord: vi.fn(async () => "external" as EnsureResult),
+      verifyRecord: vi.fn(async () => false),
+      removeRecord: vi.fn(async () => undefined),
+    };
+    const cloudRun = makeCloudRunMock(true);
+    const result = await provisionSiteHostname(muldoonId, {
+      pool,
+      dns: manualDns,
+      cloudRun,
+      wait: false,
+    });
+
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("skipped");
+    expect(dnsStep?.detail).toMatch(/manually/i);
+    expect(manualDns.ensureRecord).toHaveBeenCalledWith(
+      "anchorcorps.com",
+      expect.objectContaining({ type: "CNAME" }),
+    );
+  });
+
   it("throws when the site does not exist", async () => {
     await expect(
       provisionSiteHostname("00000000-0000-0000-0000-000000000000", { pool }),

@@ -15,6 +15,11 @@ describe("relativeName", () => {
   it("returns @ for the apex itself", () => {
     expect(relativeName("anchorcorps.com", "anchorcorps.com")).toBe("@");
   });
+  it("throws when the fqdn is not within the zone", () => {
+    expect(() => relativeName("foo.example.com", "anchorcorps.com")).toThrow(
+      /not within zone/,
+    );
+  });
 });
 
 describe("toFqdn", () => {

@@ -94,9 +94,13 @@ for `Ready` + `CertificateProvisioned`.
 are set): records are upserted automatically via the GoDaddy API; no
 operator action required beyond wiring the secrets.
 
-**Manual mode** (fallback when no GoDaddy creds): the orchestrator
-surfaces the required records and verifies them by live DNS lookup,
-leaving the actual record creation to the operator.
+**Manual mode** (fallback when no GoDaddy creds): `ensureRecord` returns
+`"external"` without writing anything. The orchestrator reports the `dns`
+step as `"skipped"` and includes the required records in the step detail
+so the operator knows what to add at their registrar. Live-DNS
+verification of those records is a separate concern available via the
+provider's `verifyRecord` (surfaced in the Phase 10 status UI), not part
+of the provisioning call itself.
 
 The Cloud Run runtime SA has `secretmanager.secretAccessor` on the
 GoDaddy secrets. Local dev reads from shell env (`GODADDY_API_KEY` /
@@ -239,9 +243,11 @@ Re-running the orchestrator is safe and useful:
 Failure modes the orchestrator surfaces explicitly:
 
 - **DNS provider not configured** (GoDaddy creds absent, `DNS_PROVIDER` not
-  set) — orchestrator falls back to `manual` mode, surfaces the required
-  records, and verifies by live DNS lookup. Returns `dns: error` if records
-  are not yet resolvable; the operator must add them manually and re-run.
+  set) — orchestrator falls back to `manual` mode. The `dns` step is
+  reported as `"skipped"` and its `detail` lists the records the operator
+  must add at their registrar. The orchestrator never errors on DNS in this
+  mode; re-running is safe once the records are in place (GoDaddy mode will
+  then write them automatically if creds are provided).
 - **Cloud Run runtime SA missing `roles/run.developer`** — return with
   `cloud_run: error` and a 403 message. Grant the role, retry.
 - **DNS propagation slower than expected** — `wait_ready` times out at
