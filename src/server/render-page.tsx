@@ -111,14 +111,16 @@ export function canonicalUrl(
 export function renderSeoMeta(
   site: ResolvedSite,
   seo: SeoFields,
-  opts: { path?: string; canonical?: string; ogImage?: OgImage } = {},
+  opts: { path?: string; canonical?: string; ogImage?: OgImage; title?: string } = {},
 ): string {
   const robots = effectiveRobots(seo);
   const robotsContent = `${robots.index ? "index" : "noindex"},${robots.follow ? "follow" : "nofollow"}`;
   const canonical = opts.canonical ?? canonicalUrl(site, seo, opts.path);
 
   const siteDefaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
-  const ogTitle = seo.og?.title || seo.title || site.display_name;
+  // Prefer the page's own (content) title over the tenant name so a post with
+  // an empty SEO blob still shares as its title, not the site name.
+  const ogTitle = seo.og?.title || seo.title || opts.title || site.display_name;
   const ogDescription = seo.og?.description || seo.description;
   const twitterSite = normalizeTwitterHandle(siteDefaults.twitterHandle);
   const img = opts.ogImage;
@@ -256,7 +258,7 @@ export function renderPage(
       <BlockRenderer blocks={page.blocks ?? []} />
     </MediaProvider>,
   );
-  const seoMeta = renderSeoMeta(site, seo, { canonical, ogImage });
+  const seoMeta = renderSeoMeta(site, seo, { canonical, ogImage, title: baseTitle });
   return shell({
     site,
     title,

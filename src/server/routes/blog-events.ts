@@ -56,11 +56,15 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
       seo: extra.seo ?? {},
       brand_tokens_override: {},
     };
+    // Detail pages pass a resolved ogImage; index pages (no per-item image)
+    // still pick up the site default og:image (renderPage has no pool to do it).
+    const ogImage =
+      extra.ogImage ?? (await resolveOgImage(pool, req.site!, parseSeoLoose(extra.seo))) ?? undefined;
     const assets = await loadAssetsForBlocks(pool, siteId, blocks);
     const { html, status } = renderPage(req.site!, record, {
       assets,
       path: extra.path ?? req.path,
-      ogImage: extra.ogImage,
+      ogImage,
       extraJsonLd: extra.extraJsonLd,
     });
     res.status(status).type("text/html").send(html);
