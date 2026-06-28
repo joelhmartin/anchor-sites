@@ -45,10 +45,16 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
     siteId: string,
     title: string,
     blocks: Block[],
+    extra: { seo?: Record<string, unknown>; path?: string } = {},
   ): Promise<void> {
-    const record: PageRecord = { title, blocks, seo: {}, brand_tokens_override: {} };
+    const record: PageRecord = {
+      title,
+      blocks,
+      seo: extra.seo ?? {},
+      brand_tokens_override: {},
+    };
     const assets = await loadAssetsForBlocks(pool, siteId, blocks);
-    const { html, status } = renderPage(req.site!, record, { assets });
+    const { html, status } = renderPage(req.site!, record, { assets, path: extra.path ?? req.path });
     res.status(status).type("text/html").send(html);
   }
 
@@ -86,7 +92,10 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
         res.status(status).type("text/html").send(html);
         return;
       }
-      await renderBlocks(req, res, site.id, post.title, post.body as unknown as Block[]);
+      await renderBlocks(req, res, site.id, post.title, post.body as unknown as Block[], {
+        seo: post.seo,
+        path: `/blog/${post.slug}`,
+      });
     } catch (err) {
       next(err);
     }
@@ -124,7 +133,10 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
         res.status(status).type("text/html").send(html);
         return;
       }
-      await renderBlocks(req, res, site.id, event.title, event.description as unknown as Block[]);
+      await renderBlocks(req, res, site.id, event.title, event.description as unknown as Block[], {
+        seo: event.seo,
+        path: `/events/${event.slug}`,
+      });
     } catch (err) {
       next(err);
     }

@@ -56,7 +56,7 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
         req.site.id,
         result.rows[0].blocks,
       );
-      const { html, status } = renderPage(req.site, result.rows[0], { assets });
+      const { html, status } = renderPage(req.site, result.rows[0], { assets, path: req.path });
       res.status(status).type("text/html").send(html);
     } catch (err) {
       next(err);

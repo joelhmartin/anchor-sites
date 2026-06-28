@@ -9,6 +9,8 @@ import type { Block } from "../blocks/types.js";
 import type { ResolvedSite } from "../middleware/resolveSite.js";
 import { mergeBrandTokens } from "../blocks/brand-tokens.js";
 import { MediaProvider, type MediaAssetData } from "@anchorcorps/components";
+import { hostnameForSlug } from "../config/domain.js";
+import { effectiveRobots, parseSeoLoose, type SeoFields } from "./seo/schema.js";
 
 /**
  * Inline the @anchorcorps/components prebuilt CSS bundle + the inline
@@ -46,8 +48,6 @@ export type PageRecord = {
   brand_tokens_override?: Record<string, unknown> | null;
 };
 
-type SeoFields = { title?: string; description?: string };
-
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -61,6 +61,60 @@ function brandTokenCss(tokens: Record<string, string>): string {
   return Object.entries(tokens)
     .map(([k, v]) => `${k}: ${v};`)
     .join(" ");
+}
+
+/** Public URL path for a canonical link — leading slash, no query, no trailing slash. */
+function canonicalPath(path: string | undefined): string {
+  if (!path || path === "/") return "/";
+  const noQuery = path.split(/[?#]/, 1)[0];
+  const withSlash = noQuery.startsWith("/") ? noQuery : `/${noQuery}`;
+  return withSlash.length > 1 && withSlash.endsWith("/") ? withSlash.slice(0, -1) : withSlash;
+}
+
+function metaTag(attr: "name" | "property", key: string, content: string | undefined): string {
+  return content ? `<meta ${attr}="${key}" content="${escapeHtml(content)}" />` : "";
+}
+
+/**
+ * P9-T9.2 (D-049) — emit canonical, robots, Open Graph and Twitter tags from a
+ * page's `seo` blob. `og:image` (a media `asset_id`) and JSON-LD are layered on
+ * in 9.4. Canonical defaults to the page's canonical tenant URL unless the
+ * operator set an explicit `seo.canonical`.
+ */
+export function renderSeoMeta(
+  site: ResolvedSite,
+  seo: SeoFields,
+  opts: { path?: string } = {},
+): string {
+  const robots = effectiveRobots(seo);
+  const robotsContent = `${robots.index ? "index" : "noindex"},${robots.follow ? "follow" : "nofollow"}`;
+
+  let canonical = seo.canonical;
+  if (!canonical) {
+    try {
+      canonical = `https://${hostnameForSlug(site.slug)}${canonicalPath(opts.path)}`;
+    } catch {
+      canonical = undefined; // unreachable for valid slugs; never block render
+    }
+  }
+
+  const ogTitle = seo.og?.title || seo.title || site.display_name;
+  const ogDescription = seo.og?.description || seo.description;
+
+  return [
+    `<meta name="robots" content="${robotsContent}" />`,
+    canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}" />` : "",
+    `<meta property="og:type" content="website" />`,
+    metaTag("property", "og:site_name", site.display_name),
+    metaTag("property", "og:title", ogTitle),
+    metaTag("property", "og:description", ogDescription),
+    canonical ? metaTag("property", "og:url", canonical) : "",
+    metaTag("name", "twitter:card", seo.twitter?.card ?? "summary_large_image"),
+    metaTag("name", "twitter:title", ogTitle),
+    metaTag("name", "twitter:description", ogDescription),
+  ]
+    .filter(Boolean)
+    .join("\n  ");
 }
 
 const SHELL_BASE_CSS = `
@@ -81,6 +135,8 @@ function shell(opts: {
   extraCss?: string;
   /** P3-T3.5 — per-page override merged on top of site defaults. */
   pageOverride?: Record<string, unknown> | null;
+  /** P9-T9.2 — extra <head> markup (SEO meta / JSON-LD), pre-escaped. */
+  headExtra?: string;
 }): { html: string; status: number } {
   const merged = mergeBrandTokens(opts.site.default_brand_tokens, opts.pageOverride);
   const brandStyle = brandTokenCss(merged);
@@ -93,6 +149,7 @@ function shell(opts: {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(opts.title)}</title>
   ${opts.description ? `<meta name="description" content="${escapeHtml(opts.description)}" />` : ""}
+  ${opts.headExtra ?? ""}
   <style>${styles}</style>
 </head>
 <body>
@@ -124,9 +181,9 @@ function renderShellContent(site: ResolvedSite, inner: ReactElement): string {
 export function renderPage(
   site: ResolvedSite,
   page: PageRecord,
-  opts: { assets?: MediaAssetData[] } = {},
+  opts: { assets?: MediaAssetData[]; path?: string } = {},
 ): { html: string; status: number } {
-  const seo = (page.seo ?? {}) as SeoFields;
+  const seo = parseSeoLoose(page.seo);
   const title = seo.title || page.title || site.display_name;
   const bodyHtml = renderShellContent(
     site,
@@ -145,6 +202,7 @@ export function renderPage(
     bodyHtml,
     status: 200,
     pageOverride: page.brand_tokens_override ?? null,
+    headExtra: renderSeoMeta(site, seo, { path: opts.path }),
   });
 }
 
@@ -166,5 +224,7 @@ export function renderNotFound(site: ResolvedSite): { html: string; status: numb
     bodyHtml,
     status: 404,
     extraCss,
+    // A 404 must never be indexed (P9-T9.2).
+    headExtra: `<meta name="robots" content="noindex" />`,
   });
 }
