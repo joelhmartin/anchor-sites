@@ -70,6 +70,12 @@ d("page renderer catch-all (integration)", () => {
     expect(res.text).toMatch(/data-site-slug="muldoon-dental"/);
     // Brand tokens injected
     expect(res.text).toMatch(/--theme-main:\s*#0a3d62/);
+    // P9-T9.2 — SEO head: canonical + robots + OG wired through renderPage
+    expect(res.text).toContain(
+      '<link rel="canonical" href="https://muldoon-dental.sites.anchorcorps.com/" />',
+    );
+    expect(res.text).toContain('<meta name="robots" content="index,follow" />');
+    expect(res.text).toContain('<meta property="og:type" content="website" />');
   });
 
   it("demo home renders different content + different brand tokens", async () => {
@@ -89,6 +95,8 @@ d("page renderer catch-all (integration)", () => {
     expect(res.text).toMatch(/Page not found/);
     // 404 still wears the site's brand
     expect(res.text).toMatch(/--theme-main:\s*#0a3d62/);
+    // P9-T9.2 — a 404 must be noindex
+    expect(res.text).toContain('<meta name="robots" content="noindex" />');
   });
 
   it("passes through to downstream when host is unknown (Vite/SPA fallback)", async () => {
