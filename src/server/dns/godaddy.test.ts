@@ -76,6 +76,28 @@ describe("GoDaddyDnsProvider.verifyRecord", () => {
   });
 });
 
+describe("GoDaddyDnsProvider.removeRecord", () => {
+  it("issues a DELETE to the relative record path", async () => {
+    const fetchMock = mockFetch(() => ({ status: 200, body: undefined }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", record);
+
+    const del = fetchMock.mock.calls.find((c) => (c[1] as RequestInit)?.method === "DELETE")!;
+    expect(del).toBeDefined();
+    expect(del[0]).toBe(
+      "https://api.godaddy.test/v1/domains/anchorcorps.com/records/CNAME/muldoon-dental.sites",
+    );
+  });
+
+  it("resolves without throwing on a 404 (idempotent removal)", async () => {
+    vi.stubGlobal("fetch", mockFetch(() => ({ status: 404, body: { code: "NOT_FOUND" } })));
+    await expect(
+      new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", record),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("GoDaddyDnsProvider error handling", () => {
   it("throws on a non-404 error without leaking the secret", async () => {
     vi.stubGlobal("fetch", mockFetch(() => ({ status: 500, body: { message: "boom" } })));
@@ -85,5 +107,27 @@ describe("GoDaddyDnsProvider error handling", () => {
     await expect(
       new GoDaddyDnsProvider(CFG).ensureRecord("anchorcorps.com", record),
     ).rejects.not.toThrow(/sso-key/);
+  });
+
+  it("does not leak the secret on a write-path (PUT) error", async () => {
+    // GET finds no record so the code proceeds to PUT, which then fails.
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) =>
+        init?.method === "PUT"
+          ? { status: 500, body: { message: "boom" } }
+          : { status: 200, body: [] },
+      ),
+    );
+
+    await expect(
+      new GoDaddyDnsProvider(CFG).ensureRecord("anchorcorps.com", record),
+    ).rejects.toThrow(/GoDaddy 500/);
+
+    await expect(
+      new GoDaddyDnsProvider(CFG).ensureRecord("anchorcorps.com", record),
+    ).rejects.toEqual(
+      expect.objectContaining({ message: expect.not.stringContaining("sso-key") }),
+    );
   });
 });
