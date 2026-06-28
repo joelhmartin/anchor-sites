@@ -1,8 +1,8 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import { Router } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
-import { isAdminHost } from "../../config/admin-host.js";
+import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { hostnameForSlug } from "../../config/domain.js";
 
 /**
@@ -33,11 +33,6 @@ function buildSitemap(urls: Url[]): string {
     )
     .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>\n`;
-}
-
-function flagAdminHost(req: Request, _res: Response, next: NextFunction): void {
-  if (isAdminHost(req.headers.host)) req.isAdminHost = true;
-  next();
 }
 
 // Published, indexable rows for one content table, newest-changed first.

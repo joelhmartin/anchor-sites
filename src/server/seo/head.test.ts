@@ -66,10 +66,14 @@ describe("renderSeoMeta (P9-T9.2, D-049)", () => {
     expect(html).toContain('<meta property="og:description" content="OG D" />');
   });
 
-  it("defaults twitter:card to summary_large_image, honors an override", () => {
-    expect(meta({})).toContain('<meta name="twitter:card" content="summary_large_image" />');
-    expect(meta({ twitter: { card: "summary" } })).toContain(
-      '<meta name="twitter:card" content="summary" />',
+  it("twitter:card is summary without an image, summary_large_image with one, override wins", () => {
+    // no og:image → a large-image card would render blank on X
+    expect(meta({})).toContain('<meta name="twitter:card" content="summary" />');
+    expect(
+      renderSeoMeta(site, {}, { ogImage: { url: "https://cdn/x.jpg" } }),
+    ).toContain('<meta name="twitter:card" content="summary_large_image" />');
+    expect(meta({ twitter: { card: "summary_large_image" } })).toContain(
+      '<meta name="twitter:card" content="summary_large_image" />',
     );
   });
 

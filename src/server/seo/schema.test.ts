@@ -36,16 +36,32 @@ describe("seoFieldsSchema (P9-T9.1, D-049)", () => {
     expect(seoFieldsSchema.parse(seo)).toEqual(seo);
   });
 
-  it("rejects a non-url canonical", () => {
-    expect(seoFieldsSchema.safeParse({ canonical: "not a url" }).success).toBe(false);
+  it("is field-tolerant: drops an invalid field, keeps the valid ones, never throws", () => {
+    // one bad field must NOT discard the whole blob (a noindex page that also
+    // has a dirty canonical must keep its robots directive)
+    expect(
+      seoFieldsSchema.parse({
+        canonical: "not a url",
+        robots: { index: false, follow: true },
+        title: "Keep me",
+      }),
+    ).toEqual({ title: "Keep me", robots: { index: false, follow: true } });
   });
 
-  it("rejects a non-uuid og image asset id", () => {
-    expect(seoFieldsSchema.safeParse({ og: { imageAssetId: "nope" } }).success).toBe(false);
+  it("drops a non-url canonical rather than failing", () => {
+    const r = seoFieldsSchema.safeParse({ canonical: "not a url" });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data).toEqual({});
   });
 
-  it("rejects an unknown twitter card type", () => {
-    expect(seoFieldsSchema.safeParse({ twitter: { card: "player" } }).success).toBe(false);
+  it("drops a non-uuid og image asset id but keeps a valid og title", () => {
+    expect(seoFieldsSchema.parse({ og: { imageAssetId: "nope", title: "OG" } })).toEqual({
+      og: { title: "OG" },
+    });
+  });
+
+  it("drops an unknown twitter card type rather than failing", () => {
+    expect(seoFieldsSchema.safeParse({ twitter: { card: "player" } }).success).toBe(true);
   });
 });
 
@@ -97,10 +113,13 @@ describe("siteSeoDefaultsSchema (P9-T9.3)", () => {
     expect(siteSeoDefaultsSchema.safeParse({ twitterHandle: "acme" }).success).toBe(true);
   });
 
-  it("rejects an over-long twitter handle", () => {
-    expect(siteSeoDefaultsSchema.safeParse({ twitterHandle: "waytoolongforatwitterhandle" }).success).toBe(
-      false,
-    );
+  it("drops an over-long twitter handle rather than failing the blob", () => {
+    const r = siteSeoDefaultsSchema.safeParse({
+      titleTemplate: "%s — Acme",
+      twitterHandle: "waytoolongforatwitterhandle",
+    });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data).toEqual({ titleTemplate: "%s — Acme" });
   });
 
   it("parseSiteSeoDefaultsLoose returns {} on garbage, never throws", () => {
@@ -117,6 +136,11 @@ describe("applyTitleTemplate", () => {
   it("returns the page title unchanged when template is missing or has no %s", () => {
     expect(applyTitleTemplate(undefined, "About")).toBe("About");
     expect(applyTitleTemplate("Acme", "About")).toBe("About");
+  });
+
+  it("inserts a title containing $ specials literally (no replace-pattern interpretation)", () => {
+    expect(applyTitleTemplate("%s — Acme", "Save $$ Today")).toBe("Save $$ Today — Acme");
+    expect(applyTitleTemplate("%s — Acme", "A $& B")).toBe("A $& B — Acme");
   });
 });
 

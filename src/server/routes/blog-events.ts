@@ -1,15 +1,15 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import { Router, type Request, type Response } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
-import { isAdminHost } from "../../config/admin-host.js";
+import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { canonicalUrl, renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import type { Block } from "../../blocks/types.js";
 import { getPostBySlug, listPosts } from "../blog/repo.js";
 import { getEventBySlug, listEvents } from "../events/repo.js";
-import { loadOgImage, type OgImage } from "../seo/og-image.js";
-import { parseSeoLoose, parseSiteSeoDefaultsLoose } from "../seo/schema.js";
+import { resolveOgImage, type OgImage } from "../seo/og-image.js";
+import { parseSeoLoose } from "../seo/schema.js";
 import { blogPostingLd, eventLd } from "../seo/json-ld.js";
 import "../../blocks/index.js"; // side-effect: register blocks for SSR
 
@@ -30,11 +30,6 @@ const ESC: Record<string, string> = {
 };
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ESC[c]);
-}
-
-function flagAdminHost(req: Request, _res: Response, next: NextFunction): void {
-  if (isAdminHost(req.headers.host)) req.isAdminHost = true;
-  next();
 }
 
 export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
@@ -69,15 +64,6 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
       extraJsonLd: extra.extraJsonLd,
     });
     res.status(status).type("text/html").send(html);
-  }
-
-  /** Resolve a post/event's og:image: its own seo asset, else the site default. */
-  async function resolveOg(
-    site: { id: string; seo_defaults: Record<string, unknown> },
-    seo: ReturnType<typeof parseSeoLoose>,
-  ): Promise<OgImage | null> {
-    const defaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
-    return loadOgImage(pool, site.id, seo.og?.imageAssetId ?? defaults.defaultOgImageAssetId);
   }
 
   function indexBlock(id: string, html: string): Block[] {
@@ -115,7 +101,7 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
         return;
       }
       const postSeo = parseSeoLoose(post.seo);
-      const ogImage = await resolveOg(site, postSeo);
+      const ogImage = await resolveOgImage(pool, site, postSeo);
       const path = `/blog/${post.slug}`;
       const url = canonicalUrl(site, postSeo, path);
       const ld = blogPostingLd({
@@ -170,7 +156,7 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
         return;
       }
       const eventSeo = parseSeoLoose(event.seo);
-      const ogImage = await resolveOg(site, eventSeo);
+      const ogImage = await resolveOgImage(pool, site, eventSeo);
       const path = `/events/${event.slug}`;
       const url = canonicalUrl(site, eventSeo, path);
       const ld = eventLd({

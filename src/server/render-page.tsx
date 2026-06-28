@@ -135,7 +135,9 @@ export function renderSeoMeta(
     img?.width ? metaTag("property", "og:image:width", String(img.width)) : "",
     img?.height ? metaTag("property", "og:image:height", String(img.height)) : "",
     img?.alt ? metaTag("property", "og:image:alt", img.alt) : "",
-    metaTag("name", "twitter:card", seo.twitter?.card ?? "summary_large_image"),
+    // A large-image card with no image renders blank on X — fall back to a
+    // summary card unless an explicit card or an og:image is present.
+    metaTag("name", "twitter:card", seo.twitter?.card ?? (img ? "summary_large_image" : "summary")),
     metaTag("name", "twitter:site", twitterSite),
     metaTag("name", "twitter:title", ogTitle),
     metaTag("name", "twitter:description", ogDescription),

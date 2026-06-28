@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { MediaVariant } from "@anchorcorps/components";
+import { parseSiteSeoDefaultsLoose, type SeoFields } from "./schema.js";
 
 /**
  * og:image resolution (P9-T9.4, D-049). An og:image is a media `asset_id`
@@ -50,4 +51,19 @@ export async function loadOgImage(
     height: variant.height,
     alt: res.rows[0].alt ?? undefined,
   };
+}
+
+/**
+ * Single source of truth for the og:image fallback chain (P9-T9.4): the
+ * content's own `seo.og.imageAssetId`, else the site default
+ * (`seo_defaults.defaultOgImageAssetId`). Used by the page and blog/event
+ * routes so the precedence rule lives in one place.
+ */
+export function resolveOgImage(
+  pool: Pool,
+  site: { id: string; seo_defaults: Record<string, unknown> },
+  seo: SeoFields,
+): Promise<OgImage | null> {
+  const defaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
+  return loadOgImage(pool, site.id, seo.og?.imageAssetId ?? defaults.defaultOgImageAssetId);
 }
