@@ -60,6 +60,17 @@ describe("renderSeoMeta (P9-T9.2, D-049)", () => {
     expect(meta({})).toContain('<meta property="og:title" content="Acme Dental" />');
   });
 
+  it("falls back og:title to the content title (opts.title) before the site name", () => {
+    // empty SEO blob + a content title → share as the title, not the tenant name
+    const html = renderSeoMeta(site, {}, { title: "My Post" });
+    expect(html).toContain('<meta property="og:title" content="My Post" />');
+    expect(html).toContain('<meta name="twitter:title" content="My Post" />');
+    // seo.title still wins over the content title
+    expect(renderSeoMeta(site, { title: "SEO T" }, { title: "My Post" })).toContain(
+      '<meta property="og:title" content="SEO T" />',
+    );
+  });
+
   it("prefers explicit og fields over the page title/description", () => {
     const html = meta({ title: "T", og: { title: "OG T", description: "OG D" } });
     expect(html).toContain('<meta property="og:title" content="OG T" />');
