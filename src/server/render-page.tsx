@@ -10,7 +10,14 @@ import type { ResolvedSite } from "../middleware/resolveSite.js";
 import { mergeBrandTokens } from "../blocks/brand-tokens.js";
 import { MediaProvider, type MediaAssetData } from "@anchorcorps/components";
 import { hostnameForSlug } from "../config/domain.js";
-import { effectiveRobots, parseSeoLoose, type SeoFields } from "./seo/schema.js";
+import {
+  applyTitleTemplate,
+  effectiveRobots,
+  normalizeTwitterHandle,
+  parseSeoLoose,
+  parseSiteSeoDefaultsLoose,
+  type SeoFields,
+} from "./seo/schema.js";
 
 /**
  * Inline the @anchorcorps/components prebuilt CSS bundle + the inline
@@ -98,8 +105,10 @@ export function renderSeoMeta(
     }
   }
 
+  const siteDefaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
   const ogTitle = seo.og?.title || seo.title || site.display_name;
   const ogDescription = seo.og?.description || seo.description;
+  const twitterSite = normalizeTwitterHandle(siteDefaults.twitterHandle);
 
   return [
     `<meta name="robots" content="${robotsContent}" />`,
@@ -110,6 +119,7 @@ export function renderSeoMeta(
     metaTag("property", "og:description", ogDescription),
     canonical ? metaTag("property", "og:url", canonical) : "",
     metaTag("name", "twitter:card", seo.twitter?.card ?? "summary_large_image"),
+    metaTag("name", "twitter:site", twitterSite),
     metaTag("name", "twitter:title", ogTitle),
     metaTag("name", "twitter:description", ogDescription),
   ]
@@ -183,8 +193,14 @@ export function renderPage(
   page: PageRecord,
   opts: { assets?: MediaAssetData[]; path?: string } = {},
 ): { html: string; status: number } {
-  const seo = parseSeoLoose(page.seo);
-  const title = seo.title || page.title || site.display_name;
+  const pageSeo = parseSeoLoose(page.seo);
+  const siteDefaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
+  // P9-T9.3 — page seo wins; site defaults fill the gaps (description) and the
+  // title template wraps the page title ("%s — Acme Dental").
+  const description = pageSeo.description ?? siteDefaults.defaultDescription;
+  const seo: SeoFields = { ...pageSeo, description };
+  const baseTitle = pageSeo.title || page.title || site.display_name;
+  const title = applyTitleTemplate(siteDefaults.titleTemplate, baseTitle);
   const bodyHtml = renderShellContent(
     site,
     // P3-T3.14 — wrap BlockRenderer in MediaProvider so the Image
