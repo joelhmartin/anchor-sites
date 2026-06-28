@@ -38,4 +38,25 @@ describe("ManualDnsProvider", () => {
     const p = new ManualDnsProvider(resolverWith({}));
     expect(await p.verifyRecord("anchorcorps.com", record)).toBe(false);
   });
+
+  it("verifyRecord is false when the CNAME resolves but does not match", async () => {
+    const p = new ManualDnsProvider(
+      resolverWith({ resolveCname: vi.fn(async () => ["other.example.com"]) }),
+    );
+    expect(await p.verifyRecord("anchorcorps.com", record)).toBe(false);
+  });
+
+  it("verifyRecord is true when an A lookup includes the address", async () => {
+    const aRecord = { name: "muldoon-dental.sites.anchorcorps.com.", type: "A", data: "203.0.113.10" };
+    const p = new ManualDnsProvider(resolverWith({ resolve4: vi.fn(async () => ["203.0.113.10"]) }));
+    expect(await p.verifyRecord("anchorcorps.com", aRecord)).toBe(true);
+  });
+
+  it("verifyRecord is true when a TXT lookup joins to the expected value", async () => {
+    const txtRecord = { name: "muldoon-dental.sites.anchorcorps.com.", type: "TXT", data: "google-site-verification=abc123" };
+    const p = new ManualDnsProvider(
+      resolverWith({ resolveTxt: vi.fn(async () => [["google-site-verification=", "abc123"]]) }),
+    );
+    expect(await p.verifyRecord("anchorcorps.com", txtRecord)).toBe(true);
+  });
 });
