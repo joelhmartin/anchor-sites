@@ -13,10 +13,14 @@ import { blockShape, validateBlocks, type BlockShape } from "../../blocks/valida
 import "../../blocks/index.js";
 import { proposeEdit } from "../ai/propose.js";
 import type { Block } from "../../blocks/types.js";
+import { seoFieldsSchema } from "../seo/schema.js";
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
-  seo: z.record(z.unknown()).optional(),
+  // P9-T9.1 (D-049): page SEO is now the shared, validated `seoFieldsSchema`
+  // (was an opaque `z.record(z.unknown())`). Unknown keys are stripped, so a
+  // legacy `{title, description}` blob still passes unchanged.
+  seo: seoFieldsSchema.optional(),
   source: z.string().max(64).optional(),
   // P3-T3.5: per-page brand-token override. `null` clears any existing
   // override; omitting the key leaves the column unchanged.

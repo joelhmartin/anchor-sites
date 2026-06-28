@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { blockShape } from "../../blocks/validate.js";
+import { seoFieldsSchema } from "../seo/schema.js";
 
 /**
  * Blog post input schemas (P8-T8.9, D-047). `body` is a `Block[]` (D-001) —
@@ -20,6 +21,7 @@ export const postInputSchema = z.object({
   title: z.string().min(1).max(200),
   excerpt: z.string().max(500).optional(),
   body: z.array(blockShape).default([]),
+  seo: seoFieldsSchema.default({}),
   status: postStatusSchema.default("draft"),
   author_id: z.string().optional(),
 });

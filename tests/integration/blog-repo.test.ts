@@ -108,6 +108,28 @@ d("blog repo (P8-T8.9)", () => {
     expect(await getPostBySlug(pool, siteB, "only-a")).toBeNull();
   });
 
+  it("persists and updates the seo blob (P9-T9.1)", async () => {
+    const created = await createPost(pool, siteA, {
+      slug: "seo-post",
+      title: "SEO",
+      body: BODY,
+      seo: { title: "Custom Title", description: "Custom desc", robots: { index: false, follow: true } },
+    });
+    expect(created.seo).toEqual({
+      title: "Custom Title",
+      description: "Custom desc",
+      robots: { index: false, follow: true },
+    });
+    // default is an empty blob, not null
+    const bare = await createPost(pool, siteA, { slug: "seo-bare", title: "Bare", body: BODY });
+    expect(bare.seo).toEqual({});
+    // patch
+    const patched = await updatePost(pool, siteA, created.id, {
+      seo: { canonical: "https://example.com/x" },
+    });
+    expect(patched?.seo).toEqual({ canonical: "https://example.com/x" });
+  });
+
   it("deletes a post (scoped)", async () => {
     const p = await createPost(pool, siteA, { slug: "to-delete", title: "D", body: BODY });
     expect(await deletePost(pool, siteB, p.id)).toBe(false); // wrong site → no-op
