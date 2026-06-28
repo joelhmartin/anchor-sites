@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { effectiveRobots, parseSeoLoose, seoFieldsSchema } from "./schema.js";
+import {
+  applyTitleTemplate,
+  effectiveRobots,
+  normalizeTwitterHandle,
+  parseSeoLoose,
+  parseSiteSeoDefaultsLoose,
+  seoFieldsSchema,
+  siteSeoDefaultsSchema,
+} from "./schema.js";
 
 describe("seoFieldsSchema (P9-T9.1, D-049)", () => {
   it("accepts an empty object (no SEO set)", () => {
@@ -67,5 +75,59 @@ describe("effectiveRobots", () => {
       index: false,
       follow: false,
     });
+  });
+});
+
+describe("siteSeoDefaultsSchema (P9-T9.3)", () => {
+  it("accepts an empty object", () => {
+    expect(siteSeoDefaultsSchema.parse({})).toEqual({});
+  });
+
+  it("accepts the full default set", () => {
+    const d = {
+      titleTemplate: "%s — Acme",
+      defaultDescription: "default",
+      defaultOgImageAssetId: "11111111-1111-1111-1111-111111111111",
+      twitterHandle: "@acme",
+    };
+    expect(siteSeoDefaultsSchema.parse(d)).toEqual(d);
+  });
+
+  it("accepts a twitter handle without @", () => {
+    expect(siteSeoDefaultsSchema.safeParse({ twitterHandle: "acme" }).success).toBe(true);
+  });
+
+  it("rejects an over-long twitter handle", () => {
+    expect(siteSeoDefaultsSchema.safeParse({ twitterHandle: "waytoolongforatwitterhandle" }).success).toBe(
+      false,
+    );
+  });
+
+  it("parseSiteSeoDefaultsLoose returns {} on garbage, never throws", () => {
+    expect(parseSiteSeoDefaultsLoose(null)).toEqual({});
+    expect(parseSiteSeoDefaultsLoose({ defaultOgImageAssetId: "nope" })).toEqual({});
+  });
+});
+
+describe("applyTitleTemplate", () => {
+  it("substitutes %s with the page title", () => {
+    expect(applyTitleTemplate("%s — Acme", "About")).toBe("About — Acme");
+  });
+
+  it("returns the page title unchanged when template is missing or has no %s", () => {
+    expect(applyTitleTemplate(undefined, "About")).toBe("About");
+    expect(applyTitleTemplate("Acme", "About")).toBe("About");
+  });
+});
+
+describe("normalizeTwitterHandle", () => {
+  it("adds a leading @ and is idempotent", () => {
+    expect(normalizeTwitterHandle("acme")).toBe("@acme");
+    expect(normalizeTwitterHandle("@acme")).toBe("@acme");
+  });
+
+  it("returns undefined for empty/undefined", () => {
+    expect(normalizeTwitterHandle(undefined)).toBeUndefined();
+    expect(normalizeTwitterHandle("")).toBeUndefined();
   });
 });

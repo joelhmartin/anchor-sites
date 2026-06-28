@@ -3,15 +3,18 @@ import { renderSeoMeta } from "../render-page.js";
 import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import type { SeoFields } from "./schema.js";
 
-const site = {
-  id: "s1",
-  slug: "acme",
-  display_name: "Acme Dental",
-  default_brand_tokens: {},
-  matched_via: "subdomain",
-  plugins: [],
-} as unknown as ResolvedSite;
+const makeSite = (seo_defaults: Record<string, unknown> = {}) =>
+  ({
+    id: "s1",
+    slug: "acme",
+    display_name: "Acme Dental",
+    default_brand_tokens: {},
+    seo_defaults,
+    matched_via: "subdomain",
+    plugins: [],
+  }) as unknown as ResolvedSite;
 
+const site = makeSite();
 const meta = (seo: SeoFields, path?: string) => renderSeoMeta(site, seo, { path });
 
 describe("renderSeoMeta (P9-T9.2, D-049)", () => {
@@ -80,5 +83,14 @@ describe("renderSeoMeta (P9-T9.2, D-049)", () => {
     const html = meta({});
     expect(html).toContain('<meta property="og:type" content="website" />');
     expect(html).toContain('<meta property="og:site_name" content="Acme Dental" />');
+  });
+
+  it("emits twitter:site from the site-level handle (P9-T9.3)", () => {
+    const html = renderSeoMeta(makeSite({ twitterHandle: "acme" }), {}, {});
+    expect(html).toContain('<meta name="twitter:site" content="@acme" />');
+  });
+
+  it("omits twitter:site when no site handle is set", () => {
+    expect(meta({})).not.toContain('name="twitter:site"');
   });
 });

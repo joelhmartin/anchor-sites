@@ -64,3 +64,40 @@ export function effectiveRobots(seo: SeoFields): Robots {
     follow: seo.robots?.follow ?? true,
   };
 }
+
+/**
+ * Site-level SEO defaults (P9-T9.3, D-049). Stored in `sites.seo_defaults`
+ * JSONB; apply UNDER per-page `seo` (page wins). `titleTemplate` uses `%s` as
+ * the page-title placeholder ("%s — Acme Dental"). `defaultOgImageAssetId` is a
+ * media `asset_id` used when a page sets no og:image (resolved in 9.4).
+ */
+export const siteSeoDefaultsSchema = z.object({
+  titleTemplate: z.string().max(120).optional(),
+  defaultDescription: z.string().max(320).optional(),
+  defaultOgImageAssetId: z.string().uuid().optional(),
+  twitterHandle: z
+    .string()
+    .regex(/^@?[A-Za-z0-9_]{1,15}$/, "twitter handle must be 1-15 word chars, optional leading @")
+    .optional(),
+});
+export type SiteSeoDefaults = z.infer<typeof siteSeoDefaultsSchema>;
+
+/** Tolerant parse of a stored `seo_defaults` blob — never throws. */
+export function parseSiteSeoDefaultsLoose(value: unknown): SiteSeoDefaults {
+  const result = siteSeoDefaultsSchema.safeParse(value ?? {});
+  return result.success ? result.data : {};
+}
+
+/** Apply the site `titleTemplate` to a page title. `%s` → page title; a
+ * template without `%s` is ignored (returns the page title unchanged). */
+export function applyTitleTemplate(template: string | undefined, pageTitle: string): string {
+  if (!template || !template.includes("%s")) return pageTitle;
+  return template.replace("%s", pageTitle);
+}
+
+/** Normalize a twitter handle to its `@handle` form (or undefined). */
+export function normalizeTwitterHandle(handle: string | undefined): string | undefined {
+  if (!handle) return undefined;
+  const bare = handle.startsWith("@") ? handle.slice(1) : handle;
+  return bare ? `@${bare}` : undefined;
+}

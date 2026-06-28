@@ -87,6 +87,22 @@ d("page renderer catch-all (integration)", () => {
     expect(res.text).toMatch(/data-site-slug="demo-site"/);
   });
 
+  it("applies site-level SEO defaults (title template, twitter:site) — P9-T9.3", async () => {
+    await pool.query(
+      `UPDATE sites SET seo_defaults = $1::jsonb WHERE slug = 'demo-site'`,
+      [JSON.stringify({ titleTemplate: "%s · Demo Co", twitterHandle: "democo" })],
+    );
+    __clearResolveSiteCacheForTests();
+    const res = await request(app).get("/").set("Host", "demo-site.sites.anchorcorps.com");
+    expect(res.status).toBe(200);
+    // title wrapped by the template
+    expect(res.text).toMatch(/<title>[^<]+ · Demo Co<\/title>/);
+    expect(res.text).toContain('<meta name="twitter:site" content="@democo" />');
+    // reset so other tests see a clean default
+    await pool.query(`UPDATE sites SET seo_defaults = '{}'::jsonb WHERE slug = 'demo-site'`);
+    __clearResolveSiteCacheForTests();
+  });
+
   it("returns 404 (site-shelled) for an unknown slug on a known site", async () => {
     const res = await request(app)
       .get("/this-page-does-not-exist")

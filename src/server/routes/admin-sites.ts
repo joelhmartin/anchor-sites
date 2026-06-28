@@ -7,6 +7,7 @@ import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js"
 import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 import { evictSiteCache } from "../../middleware/resolveSite.js";
 import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-site.js";
+import { siteSeoDefaultsSchema } from "../seo/schema.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -27,10 +28,19 @@ const patchSitePayload = z
   .object({
     display_name: z.string().min(1).max(200).optional(),
     default_brand_tokens: brandTokensSchema.optional(),
+    // P9-T9.3 — site-level SEO defaults (titleTemplate, defaultDescription,
+    // defaultOgImageAssetId, twitterHandle).
+    seo_defaults: siteSeoDefaultsSchema.optional(),
   })
-  .refine((v) => v.display_name !== undefined || v.default_brand_tokens !== undefined, {
-    message: "at least one of display_name or default_brand_tokens is required",
-  });
+  .refine(
+    (v) =>
+      v.display_name !== undefined ||
+      v.default_brand_tokens !== undefined ||
+      v.seo_defaults !== undefined,
+    {
+      message: "at least one of display_name, default_brand_tokens or seo_defaults is required",
+    },
+  );
 
 const createPagePayload = z.object({
   slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen"),
@@ -129,7 +139,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         const { siteId } = req.params;
         const result = await pool.query(
           `SELECT s.id, s.slug, s.display_name, s.status,
-                  s.default_brand_tokens, s.created_at,
+                  s.default_brand_tokens, s.seo_defaults, s.created_at,
                   (SELECT COUNT(*)::int FROM pages WHERE site_id = s.id) AS pages_count,
                   (SELECT COUNT(*)::int FROM media_assets WHERE site_id = s.id) AS media_count
              FROM sites s
@@ -190,17 +200,19 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         return;
       }
       const { siteId } = req.params;
-      const { display_name, default_brand_tokens } = parsed.data;
+      const { display_name, default_brand_tokens, seo_defaults } = parsed.data;
       try {
         const result = await pool.query<{ id: string }>(
           `UPDATE sites
               SET display_name = COALESCE($1, display_name),
-                  default_brand_tokens = COALESCE($2::jsonb, default_brand_tokens)
-            WHERE id = $3
+                  default_brand_tokens = COALESCE($2::jsonb, default_brand_tokens),
+                  seo_defaults = COALESCE($3::jsonb, seo_defaults)
+            WHERE id = $4
             RETURNING id`,
           [
             display_name ?? null,
             default_brand_tokens ? JSON.stringify(default_brand_tokens) : null,
+            seo_defaults ? JSON.stringify(seo_defaults) : null,
             siteId,
           ],
         );
@@ -217,7 +229,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         for (const row of hosts.rows) evictSiteCache(row.hostname);
 
         const updated = await pool.query(
-          `SELECT id, slug, display_name, status, default_brand_tokens, created_at FROM sites WHERE id = $1`,
+          `SELECT id, slug, display_name, status, default_brand_tokens, seo_defaults, created_at FROM sites WHERE id = $1`,
           [siteId],
         );
         res.json({ site: updated.rows[0] });
