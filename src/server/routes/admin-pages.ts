@@ -366,7 +366,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
-  // POST /api/sites/:siteId/provision — add Kinsta CNAME + Cloud Run mapping
+  // POST /api/sites/:siteId/provision — add DNS records + Cloud Run mapping
   // POST /api/sites/provision         — same, but take slug in body
   // -------------------------------------------------------------------------
   // Long-running (cert wait can take 20+ min) → not behind the save limiter.

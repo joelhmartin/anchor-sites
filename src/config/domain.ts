@@ -10,9 +10,9 @@
  *     a single env-var change plus a re-seed.
  *
  *   - `SITES_DOMAIN_REGISTRABLE` — the registrable apex the wildcard lives
- *     beneath. Defaults to `anchorcorps.com`. The Kinsta DNS client uses
- *     this to look up the zone via `/v2/domains?company=...`. Search Console
- *     ownership verification also lives at this level.
+ *     beneath. Defaults to `anchorcorps.com`. This is the DNS zone the
+ *     configured DnsProvider writes records into. Search Console ownership
+ *     verification also lives at this level.
  *
  * Helpers (`hostnameForSlug`, `subdomainPattern`, `isUnderSitesDomain`) are
  * the only API call sites should use — never hand-build hostnames.

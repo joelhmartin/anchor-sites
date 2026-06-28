@@ -22,7 +22,7 @@ describe("resolveDnsProvider", () => {
     );
   });
   it("throws on an unrecognized DNS_PROVIDER value", () => {
-    expect(() => resolveDnsProvider({ ...GD, DNS_PROVIDER: "kinsta" } as NodeJS.ProcessEnv)).toThrow(
+    expect(() => resolveDnsProvider({ ...GD, DNS_PROVIDER: "invalid-provider" } as NodeJS.ProcessEnv)).toThrow(
       /Unknown DNS_PROVIDER/,
     );
   });
