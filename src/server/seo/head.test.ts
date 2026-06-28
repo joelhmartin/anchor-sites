@@ -93,4 +93,21 @@ describe("renderSeoMeta (P9-T9.2, D-049)", () => {
   it("omits twitter:site when no site handle is set", () => {
     expect(meta({})).not.toContain('name="twitter:site"');
   });
+
+  it("emits og:image + twitter:image + dimensions when an og image is resolved (P9-T9.4)", () => {
+    const html = renderSeoMeta(
+      site,
+      {},
+      { ogImage: { url: "https://cdn/x.jpg", width: 1200, height: 630, alt: "Hero" } },
+    );
+    expect(html).toContain('<meta property="og:image" content="https://cdn/x.jpg" />');
+    expect(html).toContain('<meta property="og:image:width" content="1200" />');
+    expect(html).toContain('<meta property="og:image:height" content="630" />');
+    expect(html).toContain('<meta property="og:image:alt" content="Hero" />');
+    expect(html).toContain('<meta name="twitter:image" content="https://cdn/x.jpg" />');
+  });
+
+  it("omits og:image when none is resolved", () => {
+    expect(meta({})).not.toContain('property="og:image"');
+  });
 });

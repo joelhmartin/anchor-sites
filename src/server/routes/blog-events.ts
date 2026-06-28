@@ -3,11 +3,14 @@ import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
 import { isAdminHost } from "../../config/admin-host.js";
-import { renderNotFound, renderPage, type PageRecord } from "../render-page.js";
+import { canonicalUrl, renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import type { Block } from "../../blocks/types.js";
 import { getPostBySlug, listPosts } from "../blog/repo.js";
 import { getEventBySlug, listEvents } from "../events/repo.js";
+import { loadOgImage, type OgImage } from "../seo/og-image.js";
+import { parseSeoLoose, parseSiteSeoDefaultsLoose } from "../seo/schema.js";
+import { blogPostingLd, eventLd } from "../seo/json-ld.js";
 import "../../blocks/index.js"; // side-effect: register blocks for SSR
 
 /**
@@ -45,7 +48,12 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
     siteId: string,
     title: string,
     blocks: Block[],
-    extra: { seo?: Record<string, unknown>; path?: string } = {},
+    extra: {
+      seo?: Record<string, unknown>;
+      path?: string;
+      ogImage?: OgImage;
+      extraJsonLd?: Array<Record<string, unknown>>;
+    } = {},
   ): Promise<void> {
     const record: PageRecord = {
       title,
@@ -54,8 +62,22 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
       brand_tokens_override: {},
     };
     const assets = await loadAssetsForBlocks(pool, siteId, blocks);
-    const { html, status } = renderPage(req.site!, record, { assets, path: extra.path ?? req.path });
+    const { html, status } = renderPage(req.site!, record, {
+      assets,
+      path: extra.path ?? req.path,
+      ogImage: extra.ogImage,
+      extraJsonLd: extra.extraJsonLd,
+    });
     res.status(status).type("text/html").send(html);
+  }
+
+  /** Resolve a post/event's og:image: its own seo asset, else the site default. */
+  async function resolveOg(
+    site: { id: string; seo_defaults: Record<string, unknown> },
+    seo: ReturnType<typeof parseSeoLoose>,
+  ): Promise<OgImage | null> {
+    const defaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
+    return loadOgImage(pool, site.id, seo.og?.imageAssetId ?? defaults.defaultOgImageAssetId);
   }
 
   function indexBlock(id: string, html: string): Block[] {
@@ -92,9 +114,23 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
         res.status(status).type("text/html").send(html);
         return;
       }
+      const postSeo = parseSeoLoose(post.seo);
+      const ogImage = await resolveOg(site, postSeo);
+      const path = `/blog/${post.slug}`;
+      const url = canonicalUrl(site, postSeo, path);
+      const ld = blogPostingLd({
+        site,
+        headline: post.title,
+        description: postSeo.description,
+        url: url ?? path,
+        image: ogImage?.url,
+        datePublished: post.published_at,
+      });
       await renderBlocks(req, res, site.id, post.title, post.body as unknown as Block[], {
         seo: post.seo,
-        path: `/blog/${post.slug}`,
+        path,
+        ogImage: ogImage ?? undefined,
+        extraJsonLd: [ld],
       });
     } catch (err) {
       next(err);
@@ -133,9 +169,24 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
         res.status(status).type("text/html").send(html);
         return;
       }
+      const eventSeo = parseSeoLoose(event.seo);
+      const ogImage = await resolveOg(site, eventSeo);
+      const path = `/events/${event.slug}`;
+      const url = canonicalUrl(site, eventSeo, path);
+      const ld = eventLd({
+        name: event.title,
+        description: eventSeo.description,
+        url: url ?? path,
+        image: ogImage?.url,
+        startDate: event.starts_at,
+        endDate: event.ends_at,
+        location: event.location,
+      });
       await renderBlocks(req, res, site.id, event.title, event.description as unknown as Block[], {
         seo: event.seo,
-        path: `/events/${event.slug}`,
+        path,
+        ogImage: ogImage ?? undefined,
+        extraJsonLd: [ld],
       });
     } catch (err) {
       next(err);

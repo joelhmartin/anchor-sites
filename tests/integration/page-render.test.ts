@@ -76,6 +76,11 @@ d("page renderer catch-all (integration)", () => {
     );
     expect(res.text).toContain('<meta name="robots" content="index,follow" />');
     expect(res.text).toContain('<meta property="og:type" content="website" />');
+    // P9-T9.4 — JSON-LD baseline (Organization + WebSite + WebPage)
+    expect(res.text).toContain('<script type="application/ld+json">');
+    expect(res.text).toContain('"@type":"Organization"');
+    expect(res.text).toContain('"@type":"WebSite"');
+    expect(res.text).toContain('"@type":"WebPage"');
   });
 
   it("demo home renders different content + different brand tokens", async () => {

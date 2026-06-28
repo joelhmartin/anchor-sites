@@ -5,6 +5,8 @@ import { resolveSite } from "../../middleware/resolveSite.js";
 import { isAdminHost } from "../../config/admin-host.js";
 import { renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
+import { loadOgImage } from "../seo/og-image.js";
+import { parseSeoLoose, parseSiteSeoDefaultsLoose } from "../seo/schema.js";
 // Side-effect: register the three static block types so SSR can resolve them.
 import "../../blocks/index.js";
 
@@ -56,7 +58,18 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
         req.site.id,
         result.rows[0].blocks,
       );
-      const { html, status } = renderPage(req.site, result.rows[0], { assets, path: req.path });
+      const pageSeo = parseSeoLoose(result.rows[0].seo);
+      const siteDefaults = parseSiteSeoDefaultsLoose(req.site.seo_defaults);
+      const ogImage = await loadOgImage(
+        pool,
+        req.site.id,
+        pageSeo.og?.imageAssetId ?? siteDefaults.defaultOgImageAssetId,
+      );
+      const { html, status } = renderPage(req.site, result.rows[0], {
+        assets,
+        path: req.path,
+        ogImage: ogImage ?? undefined,
+      });
       res.status(status).type("text/html").send(html);
     } catch (err) {
       next(err);
