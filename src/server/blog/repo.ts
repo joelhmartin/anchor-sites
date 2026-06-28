@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import "../../blocks/index.js"; // side-effect: populate the block registry for validateBlocks (D-039)
 import { validateBlocks, type BlockShape, type ValidationFailure } from "../../blocks/validate.js";
 import { postInputSchema, postPatchSchema, type PostInput, type PostPatch } from "./schema.js";
+import type { SeoFields } from "../seo/schema.js";
 
 /**
  * Blog repository (P8-T8.9, D-047). Pool-injected; EVERY query is scoped by
@@ -15,6 +16,7 @@ export type Post = {
   title: string;
   excerpt: string | null;
   body: BlockShape[];
+  seo: SeoFields;
   status: "draft" | "published";
   published_at: string | null;
   author_id: string | null;
@@ -41,7 +43,7 @@ function assertValidBody(body: BlockShape[]): void {
   if (failures.length > 0) throw new InvalidPostBodyError(failures);
 }
 
-const COLS = `id, site_id, slug, title, excerpt, body, status,
+const COLS = `id, site_id, slug, title, excerpt, body, seo, status,
   to_char(published_at, 'YYYY-MM-DD"T"HH24:MI:SS.MSZ') AS published_at,
   author_id,
   to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MSZ') AS created_at,
@@ -59,10 +61,10 @@ export async function createPost(pool: Pool, siteId: string, input: PostInput): 
   assertValidBody(data.body);
   try {
     const res = await pool.query<Post>(
-      `INSERT INTO posts (site_id, slug, title, excerpt, body, status, published_at, author_id)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6, CASE WHEN $6 = 'published' THEN now() ELSE NULL END, $7)
+      `INSERT INTO posts (site_id, slug, title, excerpt, body, seo, status, published_at, author_id)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7, CASE WHEN $7 = 'published' THEN now() ELSE NULL END, $8)
        RETURNING ${COLS}`,
-      [siteId, data.slug, data.title, data.excerpt ?? null, JSON.stringify(data.body), data.status, data.author_id ?? null],
+      [siteId, data.slug, data.title, data.excerpt ?? null, JSON.stringify(data.body), JSON.stringify(data.seo), data.status, data.author_id ?? null],
     );
     return res.rows[0];
   } catch (err) {
@@ -127,6 +129,10 @@ export async function updatePost(
   if (data.body !== undefined) {
     params.push(JSON.stringify(data.body));
     sets.push(`body = $${params.length}::jsonb`);
+  }
+  if (data.seo !== undefined) {
+    params.push(JSON.stringify(data.seo));
+    sets.push(`seo = $${params.length}::jsonb`);
   }
   if (data.author_id !== undefined) add("author_id", data.author_id);
   if (data.status !== undefined) {

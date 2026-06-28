@@ -91,6 +91,28 @@ d("events repo (P8-T8.10)", () => {
     ).rejects.toThrow(InvalidEventDescriptionError);
   });
 
+  it("persists and updates the seo blob (P9-T9.1)", async () => {
+    const created = await createEvent(pool, siteA, {
+      slug: "seo-event",
+      title: "SEO Event",
+      description: DESC,
+      starts_at: new Date("2027-01-01T00:00:00Z"),
+      seo: { title: "Gala SEO", og: { title: "Come!" } },
+    });
+    expect(created.seo).toEqual({ title: "Gala SEO", og: { title: "Come!" } });
+    const bare = await createEvent(pool, siteA, {
+      slug: "seo-bare-event",
+      title: "Bare",
+      description: DESC,
+      starts_at: new Date("2027-02-01T00:00:00Z"),
+    });
+    expect(bare.seo).toEqual({});
+    const patched = await updateEvent(pool, siteA, created.id, {
+      seo: { description: "updated" },
+    });
+    expect(patched?.seo).toEqual({ description: "updated" });
+  });
+
   it("updates and scopes reads/deletes by site_id", async () => {
     const e = await createEvent(pool, siteA, { slug: "movable", title: "M", description: DESC, starts_at: new Date("2026-12-01T00:00:00Z") });
     const updated = await updateEvent(pool, siteA, e.id, { status: "published", location: "Hall A" });

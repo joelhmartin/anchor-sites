@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import "../../blocks/index.js"; // side-effect: populate the block registry for validateBlocks (D-039)
 import { validateBlocks, type BlockShape, type ValidationFailure } from "../../blocks/validate.js";
 import { eventInputSchema, eventPatchSchema, type EventInput, type EventPatch } from "./schema.js";
+import type { SeoFields } from "../seo/schema.js";
 
 /**
  * Events repository (P8-T8.10, D-047). Pool-injected; every query scoped by
@@ -17,6 +18,7 @@ export type EventRecord = {
   starts_at: string;
   ends_at: string | null;
   location: string | null;
+  seo: SeoFields;
   status: "draft" | "published";
   created_at: string;
   updated_at: string;
@@ -43,7 +45,7 @@ function assertValidDescription(desc: BlockShape[]): void {
 
 const ISO = (col: string) => `to_char(${col}, 'YYYY-MM-DD"T"HH24:MI:SS.MSZ')`;
 const COLS = `id, site_id, slug, title, description, ${ISO("starts_at")} AS starts_at,
-  ${ISO("ends_at")} AS ends_at, location, status,
+  ${ISO("ends_at")} AS ends_at, location, seo, status,
   ${ISO("created_at")} AS created_at, ${ISO("updated_at")} AS updated_at`;
 
 function isUniqueViolation(err: unknown, constraint: string): boolean {
@@ -62,8 +64,8 @@ export async function createEvent(
   assertValidDescription(data.description);
   try {
     const res = await pool.query<EventRecord>(
-      `INSERT INTO events (site_id, slug, title, description, starts_at, ends_at, location, status)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8) RETURNING ${COLS}`,
+      `INSERT INTO events (site_id, slug, title, description, starts_at, ends_at, location, seo, status)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9) RETURNING ${COLS}`,
       [
         siteId,
         data.slug,
@@ -72,6 +74,7 @@ export async function createEvent(
         data.starts_at.toISOString(),
         data.ends_at ? data.ends_at.toISOString() : null,
         data.location ?? null,
+        JSON.stringify(data.seo),
         data.status,
       ],
     );
@@ -148,6 +151,10 @@ export async function updateEvent(
   if (data.starts_at !== undefined) add("starts_at", data.starts_at.toISOString());
   if (data.ends_at !== undefined) add("ends_at", data.ends_at ? data.ends_at.toISOString() : null);
   if (data.location !== undefined) add("location", data.location);
+  if (data.seo !== undefined) {
+    params.push(JSON.stringify(data.seo));
+    sets.push(`seo = $${params.length}::jsonb`);
+  }
   if (data.status !== undefined) add("status", data.status);
   if (sets.length === 0) return getEventById(pool, siteId, id);
 
