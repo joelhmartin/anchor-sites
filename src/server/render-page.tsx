@@ -18,6 +18,8 @@ import {
   parseSiteSeoDefaultsLoose,
   type SeoFields,
 } from "./seo/schema.js";
+import type { OgImage } from "./seo/og-image.js";
+import { organizationLd, renderJsonLd, webPageLd, webSiteLd } from "./seo/json-ld.js";
 
 /**
  * Inline the @anchorcorps/components prebuilt CSS bundle + the inline
@@ -82,33 +84,44 @@ function metaTag(attr: "name" | "property", key: string, content: string | undef
   return content ? `<meta ${attr}="${key}" content="${escapeHtml(content)}" />` : "";
 }
 
+/** Absolute canonical base for a tenant, e.g. `https://acme.sites.anchorcorps.com`. */
+export function siteBaseUrl(site: ResolvedSite): string | undefined {
+  try {
+    return `https://${hostnameForSlug(site.slug)}`;
+  } catch {
+    return undefined; // unreachable for valid slugs; never block render
+  }
+}
+
+/** Canonical URL for a page: explicit `seo.canonical` wins, else tenant host + path. */
+export function canonicalUrl(
+  site: ResolvedSite,
+  seo: SeoFields,
+  path: string | undefined,
+): string | undefined {
+  if (seo.canonical) return seo.canonical;
+  const base = siteBaseUrl(site);
+  return base ? `${base}${canonicalPath(path)}` : undefined;
+}
+
 /**
- * P9-T9.2 (D-049) — emit canonical, robots, Open Graph and Twitter tags from a
- * page's `seo` blob. `og:image` (a media `asset_id`) and JSON-LD are layered on
- * in 9.4. Canonical defaults to the page's canonical tenant URL unless the
- * operator set an explicit `seo.canonical`.
+ * P9-T9.2/9.4 (D-049) — emit canonical, robots, Open Graph (incl. og:image),
+ * and Twitter tags from a page's `seo` blob + the resolved og:image.
  */
 export function renderSeoMeta(
   site: ResolvedSite,
   seo: SeoFields,
-  opts: { path?: string } = {},
+  opts: { path?: string; canonical?: string; ogImage?: OgImage } = {},
 ): string {
   const robots = effectiveRobots(seo);
   const robotsContent = `${robots.index ? "index" : "noindex"},${robots.follow ? "follow" : "nofollow"}`;
-
-  let canonical = seo.canonical;
-  if (!canonical) {
-    try {
-      canonical = `https://${hostnameForSlug(site.slug)}${canonicalPath(opts.path)}`;
-    } catch {
-      canonical = undefined; // unreachable for valid slugs; never block render
-    }
-  }
+  const canonical = opts.canonical ?? canonicalUrl(site, seo, opts.path);
 
   const siteDefaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
   const ogTitle = seo.og?.title || seo.title || site.display_name;
   const ogDescription = seo.og?.description || seo.description;
   const twitterSite = normalizeTwitterHandle(siteDefaults.twitterHandle);
+  const img = opts.ogImage;
 
   return [
     `<meta name="robots" content="${robotsContent}" />`,
@@ -118,10 +131,15 @@ export function renderSeoMeta(
     metaTag("property", "og:title", ogTitle),
     metaTag("property", "og:description", ogDescription),
     canonical ? metaTag("property", "og:url", canonical) : "",
+    img ? metaTag("property", "og:image", img.url) : "",
+    img?.width ? metaTag("property", "og:image:width", String(img.width)) : "",
+    img?.height ? metaTag("property", "og:image:height", String(img.height)) : "",
+    img?.alt ? metaTag("property", "og:image:alt", img.alt) : "",
     metaTag("name", "twitter:card", seo.twitter?.card ?? "summary_large_image"),
     metaTag("name", "twitter:site", twitterSite),
     metaTag("name", "twitter:title", ogTitle),
     metaTag("name", "twitter:description", ogDescription),
+    img ? metaTag("name", "twitter:image", img.url) : "",
   ]
     .filter(Boolean)
     .join("\n  ");
@@ -191,7 +209,14 @@ function renderShellContent(site: ResolvedSite, inner: ReactElement): string {
 export function renderPage(
   site: ResolvedSite,
   page: PageRecord,
-  opts: { assets?: MediaAssetData[]; path?: string } = {},
+  opts: {
+    assets?: MediaAssetData[];
+    path?: string;
+    /** P9-T9.4 — resolved og:image (route loads it from the seo asset_id). */
+    ogImage?: OgImage;
+    /** P9-T9.4 — extra JSON-LD nodes (BlogPosting / Event) from the route. */
+    extraJsonLd?: Array<Record<string, unknown>>;
+  } = {},
 ): { html: string; status: number } {
   const pageSeo = parseSeoLoose(page.seo);
   const siteDefaults = parseSiteSeoDefaultsLoose(site.seo_defaults);
@@ -201,6 +226,24 @@ export function renderPage(
   const seo: SeoFields = { ...pageSeo, description };
   const baseTitle = pageSeo.title || page.title || site.display_name;
   const title = applyTitleTemplate(siteDefaults.titleTemplate, baseTitle);
+  const canonical = canonicalUrl(site, seo, opts.path);
+  const ogImage = opts.ogImage;
+
+  // P9-T9.4 — Organization + WebSite + WebPage baseline, plus any route-supplied
+  // BlogPosting/Event nodes.
+  const baseUrl = siteBaseUrl(site);
+  const jsonLd = renderJsonLd([
+    baseUrl ? organizationLd(site, baseUrl) : null,
+    baseUrl ? webSiteLd(site, baseUrl) : null,
+    webPageLd({
+      name: baseTitle,
+      description,
+      url: canonical ?? baseUrl ?? "",
+      image: ogImage?.url,
+    }),
+    ...(opts.extraJsonLd ?? []),
+  ]);
+
   const bodyHtml = renderShellContent(
     site,
     // P3-T3.14 — wrap BlockRenderer in MediaProvider so the Image
@@ -211,6 +254,7 @@ export function renderPage(
       <BlockRenderer blocks={page.blocks ?? []} />
     </MediaProvider>,
   );
+  const seoMeta = renderSeoMeta(site, seo, { canonical, ogImage });
   return shell({
     site,
     title,
@@ -218,7 +262,7 @@ export function renderPage(
     bodyHtml,
     status: 200,
     pageOverride: page.brand_tokens_override ?? null,
-    headExtra: renderSeoMeta(site, seo, { path: opts.path }),
+    headExtra: jsonLd ? `${seoMeta}\n  ${jsonLd}` : seoMeta,
   });
 }
 

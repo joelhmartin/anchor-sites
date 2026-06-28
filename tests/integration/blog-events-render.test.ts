@@ -72,6 +72,15 @@ d("public blog/events rendering (P8-T8.11)", () => {
     expect(res.text).toContain("ac-rich-text");
   });
 
+  it("/blog/:slug emits BlogPosting JSON-LD + a self canonical (P9-T9.4)", async () => {
+    const res = await request(app).get("/blog/hello-world").set("Host", HOST);
+    expect(res.text).toContain('"@type":"BlogPosting"');
+    expect(res.text).toContain('"headline":"Hello World"');
+    expect(res.text).toContain(
+      '<link rel="canonical" href="https://muldoon-dental.sites.anchorcorps.com/blog/hello-world" />',
+    );
+  });
+
   it("a draft post is not publicly reachable (404)", async () => {
     const res = await request(app).get("/blog/secret-draft").set("Host", HOST);
     expect(res.status).toBe(404);
@@ -86,6 +95,10 @@ d("public blog/events rendering (P8-T8.11)", () => {
     const detail = await request(app).get("/events/launch").set("Host", HOST);
     expect(detail.status).toBe(200);
     expect(detail.text).toContain("Hello world body");
+    // P9-T9.4 — Event JSON-LD with startDate + Place location
+    expect(detail.text).toContain('"@type":"Event"');
+    expect(detail.text).toContain('"startDate":"2026-08-01');
+    expect(detail.text).toContain('"location":{"@type":"Place","name":"HQ"}');
   });
 
   it("falls through on an unknown host (does not hijack non-tenant requests)", async () => {
