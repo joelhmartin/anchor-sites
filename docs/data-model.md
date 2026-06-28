@@ -143,6 +143,13 @@ Plugins own their OWN tables, prefixed `plg_<name>_`, created by the plugin's ow
 - **`events`** (P8-T8.10) — per-site events (`site_id` FK → `sites` CASCADE). `description jsonb` = `Block[]` (validated via D-039). `starts_at` (NOT NULL, ordering), `ends_at`, `location`, `status` CHECK `draft|published`. `UNIQUE(site_id, slug)`, `INDEX(site_id, starts_at)`. Repo: `src/server/events/{schema,repo}.ts`.
 
 > The full per-site auth/blog/events model — scoping (D-048), public rendering, provision copy-in, the Studio admin API + tabs, and the per-client-divergence boundary — is in **`docs/tenant-sites.md`** (D-047).
+
+## SEO (P9 — D-049)
+
+- **`pages.seo` / `posts.seo` / `events.seo`** (`jsonb`, default `'{}'`) — one shared `seoFieldsSchema` (`title`, `description`, `canonical`, `robots`, `og`, `twitter`); unknown keys stripped. `posts`/`events` columns added by `1747581000000_post_event_seo` (P9-T9.1).
+- **`sites.seo_defaults`** (`jsonb`, default `'{}'`, migration `1747582000000_site_seo_defaults`, P9-T9.3) — site-level defaults (`titleTemplate`, `defaultDescription`, `defaultOgImageAssetId`, `twitterHandle`) applied **under** per-page `seo`. Loaded onto `req.site` by `resolveSite`.
+
+> The full SEO model — head meta (canonical/robots/OG/Twitter), og:image media resolution, JSON-LD (Organization/WebSite/WebPage + BlogPosting + Event), dynamic `sitemap.xml` + `robots.txt`, and the editor SEO panel + Studio SEO tab — is in **`docs/seo.md`** (D-049).
 - **`media_assets`** / **`media_variants`** — GCS asset references and pre-generated image variant URLs. Added in Phase 3 per D-022.
 
 ## Migration commands
