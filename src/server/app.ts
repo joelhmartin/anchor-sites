@@ -6,6 +6,7 @@ import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 import { pageRouter } from "./routes/page.js";
 import { blogEventsRouter } from "./routes/blog-events.js";
+import { sitemapRouter } from "./routes/sitemap.js";
 import { adminPagesRouter } from "./routes/admin-pages.js";
 import { siteResolveRouter } from "./routes/site-resolve.js";
 import { mediaRouter } from "./routes/media.js";
@@ -100,6 +101,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // catch-all page renderer so these reserved paths resolve; non-matching paths
   // + admin/unknown hosts fall through.
   app.use(blogEventsRouter());
+
+  // P9-T9.5/9.6: per-tenant /sitemap.xml + /robots.txt. Before the catch-all so
+  // these reserved paths resolve; admin/unknown hosts fall through.
+  app.use(sitemapRouter());
 
   // Tenant page renderer. Registered last so all named admin/probe routes
   // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
