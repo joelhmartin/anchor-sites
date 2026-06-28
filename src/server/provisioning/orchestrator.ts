@@ -7,10 +7,9 @@
  *   1. Resolve site by ID, compute canonical hostname `<slug>.<base>`.
  *   2. UPSERT `site_domains` row so the renderer can resolve the hostname
  *      via the explicit-domain path immediately.
- *   3. Kinsta DNS: list records, skip if a CNAME by that name already
- *      exists; otherwise create CNAME → `ghs.googlehosted.com.` and poll
- *      the Kinsta operation to terminal status.
- *   4. Cloud Run: createIfMissing the domain mapping for the hostname.
+ *   3. Cloud Run: createIfMissing the domain mapping for the hostname.
+ *   4. DNS: read the records Cloud Run requires, then upsert each through
+ *      the configured DnsProvider (GoDaddy / manual / cloud-dns). Idempotent.
  *   5. (Optional) wait for the mapping to report Ready +
  *      CertificateProvisioned both True.
  *
@@ -26,13 +25,14 @@ import {
   hostnameForSlug,
   type DomainConfig,
 } from "../../config/domain.js";
-import { KinstaClient } from "../kinsta/client.js";
+import { resolveDnsProvider } from "../dns/resolve.js";
+import type { DnsProvider, DnsRecord } from "../dns/provider.js";
 import {
   CloudRunDomainsClient,
   type DomainMapping,
 } from "../gcloud/run-domains.js";
 
-export type ProvisionStep = "lookup" | "site_domains" | "kinsta" | "cloud_run" | "wait_ready";
+export type ProvisionStep = "lookup" | "site_domains" | "cloud_run" | "dns" | "wait_ready";
 
 export type ProvisionStepResult =
   | { step: ProvisionStep; status: "skipped"; detail: string }
@@ -50,7 +50,7 @@ export type ProvisionResult = {
 
 export type ProvisionOptions = {
   pool?: Pool;
-  kinsta?: KinstaClient;
+  dns?: DnsProvider;
   cloudRun?: CloudRunDomainsClient;
   domainConfig?: DomainConfig;
   /** Wait for Cloud Run cert to be ready before returning. Default false. */
@@ -91,7 +91,7 @@ export async function provisionSiteHostname(
   const steps: ProvisionStepResult[] = [];
 
   // ---- 1. Lookup -----------------------------------------------------
-  // Construct Kinsta/Cloud Run clients AFTER the lookup so a missing-site
+  // Construct DNS/Cloud Run clients AFTER the lookup so a missing-site
   // error surfaces before env-validation errors for the external clients.
   const siteRow = await pool.query<{ id: string; slug: string }>(
     `SELECT id, slug FROM sites WHERE id = $1`,
@@ -104,7 +104,7 @@ export async function provisionSiteHostname(
   const hostname = hostnameForSlug(slug, cfg);
   steps.push({ step: "lookup", status: "ok", detail: `slug=${slug} → ${hostname}` });
 
-  const kinsta = options.kinsta ?? new KinstaClient();
+  const dns = options.dns ?? resolveDnsProvider();
   const cloudRun = options.cloudRun ?? new CloudRunDomainsClient();
 
   // ---- 2. site_domains row -------------------------------------------
@@ -117,35 +117,8 @@ export async function provisionSiteHostname(
   evictSiteCache(hostname);
   steps.push({ step: "site_domains", status: "ok", detail: `upserted ${hostname}` });
 
-  // ---- 3. Kinsta DNS --------------------------------------------------
-  try {
-    const domainId = await kinsta.getDomainIdByName(cfg.registrable);
-    const records = await kinsta.listDnsRecords(domainId);
-    const wantName = hostname.endsWith(".") ? hostname : `${hostname}.`;
-    const existing = records.find(
-      (r) => r.type === "CNAME" && r.name.toLowerCase() === wantName.toLowerCase(),
-    );
-    if (existing) {
-      steps.push({
-        step: "kinsta",
-        status: "skipped",
-        detail: `CNAME for ${hostname} already present in Kinsta zone`,
-      });
-    } else {
-      const op = await kinsta.addCname(domainId, hostname, "ghs.googlehosted.com.");
-      steps.push({
-        step: "kinsta",
-        status: "ok",
-        detail: `CNAME ${hostname} → ghs.googlehosted.com. (kinsta op ${op.message})`,
-      });
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    steps.push({ step: "kinsta", status: "error", detail: msg });
-    return { site_id: siteId, slug, hostname, steps, ready: false };
-  }
-
-  // ---- 4. Cloud Run mapping ------------------------------------------
+  // ---- 3. Cloud Run mapping ------------------------------------------
+  // Created BEFORE DNS because the records we must set come FROM the mapping.
   let mapping: DomainMapping | undefined;
   try {
     mapping = await cloudRun.createIfMissing(hostname);
@@ -158,6 +131,44 @@ export async function provisionSiteHostname(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     steps.push({ step: "cloud_run", status: "error", detail: msg });
+    return { site_id: siteId, slug, hostname, steps, ready: false };
+  }
+
+  // ---- 4. DNS records (provider-driven) ------------------------------
+  try {
+    const required =
+      mapping.status?.resourceRecords && mapping.status.resourceRecords.length > 0
+        ? mapping.status.resourceRecords
+        : await cloudRun.getRequiredDnsRecords(hostname);
+
+    if (required.length === 0) {
+      steps.push({
+        step: "dns",
+        status: "skipped",
+        detail: `Cloud Run reported no DNS records yet for ${hostname}`,
+      });
+    } else {
+      const recs: DnsRecord[] = required.map((r) => ({
+        name: r.name ?? hostname,
+        type: (r.type ?? "CNAME").toUpperCase(),
+        data: r.rrdata ?? "",
+      }));
+      const results = await Promise.all(
+        recs.map((rec) => dns.ensureRecord(cfg.registrable, rec)),
+      );
+      const created = results.filter((x) => x === "created").length;
+      const external = results.filter((x) => x === "external").length;
+      const detail =
+        external > 0
+          ? `${dns.id}: ${external} record(s) to set manually — ${recs
+              .map((r) => `${r.name} ${r.type} ${r.data}`)
+              .join("; ")}`
+          : `${dns.id}: ${created} created, ${results.length - created} already present`;
+      steps.push({ step: "dns", status: created > 0 ? "ok" : "skipped", detail });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    steps.push({ step: "dns", status: "error", detail: msg });
     return { site_id: siteId, slug, hostname, steps, ready: false };
   }
 
