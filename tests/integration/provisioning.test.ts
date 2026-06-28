@@ -26,7 +26,29 @@ function makeDnsMock(ensure: EnsureResult = "created"): DnsProvider {
   } as unknown as DnsProvider;
 }
 
-function makeCloudRunMock(ready = true): CloudRunDomainsClient {
+type DnsRR = { name: string; type: string; rrdata: string };
+
+const CNAME_RECORD: DnsRR = {
+  name: "muldoon-dental.sites.anchorcorps.com.",
+  type: "CNAME",
+  rrdata: "ghs.googlehosted.com.",
+};
+
+type CloudRunMockOptions = {
+  ready?: boolean;
+  /** Records embedded in `mapping.status.resourceRecords` (primary path). */
+  resourceRecords?: DnsRR[];
+  /** Records returned by `getRequiredDnsRecords` (fallback path). */
+  fallbackRecords?: DnsRR[];
+};
+
+function makeCloudRunMock(
+  opts: boolean | CloudRunMockOptions = true,
+): CloudRunDomainsClient {
+  const o: CloudRunMockOptions = typeof opts === "boolean" ? { ready: opts } : opts;
+  const ready = o.ready ?? true;
+  const resourceRecords = o.resourceRecords ?? [CNAME_RECORD];
+  const fallbackRecords = o.fallbackRecords ?? resourceRecords;
   const mapping = {
     apiVersion: "domains.cloudrun.com/v1",
     kind: "DomainMapping",
@@ -42,19 +64,13 @@ function makeCloudRunMock(ready = true): CloudRunDomainsClient {
             { type: "Ready", status: "Unknown" },
             { type: "CertificateProvisioned", status: "Unknown" },
           ],
-      resourceRecords: [
-        {
-          name: "muldoon-dental.sites.anchorcorps.com.",
-          type: "CNAME",
-          rrdata: "ghs.googlehosted.com.",
-        },
-      ],
+      resourceRecords,
     },
   };
   return {
     createIfMissing: vi.fn(async () => mapping),
     waitForReady: vi.fn(async () => mapping),
-    getRequiredDnsRecords: vi.fn(async () => mapping.status.resourceRecords),
+    getRequiredDnsRecords: vi.fn(async () => fallbackRecords),
     get: vi.fn(async () => mapping),
   } as unknown as CloudRunDomainsClient;
 }
@@ -106,9 +122,53 @@ d("provisionSiteHostname (integration)", () => {
     expect(result.ready).toBe(true);
     expect(dns.ensureRecord).toHaveBeenCalledWith(
       "anchorcorps.com",
-      expect.objectContaining({ type: "CNAME", data: "ghs.googlehosted.com." }),
+      expect.objectContaining({
+        name: "muldoon-dental.sites.anchorcorps.com.",
+        type: "CNAME",
+        data: "ghs.googlehosted.com.",
+      }),
     );
     expect(cloudRun.createIfMissing).toHaveBeenCalledOnce();
+    // Primary path: resourceRecords is populated, so the fallback never runs.
+    expect(cloudRun.getRequiredDnsRecords).not.toHaveBeenCalled();
+  });
+
+  it("falls back to getRequiredDnsRecords when the mapping has no resourceRecords", async () => {
+    const dns = makeDnsMock("created");
+    // Mapping created with empty resourceRecords (common right after creation);
+    // the real records only come back from getRequiredDnsRecords.
+    const cloudRun = makeCloudRunMock({
+      ready: true,
+      resourceRecords: [],
+      fallbackRecords: [CNAME_RECORD],
+    });
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun, wait: true });
+
+    expect(cloudRun.getRequiredDnsRecords).toHaveBeenCalledOnce();
+    expect(dns.ensureRecord).toHaveBeenCalledWith(
+      "anchorcorps.com",
+      expect.objectContaining({
+        name: "muldoon-dental.sites.anchorcorps.com.",
+        type: "CNAME",
+        data: "ghs.googlehosted.com.",
+      }),
+    );
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("ok");
+  });
+
+  it("marks the dns step 'skipped' when Cloud Run reports no records at all", async () => {
+    const dns = makeDnsMock();
+    const cloudRun = makeCloudRunMock({
+      ready: true,
+      resourceRecords: [],
+      fallbackRecords: [],
+    });
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun, wait: true });
+
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("skipped");
+    expect(dns.ensureRecord).not.toHaveBeenCalled();
   });
 
   it("marks the dns step 'skipped' when the record already exists", async () => {
