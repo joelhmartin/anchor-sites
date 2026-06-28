@@ -1,12 +1,12 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
-import { isAdminHost } from "../../config/admin-host.js";
+import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
-import { loadOgImage } from "../seo/og-image.js";
-import { parseSeoLoose, parseSiteSeoDefaultsLoose } from "../seo/schema.js";
+import { resolveOgImage } from "../seo/og-image.js";
+import { parseSeoLoose } from "../seo/schema.js";
 // Side-effect: register the three static block types so SSR can resolve them.
 import "../../blocks/index.js";
 
@@ -15,15 +15,10 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
   const router = Router();
 
   // The admin control hub (studio.anchorcorps.com / studio.localhost) is
-  // never a tenant — short-circuit before resolveSite so it's always
-  // served by the downstream SPA, even if a stray site_domains row existed
-  // for that hostname (D-032 / P4-T4.1).
-  router.use((req: Request, _res: Response, next: NextFunction) => {
-    if (isAdminHost(req.headers.host)) {
-      req.isAdminHost = true;
-    }
-    next();
-  });
+  // never a tenant — short-circuit before resolveSite so it's always served by
+  // the downstream SPA, even if a stray site_domains row existed for that
+  // hostname (D-032 / P4-T4.1).
+  router.use(flagAdminHost);
 
   router.use(resolveSite({ pool, passThroughOnMiss: true }));
 
@@ -51,20 +46,13 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
         return;
       }
 
-      // P3-T3.14 — hydrate media_assets referenced by the page's blocks
-      // before SSR so MediaProvider can resolve asset_ids.
-      const assets = await loadAssetsForBlocks(
-        pool,
-        req.site.id,
-        result.rows[0].blocks,
-      );
+      // P3-T3.14 — hydrate block media + P9-T9.4 resolve og:image. Both are
+      // independent DB reads, so run them concurrently (one round-trip latency).
       const pageSeo = parseSeoLoose(result.rows[0].seo);
-      const siteDefaults = parseSiteSeoDefaultsLoose(req.site.seo_defaults);
-      const ogImage = await loadOgImage(
-        pool,
-        req.site.id,
-        pageSeo.og?.imageAssetId ?? siteDefaults.defaultOgImageAssetId,
-      );
+      const [assets, ogImage] = await Promise.all([
+        loadAssetsForBlocks(pool, req.site.id, result.rows[0].blocks),
+        resolveOgImage(pool, req.site, pageSeo),
+      ]);
       const { html, status } = renderPage(req.site, result.rows[0], {
         assets,
         path: req.path,

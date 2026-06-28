@@ -42,6 +42,7 @@ export function SeoPanel({
         <span className={labelCls}>SEO title</span>
         <input
           className={inputCls}
+          maxLength={200}
           value={value.title ?? ""}
           onChange={(e) => set({ title: blank(e.target.value) })}
           placeholder="Defaults to the page title"
@@ -95,6 +96,7 @@ export function SeoPanel({
         <span className={labelCls}>Social share (Open Graph)</span>
         <input
           className={inputCls}
+          maxLength={200}
           value={value.og?.title ?? ""}
           onChange={(e) => setOg({ title: blank(e.target.value) })}
           placeholder="Share title (defaults to the SEO title)"
@@ -103,6 +105,7 @@ export function SeoPanel({
         <textarea
           className={inputCls}
           rows={2}
+          maxLength={320}
           value={value.og?.description ?? ""}
           onChange={(e) => setOg({ description: blank(e.target.value) })}
           placeholder="Share description"

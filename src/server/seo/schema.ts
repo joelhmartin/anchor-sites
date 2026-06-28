@@ -15,33 +15,39 @@ import { z } from "zod";
  * resolves to a CDN variant URL at render time (9.4), so og:image flows through
  * the same media pipeline as every other managed image.
  *
- * Unknown keys are STRIPPED (default Zod object behavior), not rejected, so a
- * save can never 400 on a stray legacy key.
+ * FIELD-TOLERANT: every field is `.catch()`-guarded, so a single malformed
+ * value (a hand-edited canonical that isn't a URL, a non-uuid og image, an
+ * unknown twitter card) is dropped INDIVIDUALLY rather than failing the whole
+ * blob. This matters in two directions: at render time one dirty field must not
+ * silently discard the rest of the SEO (e.g. leak a noindex page as indexable),
+ * and on save the whole content payload (blocks included) must never 400 over a
+ * stray SEO field. Unknown keys are stripped. Text fields keep no max length
+ * (the editor caps them client-side) so a long value is never silently lost.
  */
 
 export const robotsSchema = z.object({
-  index: z.boolean().default(true),
-  follow: z.boolean().default(true),
+  index: z.boolean().optional().catch(undefined),
+  follow: z.boolean().optional().catch(undefined),
 });
 export type Robots = z.infer<typeof robotsSchema>;
 
 export const ogSchema = z.object({
-  title: z.string().max(200).optional(),
-  description: z.string().max(320).optional(),
-  imageAssetId: z.string().uuid().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  imageAssetId: z.string().uuid().optional().catch(undefined),
 });
 
 export const twitterSchema = z.object({
-  card: z.enum(["summary", "summary_large_image"]).optional(),
+  card: z.enum(["summary", "summary_large_image"]).optional().catch(undefined),
 });
 
 export const seoFieldsSchema = z.object({
-  title: z.string().max(200).optional(),
-  description: z.string().max(320).optional(),
-  canonical: z.string().url().max(2048).optional(),
-  robots: robotsSchema.optional(),
-  og: ogSchema.optional(),
-  twitter: twitterSchema.optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  canonical: z.string().url().optional().catch(undefined),
+  robots: robotsSchema.optional().catch(undefined),
+  og: ogSchema.optional().catch(undefined),
+  twitter: twitterSchema.optional().catch(undefined),
 });
 
 /** Parsed, normalized SEO fields. */
@@ -72,13 +78,14 @@ export function effectiveRobots(seo: SeoFields): Robots {
  * media `asset_id` used when a page sets no og:image (resolved in 9.4).
  */
 export const siteSeoDefaultsSchema = z.object({
-  titleTemplate: z.string().max(120).optional(),
-  defaultDescription: z.string().max(320).optional(),
-  defaultOgImageAssetId: z.string().uuid().optional(),
+  titleTemplate: z.string().optional(),
+  defaultDescription: z.string().optional(),
+  defaultOgImageAssetId: z.string().uuid().optional().catch(undefined),
   twitterHandle: z
     .string()
     .regex(/^@?[A-Za-z0-9_]{1,15}$/, "twitter handle must be 1-15 word chars, optional leading @")
-    .optional(),
+    .optional()
+    .catch(undefined),
 });
 export type SiteSeoDefaults = z.infer<typeof siteSeoDefaultsSchema>;
 
@@ -89,10 +96,12 @@ export function parseSiteSeoDefaultsLoose(value: unknown): SiteSeoDefaults {
 }
 
 /** Apply the site `titleTemplate` to a page title. `%s` → page title; a
- * template without `%s` is ignored (returns the page title unchanged). */
+ * template without `%s` is ignored (returns the page title unchanged). Uses a
+ * function replacer so `$` sequences in the title (e.g. "Save $$ Today") are
+ * inserted literally, not interpreted as replacement-pattern specials. */
 export function applyTitleTemplate(template: string | undefined, pageTitle: string): string {
   if (!template || !template.includes("%s")) return pageTitle;
-  return template.replace("%s", pageTitle);
+  return template.replace("%s", () => pageTitle);
 }
 
 /** Normalize a twitter handle to its `@handle` form (or undefined). */
