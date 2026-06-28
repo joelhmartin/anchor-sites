@@ -9,6 +9,8 @@ import { Card, CardContent } from "../ui/card.js";
 import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
 import { Spinner } from "../ui/spinner.js";
+import { SeoPanel } from "../components/SeoPanel.js";
+import type { SeoFields } from "../../server/seo/schema.js";
 
 type EventDetail = {
   id: string;
@@ -19,6 +21,7 @@ type EventDetail = {
   starts_at: string;
   ends_at: string | null;
   location: string | null;
+  seo: Record<string, unknown> | null;
   status: "draft" | "published";
 };
 
@@ -78,6 +81,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const [endsAt, setEndsAt] = useState("");
   const [location, setLocation] = useState("");
   const [status, setStatus] = useState<"draft" | "published">("draft");
+  const [seo, setSeo] = useState<SeoFields>({});
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -89,6 +93,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
       setEndsAt(toLocalInput(event.ends_at));
       setLocation(event.location ?? "");
       setStatus(event.status);
+      setSeo((event.seo ?? {}) as SeoFields);
     }
   }, [event]);
 
@@ -105,6 +110,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
           location: location.trim() || undefined,
           status,
           description: blocks,
+          seo,
         },
       });
       setSavedAt(new Date().toISOString());
@@ -183,9 +189,11 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         </CardContent>
       </Card>
 
+      <SeoPanel siteId={siteId} value={seo} onChange={setSeo} />
+
       <p className="text-xs text-zinc-500">
         Edit the event description below, then use the editor’s <strong>Publish</strong> button to
-        save (details + description are saved together).
+        save (details, SEO, and description are saved together).
       </p>
 
       <BlockBodyEditor siteId={siteId} value={event.description ?? []} onPublish={save} />

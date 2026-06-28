@@ -17,7 +17,9 @@ function pickThumb(variants: Variant[] | null): Variant | null {
   return [...variants].sort((a, b) => a.width - b.width || (a.format === "webp" ? -1 : 1))[0];
 }
 
-function ImagePicker({
+/** Site media-library asset picker. Reused by the Puck image field and the
+ * SEO panel's og:image field (P9-T9.7). */
+export function ImagePicker({
   value,
   onChange,
   siteId,

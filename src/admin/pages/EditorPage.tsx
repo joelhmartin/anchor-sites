@@ -12,6 +12,8 @@ import { liveSiteUrl } from "../lib/siteUrl.js";
 import type { SiteListRow } from "../lib/siteTypes.js";
 import { Card, CardContent } from "../ui/card.js";
 import { Spinner } from "../ui/spinner.js";
+import { SeoPanel } from "../components/SeoPanel.js";
+import type { SeoFields } from "../../server/seo/schema.js";
 
 type PageDetail = {
   id: string;
@@ -273,6 +275,10 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
   );
   const [showRevisions, setShowRevisions] = useState(false);
   const [showAskAi, setShowAskAi] = useState(false);
+  const [showSeo, setShowSeo] = useState(false);
+  // SEO is editable in-panel; `seoOverride` holds unsaved edits, falling back to
+  // the loaded page.seo. Saved through the same POST body as blocks (P9-T9.7).
+  const [seoOverride, setSeoOverride] = useState<SeoFields | null>(null);
 
   // Config is derived from the shared block registry; siteId lets the media
   // picker custom field fetch this site's library.
@@ -302,7 +308,10 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
       const blocks = fromPuckData(liveData.current ?? initialData);
       const res = await apiFetch<{ page: { status: string } }>(
         `/api/sites/${siteId}/pages/${pageId}`,
-        { method: "POST", body: { blocks, seo: page.seo ?? {}, status: next, source: "editor" } },
+        {
+          method: "POST",
+          body: { blocks, seo: seoOverride ?? page.seo ?? {}, status: next, source: "editor" },
+        },
       );
       setStatusOverride(res.page.status);
       setSavedAt(new Date().toISOString());
@@ -312,7 +321,7 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteId, pageId, page, initialData, statusOverride]);
+  }, [siteId, pageId, page, initialData, statusOverride, seoOverride]);
 
   const handlePublish = useCallback(
     async (puckData: Parameters<typeof fromPuckData>[0]) => {
@@ -322,7 +331,7 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
         const blocks = fromPuckData(puckData);
         await apiFetch(`/api/sites/${siteId}/pages/${pageId}`, {
           method: "POST",
-          body: { blocks, seo: page?.seo ?? {}, source: "editor" },
+          body: { blocks, seo: seoOverride ?? page?.seo ?? {}, source: "editor" },
         });
         setSavedAt(new Date().toISOString());
       } catch (err) {
@@ -333,7 +342,7 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
         setSaving(false);
       }
     },
-    [siteId, pageId, page],
+    [siteId, pageId, page, seoOverride],
   );
 
   if (loading) return <CenteredSpinner label="Loading page…" />;
@@ -379,6 +388,14 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
           </button>
           <button
             type="button"
+            onClick={() => setShowSeo((v) => !v)}
+            aria-pressed={showSeo}
+            className="font-medium text-zinc-600 hover:text-zinc-800"
+          >
+            SEO
+          </button>
+          <button
+            type="button"
             onClick={() => setShowAskAi((v) => !v)}
             aria-pressed={showAskAi}
             className="font-medium text-indigo-600 hover:text-indigo-700"
@@ -404,8 +421,21 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
         </div>
       </div>
 
+      {showSeo && (
+        <SeoPanel
+          siteId={siteId}
+          value={(seoOverride ?? (page.seo ?? {})) as SeoFields}
+          onChange={setSeoOverride}
+        />
+      )}
+
       {showAskAi && pageId && (
-        <AskAiPanel siteId={siteId} pageId={pageId} seo={page.seo ?? {}} onApplied={reload} />
+        <AskAiPanel
+          siteId={siteId}
+          pageId={pageId}
+          seo={seoOverride ?? page.seo ?? {}}
+          onApplied={reload}
+        />
       )}
 
       {showRevisions && pageId && (
