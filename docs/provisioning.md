@@ -18,17 +18,28 @@ happen and is idempotent at every step, so it's safe to re-run.
         |  src/server/provisioning/orchestrator.ts
         +-----------+-----------+
                     |
-       +------------+------------+--------------------+
-       v                         v                    v
-+----------------+      +----------------+    +----------------+
-| 1. Postgres    |      | 2. DNS provider|    | 3. Cloud Run   |
-|  UPSERT site_  |      |  upsert records|    |  domain mapping|
-|  domains row   |      |  (GoDaddy/etc) |    |  for hostname  |
-+----------------+      +----------------+    +----------------+
+       (sequential: each step depends on the previous)
+                    |
+                    v
++----------------+     +----------------+     +----------------+
+| 1. Postgres    | --> | 2. Cloud Run   | --> | 3. DNS provider|
+|  UPSERT site_  |     |  domain mapping|     |  upsert records|
+|  domains row   |     |  for hostname  |     |  (GoDaddy/etc) |
++----------------+     +----------------+     +----------------+
+                              |                       |
+                       (mapping reports       (records read from
+                        required records)      mapping.status,
+                                               then upserted)
                                                        |
+                                                       v
                                               (optional 4. wait
                                                for cert ready)
 ```
+
+The order matters: the Cloud Run domain mapping is created **before** the
+DNS provider upsert, because the records the provider writes are read
+from `mapping.status.resourceRecords` (Cloud Run tells you which records
+it requires).
 
 Same code runs in two environments:
 

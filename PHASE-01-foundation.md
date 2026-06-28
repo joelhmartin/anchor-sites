@@ -273,7 +273,7 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - [x] **Full-slug hostnames**: `muldoon-dental.sites.anchorcorps.com`, `demo-site.sites.anchorcorps.com` (replacing the prefix-shortened forms).
 - [x] **DNS provider client** `src/server/dns/` — pluggable `DnsProvider` interface; GoDaddy backend (default when creds present), `manual` fallback, `cloud-dns` stub. The original Phase 1 implementation targeted the prior DNS host's v2 API; replaced with the provider model in the gcloud-dns refactor (2026-06-28).
 - [x] **GCP access token + Cloud Run domain mapping REST client** — works inside the Cloud Run container (metadata server) AND from local dev (`gcloud auth print-access-token`).
-- [x] **Provisioning orchestrator** `src/server/provisioning/orchestrator.ts` — 5-step idempotent flow (lookup → site_domains → DNS provider upsert → Cloud Run mapping → optional cert wait).
+- [x] **Provisioning orchestrator** `src/server/provisioning/orchestrator.ts` — 5-step idempotent flow (lookup → site_domains → DNS provider upsert → Cloud Run mapping → optional cert wait). _(Current DnsProvider model creates the Cloud Run mapping first — the provider reads the required records from `mapping.status.resourceRecords`. See docs/provisioning.md.)_
 - [x] **Admin API endpoint** `POST /api/sites/:siteId/provision` (+ slug variant `POST /api/sites/provision { slug }`) — X-Admin-Token gated.
 - [x] **Local CLI** `npm run provision -- --slug=X [--wait]` — same orchestrator, gcloud-session auth.
 - [x] **Secrets + IAM**: `GODADDY_API_KEY` + `GODADDY_API_SECRET` granted to the Cloud Run runtime SA (Secret Manager, project `anchor-hub-480305`). Runtime SA also given `roles/run.developer` so it can create domain mappings.
