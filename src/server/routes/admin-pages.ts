@@ -52,9 +52,9 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   const saveLimiter = rateLimit(
     opts.saveRateLimit ?? { max: 10, windowMs: 60_000 },
   );
-  // Separate, tighter-budgeted limiter for AI calls (each one can spend money).
+  // P12-T12.6: tighter limit for AI calls (each call costs money).
   const aiLimiter = rateLimit(
-    opts.aiEditRateLimit ?? { max: 30, windowMs: 60_000 },
+    opts.aiEditRateLimit ?? { max: 5, windowMs: 60_000 },
   );
 
   // requireAdmin is applied per-route (not router-level) so unmatched /api/*

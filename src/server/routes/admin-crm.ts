@@ -10,10 +10,13 @@ import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { resolveCrmClient } from "../crm/resolve.js";
 import type { CrmClient } from "../crm/client.js";
+import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 
 export type AdminCrmOptions = {
   pool?: Pool;
   crmClient?: CrmClient;
+  /** P12-T12.6 — injectable limit for phone-numbers proxy. Default 30/min. */
+  phoneRateLimit?: RateLimitOptions;
 };
 
 export function adminCrmRouter(opts: AdminCrmOptions = {}): Router {
@@ -21,11 +24,14 @@ export function adminCrmRouter(opts: AdminCrmOptions = {}): Router {
   const crmClient = opts.crmClient ?? resolveCrmClient(process.env);
   const router = Router();
   const admin = requireAdmin();
+  // P12-T12.6: rate-limit the CRM proxy to prevent fan-out abuse.
+  const phoneLimiter = rateLimit(opts.phoneRateLimit ?? { max: 30, windowMs: 60_000 });
 
   // GET /api/sites/:siteId/crm/phone-numbers
   router.get(
     "/sites/:siteId/crm/phone-numbers",
     admin,
+    phoneLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const { siteId } = req.params;
