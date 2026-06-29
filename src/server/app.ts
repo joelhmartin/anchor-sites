@@ -24,6 +24,7 @@ import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
 import type { StudioAuth } from "./auth/studio-auth.js";
 import { captureException } from "./sentry/index.js";
+import { buildCsp } from "./csp.js";
 
 export type CreateAppOptions = {
   /**
@@ -43,7 +44,7 @@ export type CreateAppOptions = {
 export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
 
-  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(helmet({ contentSecurityPolicy: { directives: buildCsp(process.env) } }));
   app.use(cors());
 
   // Studio Google-OAuth handler (D-034/D-046). MUST precede express.json() —
