@@ -104,8 +104,8 @@ A phase flips `pending-plan → ready` only once its plan doc is committed to `m
 
 | Phase | Title | Plan | Status | Branch / PR | Notes |
 |---|---|---|---|---|---|
-| P10 | Domain provisioning (Cloud Run mapping, DNS, SSL) | `2026-06-28-p10-domain-provisioning.md` | **in_review** | `feat/sites-p10-domain-provisioning` / PR #3 | Tasks 10.1-10.4 already in main (PR #2). This PR adds 10.5-10.9: domain CRUD API, provision/status endpoints, DomainsTab UI, canonical_domain_id in create-site response, docs/domains.md + D-050/D-051. Cold suite: 72 passed (vs 70 on main), 36 pre-existing failures unchanged, typecheck clean. |
-| P11 | CRM integration + CTM install | _(B preps)_ | **pending-plan** | — | Routine B writes the plan after P10 merges. CTM = CallTrackingMetrics (see the `ctm` skill / API). |
+| P10 | Domain provisioning (Cloud Run mapping, DNS, SSL) | `2026-06-28-p10-domain-provisioning.md` | **complete** | merged ee3e736 (PR #3) | Review fixes: primary-domain Provision button (was gated by !is_primary — only deletion blocked); client-owned domain provision uses ManualDnsProvider (GoDaddy relativeName throws for out-of-zone hostnames). CodeRabbit: rate-limited. chatgpt-codex-connector: 2 findings, both valid, both fixed. Cold suite 73 passed / 36 pre-existing / typecheck clean. |
+| P11 | CRM integration + CTM install | `2026-06-28-p11-crm-ctm.md` | **ready** | — | Plan: ctm_account_id/crm_site_id migration, CTM script injection, PhoneNumber + crm_form blocks in @anchorcorps/components, CRM HTTP client (5 endpoints, mode-switch), Studio Integrations tab. D-052/D-053. |
 | P12 | Hardening + first real client migration | _(B preps)_ | **pending-plan** | — | Per PLAN.md / D-021 (Plausible/Umami analytics), D-019 pg-boss workers, rate limiting, web-vitals, error tracking, first live client migration. Final phase. |
 
 ---
@@ -129,3 +129,4 @@ A phase flips `pending-plan → ready` only once its plan doc is committed to `m
   05:17 builds P10.
 - 2026-06-29 03:17 — B run: no in_review phase; P10 already `ready` → no prep (rule: prep only when no ready/in_review phase exists). Docker unavailable in env (no DB); GitHub MCP auth confirmed. No-op run as anticipated.
 - 2026-06-29 05:17 — A run: built P10 (tasks 10.5-10.9; 10.1-10.4 already in main from PR #2). Postgres provisioned on port 5432 (Docker unavailable, used local pg cluster). Branch feat/sites-p10-domain-provisioning, PR #3. Cold suite 72 passed / 36 pre-existing failures / typecheck clean. P10 → in_review.
+- 2026-06-29 07:17 — B run: reviewed P10 (PR #3). CodeRabbit rate-limited; independent review found 2 real defects (primary-domain Provision button gated by !is_primary; client-owned domain provision erroring against GoDaddy zone via relativeName). Both fixed, 1 integration test added. Cold suite 73 passed / 36 pre-existing / typecheck clean. Merged PR #3 (ee3e736) → P10 complete. Prepped P11 (crm-ctm) → plan doc written, P11 ready.
