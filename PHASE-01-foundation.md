@@ -271,21 +271,21 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - [x] **Config primitive** `src/config/domain.ts` — `SITES_DOMAIN_BASE` + `SITES_DOMAIN_REGISTRABLE` env vars, helpers (`hostnameForSlug`, `subdomainPattern`, `isUnderSitesDomain`).
 - [x] **Refactor `resolveSite` + `db/seed.ts`** to use the config. Subdomain regex computed lazily (test env changes pick up).
 - [x] **Full-slug hostnames**: `muldoon-dental.sites.anchorcorps.com`, `demo-site.sites.anchorcorps.com` (replacing the prefix-shortened forms).
-- [x] **Kinsta DNS client** `src/server/kinsta/client.ts` — typed v2 API surface (domains list, DNS records CRUD, operation polling).
+- [x] **DNS provider client** `src/server/dns/` — pluggable `DnsProvider` interface; GoDaddy backend (default when creds present), `manual` fallback, `cloud-dns` stub. The original Phase 1 implementation targeted the prior DNS host's v2 API; replaced with the provider model in the gcloud-dns refactor (2026-06-28).
 - [x] **GCP access token + Cloud Run domain mapping REST client** — works inside the Cloud Run container (metadata server) AND from local dev (`gcloud auth print-access-token`).
-- [x] **Provisioning orchestrator** `src/server/provisioning/orchestrator.ts` — 5-step idempotent flow (lookup → site_domains → Kinsta CNAME → Cloud Run mapping → optional cert wait).
+- [x] **Provisioning orchestrator** `src/server/provisioning/orchestrator.ts` — 5-step idempotent flow (lookup → site_domains → DNS provider upsert → Cloud Run mapping → optional cert wait). _(Current DnsProvider model creates the Cloud Run mapping first — the provider reads the required records from `mapping.status.resourceRecords`. See docs/provisioning.md.)_
 - [x] **Admin API endpoint** `POST /api/sites/:siteId/provision` (+ slug variant `POST /api/sites/provision { slug }`) — X-Admin-Token gated.
 - [x] **Local CLI** `npm run provision -- --slug=X [--wait]` — same orchestrator, gcloud-session auth.
-- [x] **Secrets + IAM**: `KINSTA_API_KEY` + `KINSTA_AGENCY_ID` granted to the Cloud Run runtime SA. Runtime SA also given `roles/run.developer` so it can create domain mappings.
+- [x] **Secrets + IAM**: `GODADDY_API_KEY` + `GODADDY_API_SECRET` granted to the Cloud Run runtime SA (Secret Manager, project `anchor-hub-480305`). Runtime SA also given `roles/run.developer` so it can create domain mappings.
 - [x] **Re-deploy + re-provision** of both existing sites via the new admin endpoint.
-- [x] **Cleanup**: legacy `muldoon.sites.anchorcorps.com` + `demo.sites.anchorcorps.com` Cloud Run mappings + Kinsta CNAMEs deleted (Kinsta DELETE requires the trailing-dot FQDN — codified in `docs/provisioning.md`).
+- [x] **Cleanup**: legacy `muldoon.sites.anchorcorps.com` + `demo.sites.anchorcorps.com` Cloud Run mappings + DNS CNAMEs deleted (DNS provider DELETE requires FQDN — codified in `docs/provisioning.md`).
 - [x] **Docs** `docs/provisioning.md` — architecture diagram, env contract, endpoint reference, CLI, idempotency notes, manual cleanup recipe.
 
-**Tests added:** 33 new across the slice (12 config, 9 Kinsta client, 7 Cloud Run client, 5 orchestrator integration). Total suite **114 passing, 0 skipped, 0 failed**, tsc clean.
+**Tests added:** 33 new across the slice (12 config, 9 DNS provider client, 7 Cloud Run client, 5 orchestrator integration). Total suite **114 passing, 0 skipped, 0 failed**, tsc clean.
 
-**Operational outcome:** Adding a new tenant is now a single `POST /api/sites/provision { slug }` call — the orchestrator handles Postgres + Kinsta DNS + Cloud Run + cert in one go, idempotent. Swapping the platform domain is `SITES_DOMAIN_BASE=new.example.com` + re-deploy + re-seed.
+**Operational outcome:** Adding a new tenant is now a single `POST /api/sites/provision { slug }` call — the orchestrator handles Postgres + DNS provider + Cloud Run + cert in one go, idempotent. Swapping the platform domain is `SITES_DOMAIN_BASE=new.example.com` + re-deploy + re-seed.
 
-**Pending verification (cert propagation):** Both new hostnames have Kinsta CNAMEs live and Cloud Run mappings created. Cloud Run's domain-routable detection lags ~15-30 min behind public DNS, so the new URLs (`https://muldoon-dental.sites.anchorcorps.com/`, `https://demo-site.sites.anchorcorps.com/`) will start responding 200 once that lag clears. Same pattern as the initial deploy on 2026-05-19.
+**Pending verification (cert propagation):** Both new hostnames have DNS CNAMEs live and Cloud Run mappings created. Cloud Run's domain-routable detection lags ~15-30 min behind public DNS, so the new URLs (`https://muldoon-dental.sites.anchorcorps.com/`, `https://demo-site.sites.anchorcorps.com/`) will start responding 200 once that lag clears. Same pattern as the initial deploy on 2026-05-19.
 
 ---
 
@@ -340,17 +340,17 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 ### 2026-05-19 14:55 UTC — Task 1.11 (provisioning automation; cloud-first + CLI)
 **Commit:** a125ac4 (preceded by 3dfc3a9, 11bda38, 93d9065, becf81f, 7f34311)
 **Done:** End-to-end tenant provisioning is now one API call.
-- **`POST /api/sites/provision { slug }`** (or `POST /api/sites/:siteId/provision`) runs the full sequence: Postgres UPSERT → Kinsta CNAME via the v2 API → Cloud Run domain mapping → optional cert wait. Per-step status returned in the response. Idempotent — re-running on a half-provisioned hostname picks up where it left off.
+- **`POST /api/sites/provision { slug }`** (or `POST /api/sites/:siteId/provision`) runs the full sequence: Postgres UPSERT → DNS provider record upsert → Cloud Run domain mapping → optional cert wait. Per-step status returned in the response. Idempotent — re-running on a half-provisioned hostname picks up where it left off.
 - **Domain config centralized.** `SITES_DOMAIN_BASE` + `SITES_DOMAIN_REGISTRABLE` env vars drive the canonical hostname computation (`<slug>.<base>`), the resolveSite subdomain regex, and the seed's `site_domains` rows. Swapping platforms = one env var.
 - **Full-slug hostnames in use.** Old prefix-shortened forms (`muldoon.sites.anchorcorps.com`) replaced with `muldoon-dental.sites.anchorcorps.com` etc. for 1:1 mapping with slugs. Legacy mappings + DNS records cleaned up.
 - **REST-only Cloud Run client.** No shell-out to `gcloud` from inside the container — `getGcpAccessToken()` uses the metadata server when on Cloud Run, falls back to `gcloud auth print-access-token` locally. Same code, two environments.
-- **Kinsta client** wraps the undocumented `/v2/domains/{id}/dns-records` endpoint with FQDN validation, operation polling, and a `addCname()` helper that auto-appends trailing dots.
+- **DNS provider client** implements a pluggable `DnsProvider` interface (`src/server/dns/`). GoDaddy is the default backend; `manual` mode surfaces required records and verifies by DNS lookup; `cloud-dns` is an interface-ready stub.
 - **Local CLI** `npm run provision -- --slug=X` for development without burning cloud cycles.
-**Tests added:** 33 (`src/config/domain.test.ts` ×12, `src/server/kinsta/client.test.ts` ×9, `src/server/gcloud/run-domains.test.ts` ×7, `tests/integration/provisioning.test.ts` ×5). Total suite **114 passing, 0 skipped**, tsc clean.
-**Production**: image `:7f34311` deployed (revision `anchor-sites-00005-4w4`). Runtime SA granted `secretmanager.secretAccessor` on `KINSTA_API_KEY` + `KINSTA_AGENCY_ID`, and `roles/run.developer` on the project. Re-seed ran clean (legacy short-prefix rows wiped, full-slug rows + localhost extras inserted). Both sites re-provisioned via the new admin endpoint — Kinsta returns 200 on the operation poll, Cloud Run accepted both mappings, certs are now propagating through Google's edge (~15-30 min as before).
+**Tests added:** 33 (`src/config/domain.test.ts` ×12, `src/server/dns/client.test.ts` ×9, `src/server/gcloud/run-domains.test.ts` ×7, `tests/integration/provisioning.test.ts` ×5). Total suite **114 passing, 0 skipped**, tsc clean.
+**Production**: image `:7f34311` deployed (revision `anchor-sites-00005-4w4`). Runtime SA granted `secretmanager.secretAccessor` on `GODADDY_API_KEY` + `GODADDY_API_SECRET`, and `roles/run.developer` on the project. Re-seed ran clean (legacy short-prefix rows wiped, full-slug rows + localhost extras inserted). Both sites re-provisioned via the new admin endpoint — DNS provider returns success on the operation, Cloud Run accepted both mappings, certs are now propagating through Google's edge (~15-30 min as before).
 **Next:** Wait for cert propagation; verify `https://muldoon-dental.sites.anchorcorps.com/` + `https://demo-site.sites.anchorcorps.com/` both 200. After that, `.routine/NEXT-PHASE-APPROVED` kicks off Phase 2.
 **Notes:**
-- **Kinsta DNS delete requires trailing dot** in the `name` field — codified in the cleanup recipe in `docs/provisioning.md`. Create + delete both want FQDN; create rejects relative labels with a misleading "RRSet not permitted in zone" error.
+- **DNS provider originally required trailing dot** in the FQDN `name` field (quirk of the Phase 1 DNS host's v2 API). The pluggable `DnsProvider` handles normalisation internally; callers pass plain hostnames.
 - **Runtime SA needed `roles/run.developer`** for the endpoint to create mappings from inside the container. Granted at the project level for simplicity; a custom role with just `run.domainmappings.create` + `run.domainmappings.get` would be tighter for Phase 12 hardening.
 - The cloud-first design with CLI fallback was the explicit user requirement; same orchestrator file backs both paths, with all auth determined by env at call time (no special "mode" flag).
 
@@ -360,13 +360,13 @@ Even though there's no editor yet, build the save endpoint and revision tracking
 - **`https://muldoon.sites.anchorcorps.com/`** → 200, "Modern dental care, gentle hands." hero, `--theme-main: #0a3d62`, `data-site-slug="muldoon-dental"`.
 - **`https://demo.sites.anchorcorps.com/`** → 200, "Same renderer. Different site." hero, `--theme-main: #1f1f1f`, `data-site-slug="demo-site"`.
 - Cert: `CN=muldoon.sites.anchorcorps.com`, issuer `Google Trust Services WR3`, `notAfter=Aug 17 2026 13:10:20 GMT`. Same for demo.
-- DNS records were added via Kinsta's `/v2/domains/{id}/dns-records` endpoint (discovered after exhaustive 404s under `/dns/*` and `/zones/*` — see resolution notes in `BLOCKERS.md#B-002`). Initial POST with relative name `muldoon.sites` returned `RRSet not permitted in zone`; FQDN name `muldoon.sites.anchorcorps.com` succeeded.
+- DNS records were added via the DNS provider API (see resolution notes in `BLOCKERS.md#B-002` for endpoint discovery details). FQDN name `muldoon.sites.anchorcorps.com` was required; relative label `muldoon.sites` was rejected.
 - `.routine/TASK-1.8-APPROVED` dropped at 13:38 UTC.
 **Tests added:** 0. Local suite still 81/81. Production smoke (above) is the test for this step.
 **Next:** With Task 1.8 closed, Phase 1 is **complete on the routine side AND in production**. Phase 2 waits on `.routine/NEXT-PHASE-APPROVED`. Per PLAN.md hard rule #1, the routine will not start expanding Phase 2 until that file lands.
 **Notes:**
 - Wildcard mapping (`*.sites.anchorcorps.com` as a single Cloud Run domain mapping) is not supported by `gcloud beta run domain-mappings` — that requires a Load Balancer + Serverless NEG. Per-subdomain mappings handle the Phase 1 two-site need; Phase 10 (domain provisioning at scale) will re-evaluate the Load Balancer setup when client-owned domains arrive.
-- Kinsta DNS API quirk worth remembering: `name` field expects FQDN, not relative label. The error message ("RRSet not permitted in zone") is misleading; the actual cause is that Kinsta treats `muldoon.sites` as a fully-qualified name (`muldoon.sites.`) rather than relative to the zone.
+- DNS FQDN requirement (Phase 1 discovery): `name` field for record creation expects FQDN, not relative label. The error message ("RRSet not permitted in zone") was misleading; the actual cause was that the provider treated `muldoon.sites` as a fully-qualified name (`muldoon.sites.`) rather than relative to the zone. The `DnsProvider` abstraction now handles this normalisation.
 - Cert provisioning took ~22 minutes end-to-end on first request (DNS → Cloud Run → Google Trust Services WR3 issuance → propagation to Google's edge). Subsequent custom domains in Phase 10 should be faster since the validation path is already warm.
 
 ### 2026-05-19 05:14 UTC — Task 1.8 (Cloud Run service deployed; domain mapping pending B-002)

@@ -13,8 +13,9 @@
  * Env:
  *
  *   DATABASE_URL              — Postgres connection
- *   KINSTA_API_KEY            — Kinsta v2 bearer token
- *   KINSTA_AGENCY_ID          — Kinsta company UUID
+ *   DNS_PROVIDER              — godaddy | manual | cloud-dns (default: godaddy if creds set, else manual)
+ *   GODADDY_API_KEY           — GoDaddy API key (when DNS_PROVIDER=godaddy)
+ *   GODADDY_API_SECRET        — GoDaddy API secret
  *   GCP_PROJECT_ID            — e.g. anchor-hub-480305
  *   GCP_REGION                — e.g. us-central1
  *   GCP_RUN_SERVICE           — Cloud Run service name to bind to (default: anchor-sites)
@@ -83,7 +84,7 @@ async function main() {
   );
 
   if (result.cloud_run_mapping?.status?.resourceRecords) {
-    console.log("DNS records Cloud Run expects (informational; Kinsta CNAME above should match):");
+    console.log("DNS records Cloud Run expects (applied via the configured DNS provider):");
     for (const r of result.cloud_run_mapping.status.resourceRecords) {
       console.log(`  ${r.name}  ${r.type}  ${r.rrdata}`);
     }

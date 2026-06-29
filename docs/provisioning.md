@@ -18,28 +18,39 @@ happen and is idempotent at every step, so it's safe to re-run.
         |  src/server/provisioning/orchestrator.ts
         +-----------+-----------+
                     |
-       +------------+------------+--------------------+
-       v                         v                    v
-+----------------+      +----------------+    +----------------+
-| 1. Postgres    |      | 2. Kinsta DNS  |    | 3. Cloud Run   |
-|  UPSERT site_  |      |  CNAME ->      |    |  domain mapping|
-|  domains row   |      |  ghs.google... |    |  for hostname  |
-+----------------+      +----------------+    +----------------+
+       (sequential: each step depends on the previous)
+                    |
+                    v
++----------------+     +----------------+     +----------------+
+| 1. Postgres    | --> | 2. Cloud Run   | --> | 3. DNS provider|
+|  UPSERT site_  |     |  domain mapping|     |  upsert records|
+|  domains row   |     |  for hostname  |     |  (GoDaddy/etc) |
++----------------+     +----------------+     +----------------+
+                              |                       |
+                       (mapping reports       (records read from
+                        required records)      mapping.status,
+                                               then upserted)
                                                        |
+                                                       v
                                               (optional 4. wait
                                                for cert ready)
 ```
+
+The order matters: the Cloud Run domain mapping is created **before** the
+DNS provider upsert, because the records the provider writes are read
+from `mapping.status.resourceRecords` (Cloud Run tells you which records
+it requires).
 
 Same code runs in two environments:
 
 - **From the cloud application** (admin UI, scripts, webhooks): hit
   `POST /api/sites/:siteId/provision` or `POST /api/sites/provision`
   with the admin token. The Cloud Run runtime SA holds the IAM grants
-  needed for both Kinsta + GCP REST calls.
+  needed for both the DNS provider + GCP REST calls.
 
 - **From your laptop** during development: `npm run provision -- --slug=X`.
   Same orchestrator; auth comes from your local `gcloud` session + the
-  `KINSTA_API_KEY` env var. Useful when you don't want to burn a build
+  `DNS_PROVIDER` env vars. Useful when you don't want to burn a build
   cycle just to provision one record.
 
 ## Configuration
@@ -50,7 +61,7 @@ The wildcard parent + registrable apex are env-controlled (see
 | Env var                       | Default                    | What it does |
 | ----------------------------- | -------------------------- | ------------ |
 | `SITES_DOMAIN_BASE`           | `sites.anchorcorps.com`    | The wildcard parent. `<slug>.<base>` becomes the canonical hostname. |
-| `SITES_DOMAIN_REGISTRABLE`    | `anchorcorps.com`          | The Kinsta-registered apex (zone the records live in). Defaults to the last two labels of `BASE`; set explicitly for ccTLDs (`example.co.uk`). |
+| `SITES_DOMAIN_REGISTRABLE`    | `anchorcorps.com`          | The registrable apex (zone the DNS records live in). Defaults to the last two labels of `BASE`; set explicitly for ccTLDs (`example.co.uk`). |
 
 **Swapping the platform to a different domain** is a single env-var
 change plus a re-seed. Set `SITES_DOMAIN_BASE=tenants.acmegroup.com` in
@@ -60,16 +71,40 @@ removes the old hostnames from `site_domains` automatically.
 
 ## Authentication
 
-### Kinsta DNS
+### DNS provider
 
-- `KINSTA_API_KEY` — bearer token. Available in Secret Manager under the
-  same secret name.
-- `KINSTA_AGENCY_ID` — company UUID for the `?company=` query param.
-  (Kinsta uses "agency" and "company" interchangeably in v2.)
+DNS records are managed through a pluggable `DnsProvider` (see
+`src/server/dns/`). The backend is selected by the `DNS_PROVIDER` env
+var (`godaddy` | `manual` | `cloud-dns`).
 
-The Cloud Run runtime SA has `secretmanager.secretAccessor` on both.
-Local dev reads from `~/.claude/credentials/kinsta.json` (see
-`scripts/provision-site.ts`) or your shell env.
+| Env var                | Default | What it does |
+| ---------------------- | ------- | ------------ |
+| `DNS_PROVIDER`         | _(auto)_ | `godaddy` when GoDaddy creds are present; `manual` otherwise. `cloud-dns` is an interface-ready stub for a future Google-hosted zone. |
+| `GODADDY_API_KEY`      | —       | GoDaddy production API key. Store in Secret Manager (`anchor-hub-480305`) and wire onto the `anchor-sites` Cloud Run service — same pattern as the Studio OAuth secrets. |
+| `GODADDY_API_SECRET`   | —       | Matching GoDaddy API secret. |
+| `GODADDY_API_BASE`     | _(GoDaddy production URL)_ | Optional override (e.g. GoDaddy OTE sandbox for testing). |
+
+**Provisioning flow:** Cloud Run domain mapping is created first, then
+`getRequiredDnsRecords` reads the records Cloud Run requires from the
+mapping status (`mapping.status.resourceRecords`). Each record is
+upserted through the provider (idempotent). The orchestrator then waits
+for `Ready` + `CertificateProvisioned`.
+
+**GoDaddy mode** (default when `GODADDY_API_KEY` + `GODADDY_API_SECRET`
+are set): records are upserted automatically via the GoDaddy API; no
+operator action required beyond wiring the secrets.
+
+**Manual mode** (fallback when no GoDaddy creds): `ensureRecord` returns
+`"external"` without writing anything. The orchestrator reports the `dns`
+step as `"skipped"` and includes the required records in the step detail
+so the operator knows what to add at their registrar. Live-DNS
+verification of those records is a separate concern available via the
+provider's `verifyRecord` (surfaced in the Phase 10 status UI), not part
+of the provisioning call itself.
+
+The Cloud Run runtime SA has `secretmanager.secretAccessor` on the
+GoDaddy secrets. Local dev reads from shell env (`GODADDY_API_KEY` /
+`GODADDY_API_SECRET`) or sets `DNS_PROVIDER=manual` to skip auto-upsert.
 
 ### Cloud Run domain mappings
 
@@ -112,7 +147,7 @@ Response (200 on full success, 500 if any step errored):
   "steps": [
     { "step": "lookup",       "status": "ok",      "detail": "..." },
     { "step": "site_domains", "status": "ok",      "detail": "..." },
-    { "step": "kinsta",       "status": "ok"      | "skipped", "detail": "..." },
+    { "step": "dns",           "status": "ok"      | "skipped", "detail": "..." },
     { "step": "cloud_run",    "status": "ok",      "detail": "...", "data": { /* mapping */ } },
     { "step": "wait_ready",   "status": "ok"      | "error",   "detail": "..." }
   ],
@@ -138,8 +173,9 @@ Convenient when you're scripting from a shell and don't have the UUID handy.
 # Set up env once
 cat >> .env <<'EOF'
 SITES_DOMAIN_BASE=sites.anchorcorps.com
-KINSTA_API_KEY=<your-kinsta-key>
-KINSTA_AGENCY_ID=<your-kinsta-company-uuid>
+GODADDY_API_KEY=<your-godaddy-key>
+GODADDY_API_SECRET=<your-godaddy-secret>
+# DNS_PROVIDER=manual   # set this to skip auto-upsert and surface records manually
 GCP_PROJECT_ID=anchor-hub-480305
 GCP_REGION=us-central1
 GCP_RUN_SERVICE=anchor-sites
@@ -200,14 +236,18 @@ Re-running the orchestrator is safe and useful:
 | Step          | What re-running does |
 | ------------- | -------------------- |
 | `site_domains` | `INSERT ... ON CONFLICT (hostname) DO NOTHING` — no-op on second run. |
-| `kinsta`      | List records first; if a CNAME for the hostname exists, return `status: "skipped"`. |
+| `dns`         | Upserts each required record through the provider (idempotent); returns `status: "skipped"` if records are already correct. |
 | `cloud_run`   | `createIfMissing` GETs first; returns the existing mapping on second run. |
 | `wait_ready`  | Always runs; polls current state and returns once both conditions are `True`. |
 
 Failure modes the orchestrator surfaces explicitly:
 
-- **No Kinsta domain registered for the registrable apex** — return early
-  with `kinsta: error`. Add the domain to Kinsta first.
+- **DNS provider not configured** (GoDaddy creds absent, `DNS_PROVIDER` not
+  set) — orchestrator falls back to `manual` mode. The `dns` step is
+  reported as `"skipped"` and its `detail` lists the records the operator
+  must add at their registrar. The orchestrator never errors on DNS in this
+  mode; re-running is safe once the records are in place (GoDaddy mode will
+  then write them automatically if creds are provided).
 - **Cloud Run runtime SA missing `roles/run.developer`** — return with
   `cloud_run: error` and a 403 message. Grant the role, retry.
 - **DNS propagation slower than expected** — `wait_ready` times out at
@@ -225,12 +265,13 @@ gcloud beta run domain-mappings delete \
   --region=us-central1 \
   --project=anchor-hub-480305
 
-# Delete the Kinsta CNAME (note: the `name` field requires the trailing dot!)
+# Delete the DNS record through the configured provider.
+# GoDaddy example (replace <zone> and <hostname> accordingly):
 curl -X DELETE \
-  -H "Authorization: Bearer $KINSTA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"<hostname>.","type":"CNAME"}' \
-  https://api.kinsta.com/v2/domains/<domain-id>/dns-records
+  -H "Authorization: sso-key $GODADDY_API_KEY:$GODADDY_API_SECRET" \
+  "https://api.godaddy.com/v1/domains/<zone>/records/CNAME/<hostname>"
+
+# Manual mode: remove the CNAME from whichever DNS host owns the zone.
 
 # Optional: remove the site_domains row
 psql ... -c "DELETE FROM site_domains WHERE hostname = '<hostname>';"
@@ -242,11 +283,12 @@ endpoint lands when Phase 10 (domain provisioning at scale) needs it.
 ## What this does NOT do
 
 - **It does not register a new domain.** The registrable apex must
-  already be in Kinsta. (Different problem — that's domain
-  registration, handled by Kinsta's domain product, not the DNS API.)
+  already exist in the DNS zone managed by your provider. (Different
+  problem — that's domain registration, not DNS record management.)
 - **It does not issue the SSL cert.** Cloud Run + Let's Encrypt do that
   automatically once DNS resolves; the orchestrator's `wait_ready` step
   just polls until it's done.
 - **It does not handle client-owned domains** (e.g. `muldoondental.com`
   rather than `muldoon-dental.sites.anchorcorps.com`). That's Phase 10
-  — the client points their NS at Kinsta or adds CNAMEs themselves.
+  — the client points their NS at the DNS provider or adds CNAMEs
+  themselves.

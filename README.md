@@ -93,7 +93,7 @@ src/
     ai/          Phase 6 AI editing service: client, catalog, edit-ops, propose, diff
     routes/      page (tenant), admin-pages (save/revisions/ai-edit), admin-sites, ...
     jobs/        pg-boss workers (image variants, ...) — D-019
-    media/ kinsta/ gcloud/ provisioning/   media + domain provisioning
+    media/ dns/ gcloud/ provisioning/      media + domain provisioning
     email/       Mailgun client (stub/dry-run/api) — D-023
   middleware/    resolveSite, requireAdmin, rateLimit
   components/    SSR BlockRenderer + fallbacks
@@ -117,7 +117,7 @@ tests/           smoke + integration (supertest, jsdom)
 - `docs/blocks.md` — adding a new block type.
 - `docs/components-publish.md` / `docs/components-consumption.md` — the package.
 - `docs/media-pipeline.md` — GCS upload + variant generation (D-022/D-031).
-- `docs/provisioning.md` — Cloud Run domain mapping + Kinsta DNS.
+- `docs/provisioning.md` — Cloud Run domain mapping + pluggable DNS provider (GoDaddy default).
 - `docs/admin-ui.md` — the Studio control hub.
 - `docs/visual-editor.md` — the Puck editor (Phase 5).
 - `docs/ai-editing.md` — the AI editing layer (Phase 6).

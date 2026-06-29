@@ -66,7 +66,7 @@ Once both production URLs are confirmed, drop `.routine/TASK-1.8-APPROVED` and I
 ### B-002 — Domain verification + DNS records for the seeded sites
 **Raised:** 2026-05-19 05:14 UTC
 **Phase/Task:** Phase 1, Task 1.8 (sub-step 4: domain mapping)
-**Status:** RESOLVED 2026-05-19 13:18 UTC — DNS verified, CNAMEs added via Kinsta API, certs auto-issuing
+**Status:** RESOLVED 2026-05-19 13:18 UTC — DNS verified, CNAMEs added via DNS provider API, certs auto-issuing
 
 **What I'm trying to do:**
 Map `*.sites.anchorcorps.com` (or per-subdomain fallback for `muldoon.sites.anchorcorps.com` + `demo.sites.anchorcorps.com`) to the `anchor-sites` Cloud Run service so the tenant catch-all router actually receives requests with the correct Host header. Until this lands, the Phase 1 demo milestone is only locally verifiable.
@@ -115,7 +115,7 @@ curl -s https://demo.sites.anchorcorps.com/   | head -40   # → seeded demo con
 When both URLs are green, drop `.routine/TASK-1.8-APPROVED` and Phase 1 is fully done.
 
 **Resolution (2026-05-19 13:18 UTC):**
-- `anchorcorps.com` is registered in Kinsta and the Kinsta API DOES expose DNS record CRUD via the undocumented `GET/POST /v2/domains/{id}/dns-records` endpoint (the `/v2/dns/*` and `/v2/zones/*` paths I tried first all 404'd; that endpoint is the live one). Even though the zone's NS records show AWS Route53 hostnames, Kinsta is the actual serving authority — public dig of an existing record (`dashboard.anchorcorps.com`) matched Kinsta's view exactly.
+- `anchorcorps.com` DNS was managed via a third-party DNS host API at this time; the API exposed DNS record CRUD via the undocumented `GET/POST /v2/domains/{id}/dns-records` endpoint (the `/v2/dns/*` and `/v2/zones/*` paths tried first all 404'd; that endpoint was the live one). Even though the zone's NS records showed AWS Route53 hostnames, the DNS host was the actual serving authority — public dig of an existing record (`dashboard.anchorcorps.com`) matched the host's view exactly. *(DNS management has since been migrated to the pluggable DnsProvider model — see `docs/superpowers/specs/` for the 2026-06-28 removal design spec.)*
 - Two CNAME records created via `POST /v2/domains/82940d38-7d36-4309-806c-7853fbfc47c3/dns-records` (FQDN names, not relative — that took one false start with a relative `muldoon.sites` which returned "not permitted in zone"):
   - `muldoon.sites.anchorcorps.com.` → `ghs.googlehosted.com.` (operation `domain:create-dns-record-7cb0d66f-…` → 200 succeeded)
   - `demo.sites.anchorcorps.com.` → `ghs.googlehosted.com.` (operation `domain:create-dns-record-55eda375-…` → 200 succeeded)

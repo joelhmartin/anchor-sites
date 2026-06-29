@@ -8,7 +8,7 @@ import {
   provisionSiteHostname,
   type ProvisionResult,
 } from "../../src/server/provisioning/orchestrator.js";
-import type { KinstaClient } from "../../src/server/kinsta/client.js";
+import type { DnsProvider, EnsureResult } from "../../src/server/dns/provider.js";
 import type { CloudRunDomainsClient } from "../../src/server/gcloud/run-domains.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,15 +17,38 @@ const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
 
-function makeKinstaMock(): KinstaClient {
+function makeDnsMock(ensure: EnsureResult = "created"): DnsProvider {
   return {
-    getDomainIdByName: vi.fn(async () => "kinsta-domain-id"),
-    listDnsRecords: vi.fn(async () => []),
-    addCname: vi.fn(async () => ({ status: 200, message: "ok" })),
-  } as unknown as KinstaClient;
+    id: "godaddy",
+    ensureRecord: vi.fn(async () => ensure),
+    verifyRecord: vi.fn(async () => true),
+    removeRecord: vi.fn(async () => undefined),
+  } as unknown as DnsProvider;
 }
 
-function makeCloudRunMock(ready = true): CloudRunDomainsClient {
+type DnsRR = { name: string; type: string; rrdata: string };
+
+const CNAME_RECORD: DnsRR = {
+  name: "muldoon-dental.sites.anchorcorps.com.",
+  type: "CNAME",
+  rrdata: "ghs.googlehosted.com.",
+};
+
+type CloudRunMockOptions = {
+  ready?: boolean;
+  /** Records embedded in `mapping.status.resourceRecords` (primary path). */
+  resourceRecords?: DnsRR[];
+  /** Records returned by `getRequiredDnsRecords` (fallback path). */
+  fallbackRecords?: DnsRR[];
+};
+
+function makeCloudRunMock(
+  opts: boolean | CloudRunMockOptions = true,
+): CloudRunDomainsClient {
+  const o: CloudRunMockOptions = typeof opts === "boolean" ? { ready: opts } : opts;
+  const ready = o.ready ?? true;
+  const resourceRecords = o.resourceRecords ?? [CNAME_RECORD];
+  const fallbackRecords = o.fallbackRecords ?? resourceRecords;
   const mapping = {
     apiVersion: "domains.cloudrun.com/v1",
     kind: "DomainMapping",
@@ -41,11 +64,13 @@ function makeCloudRunMock(ready = true): CloudRunDomainsClient {
             { type: "Ready", status: "Unknown" },
             { type: "CertificateProvisioned", status: "Unknown" },
           ],
+      resourceRecords,
     },
   };
   return {
     createIfMissing: vi.fn(async () => mapping),
     waitForReady: vi.fn(async () => mapping),
+    getRequiredDnsRecords: vi.fn(async () => fallbackRecords),
     get: vi.fn(async () => mapping),
   } as unknown as CloudRunDomainsClient;
 }
@@ -75,12 +100,12 @@ d("provisionSiteHostname (integration)", () => {
     await pool.end().catch(() => undefined);
   });
 
-  it("provisions a fresh hostname end-to-end (mocked Kinsta + Cloud Run)", async () => {
-    const kinsta = makeKinstaMock();
+  it("provisions a fresh hostname end-to-end (mocked DNS + Cloud Run)", async () => {
+    const dns = makeDnsMock("created");
     const cloudRun = makeCloudRunMock(true);
     const result: ProvisionResult = await provisionSiteHostname(muldoonId, {
       pool,
-      kinsta,
+      dns,
       cloudRun,
       wait: true,
     });
@@ -90,60 +115,119 @@ d("provisionSiteHostname (integration)", () => {
     expect(stepStatuses).toMatchObject({
       lookup: "ok",
       site_domains: "ok",
-      kinsta: "ok",
       cloud_run: "ok",
+      dns: "ok",
       wait_ready: "ok",
     });
     expect(result.ready).toBe(true);
-    expect(kinsta.addCname).toHaveBeenCalledOnce();
+    expect(dns.ensureRecord).toHaveBeenCalledWith(
+      "anchorcorps.com",
+      expect.objectContaining({
+        name: "muldoon-dental.sites.anchorcorps.com.",
+        type: "CNAME",
+        data: "ghs.googlehosted.com.",
+      }),
+    );
     expect(cloudRun.createIfMissing).toHaveBeenCalledOnce();
+    // Primary path: resourceRecords is populated, so the fallback never runs.
+    expect(cloudRun.getRequiredDnsRecords).not.toHaveBeenCalled();
   });
 
-  it("skips Kinsta when a matching CNAME already exists", async () => {
-    const kinsta = makeKinstaMock();
-    // Pretend the record exists already.
-    (kinsta.listDnsRecords as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      {
-        type: "CNAME",
-        name: "muldoon-dental.sites.anchorcorps.com.",
-        ttl: 3600,
-        resource_records: [{ value: "ghs.googlehosted.com." }],
-      },
-    ]);
-    const cloudRun = makeCloudRunMock(true);
-    const result = await provisionSiteHostname(muldoonId, { pool, kinsta, cloudRun });
+  it("falls back to getRequiredDnsRecords when the mapping has no resourceRecords", async () => {
+    const dns = makeDnsMock("created");
+    // Mapping created with empty resourceRecords (common right after creation);
+    // the real records only come back from getRequiredDnsRecords.
+    const cloudRun = makeCloudRunMock({
+      ready: true,
+      resourceRecords: [],
+      fallbackRecords: [CNAME_RECORD],
+    });
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun, wait: true });
 
-    expect(kinsta.addCname).not.toHaveBeenCalled();
-    const kinstaStep = result.steps.find((s) => s.step === "kinsta");
-    expect(kinstaStep?.status).toBe("skipped");
+    expect(cloudRun.getRequiredDnsRecords).toHaveBeenCalledOnce();
+    expect(dns.ensureRecord).toHaveBeenCalledWith(
+      "anchorcorps.com",
+      expect.objectContaining({
+        name: "muldoon-dental.sites.anchorcorps.com.",
+        type: "CNAME",
+        data: "ghs.googlehosted.com.",
+      }),
+    );
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("ok");
+  });
+
+  it("marks the dns step 'skipped' when Cloud Run reports no records at all", async () => {
+    const dns = makeDnsMock();
+    const cloudRun = makeCloudRunMock({
+      ready: true,
+      resourceRecords: [],
+      fallbackRecords: [],
+    });
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun, wait: true });
+
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("skipped");
+    expect(dns.ensureRecord).not.toHaveBeenCalled();
+  });
+
+  it("marks the dns step 'skipped' when the record already exists", async () => {
+    const dns = makeDnsMock("exists");
+    const cloudRun = makeCloudRunMock(true);
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun });
+
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("skipped");
+    expect(dns.ensureRecord).toHaveBeenCalledOnce();
   });
 
   it("returns 'ready: false' when wait is omitted, but mapping is still created", async () => {
-    const kinsta = makeKinstaMock();
+    const dns = makeDnsMock();
     const cloudRun = makeCloudRunMock(false);
-    const result = await provisionSiteHostname(muldoonId, {
-      pool,
-      kinsta,
-      cloudRun,
-      // wait omitted
-    });
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun });
     expect(result.ready).toBe(false);
     expect(cloudRun.createIfMissing).toHaveBeenCalled();
     expect(cloudRun.waitForReady).not.toHaveBeenCalled();
   });
 
-  it("surfaces Kinsta errors as a failed step + returns early", async () => {
-    const kinsta = makeKinstaMock();
-    (kinsta.getDomainIdByName as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("no Kinsta domain matches anchorcorps.com"),
+  it("surfaces DNS errors as a failed step + returns early", async () => {
+    const dns = makeDnsMock();
+    (dns.ensureRecord as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("GoDaddy 500 boom"),
     );
     const cloudRun = makeCloudRunMock(true);
-    const result = await provisionSiteHostname(muldoonId, { pool, kinsta, cloudRun, wait: true });
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun, wait: true });
 
     expect(result.ready).toBe(false);
-    const kinstaStep = result.steps.find((s) => s.step === "kinsta");
-    expect(kinstaStep?.status).toBe("error");
-    expect(cloudRun.createIfMissing).not.toHaveBeenCalled();
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("error");
+    // Cloud Run mapping now happens BEFORE dns, so it ran:
+    expect(cloudRun.createIfMissing).toHaveBeenCalledOnce();
+    expect(cloudRun.waitForReady).not.toHaveBeenCalled();
+  });
+
+  it("manual-mode provider: dns step is 'skipped' with detail listing records", async () => {
+    const manualDns: DnsProvider = {
+      id: "manual",
+      ensureRecord: vi.fn(async () => "external" as EnsureResult),
+      verifyRecord: vi.fn(async () => false),
+      removeRecord: vi.fn(async () => undefined),
+    };
+    const cloudRun = makeCloudRunMock(true);
+    const result = await provisionSiteHostname(muldoonId, {
+      pool,
+      dns: manualDns,
+      cloudRun,
+      wait: false,
+    });
+
+    const dnsStep = result.steps.find((s) => s.step === "dns");
+    expect(dnsStep?.status).toBe("skipped");
+    expect(dnsStep?.detail).toMatch(/manually/i);
+    expect(manualDns.ensureRecord).toHaveBeenCalledWith(
+      "anchorcorps.com",
+      expect.objectContaining({ type: "CNAME" }),
+    );
   });
 
   it("throws when the site does not exist", async () => {
