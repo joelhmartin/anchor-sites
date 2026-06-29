@@ -15,12 +15,18 @@ const REQUIRED_KEYS = [
 const VALID_CATEGORIES = new Set(["header", "content", "cta", "layout"]);
 
 describe("blockManifest contract", () => {
-  it("has the expected count for the current minor (7 in v0.2)", () => {
-    expect(blockManifest.length).toBe(7);
+  it("has the expected count for the current minor (9 in v0.4)", () => {
+    expect(blockManifest.length).toBe(9);
   });
 
   it("contains the v0.2 Image block", () => {
     expect(blockManifest.map((e) => e.type)).toContain("image");
+  });
+
+  it("contains the v0.4 phone_number + crm_form blocks", () => {
+    const types = blockManifest.map((e) => e.type);
+    expect(types).toContain("phone_number");
+    expect(types).toContain("crm_form");
   });
 
   it("each entry has every required field with a sensible value", () => {
@@ -56,9 +62,11 @@ describe("blockManifest contract", () => {
     }
   });
 
-  it("every component is a function (React component contract)", () => {
+  it("every component is callable (React component contract — plain fn or React.memo object)", () => {
     for (const entry of blockManifest) {
-      expect(typeof entry.component).toBe("function");
+      const t = typeof entry.component;
+      // React.memo returns a MemoExoticComponent (object); plain function components return "function"
+      expect(t === "function" || (t === "object" && entry.component !== null), `entry[${entry.type}].component must be a React renderable`).toBe(true);
     }
   });
 
