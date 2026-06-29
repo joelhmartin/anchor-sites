@@ -9,4 +9,5 @@ export const crmFormEntry: BlockManifestEntry<typeof crmFormSchema> = {
   label: "CRM form",
   description: "Renders a CRM embed from anchor-hub. PHI never touches the builder (D-006). Use embed_code from the CRM site detail.",
   category: "content",
+  requiresEditorWrapper: true,
 };

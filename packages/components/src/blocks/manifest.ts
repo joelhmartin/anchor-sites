@@ -26,6 +26,13 @@ export type BlockManifestEntry<TSchema extends z.ZodTypeAny = z.ZodTypeAny> = {
   aiHints?: string;
   /** Editor grouping — "header" | "content" | "layout" | "cta" | ... */
   category: string;
+  /**
+   * When true, buildPuckConfig injects `isEditorPreview: true` into the
+   * block's render props so it can show a safe placeholder instead of live
+   * content in the Puck editor (e.g. crm_form: no dangerouslySetInnerHTML
+   * in Studio, per D-006 / PHI constraint).
+   */
+  requiresEditorWrapper?: boolean;
 };
 
 /**

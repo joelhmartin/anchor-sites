@@ -33,13 +33,16 @@ export function buildPuckConfig(opts: OverrideOpts = {}): Config {
       // picker fetch the right library.
       fields: applyFieldOverrides(type, zodToPuckFields(entry.schema), opts),
       defaultProps: zodSchemaDefaults(entry.schema),
-      // Wrap render to pass isEditorPreview=true for blocks that use it
-      // (e.g. crm_form — prevents live dangerouslySetInnerHTML in editor).
-      render: ((props: Record<string, unknown>) =>
-        createElement(entry.component as ComponentType<Record<string, unknown>>, {
-          ...props,
-          isEditorPreview: true,
-        })) as unknown as ComponentConfig["render"],
+      // Blocks with requiresEditorWrapper=true get isEditorPreview=true injected so
+      // they can show a safe placeholder in the Puck editor (crm_form: D-006/PHI).
+      // All other blocks use the same component reference the prod renderer uses (D-018).
+      render: entry.requiresEditorWrapper
+        ? (((props: Record<string, unknown>) =>
+            createElement(entry.component as ComponentType<Record<string, unknown>>, {
+              ...props,
+              isEditorPreview: true,
+            })) as unknown as ComponentConfig["render"])
+        : (entry.component as unknown as ComponentConfig["render"]),
     } as ComponentConfig;
   }
 
