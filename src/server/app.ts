@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
@@ -23,6 +23,7 @@ import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
 import type { StudioAuth } from "./auth/studio-auth.js";
+import { captureException } from "./sentry/index.js";
 
 export type CreateAppOptions = {
   /**
@@ -126,6 +127,23 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
   // static-index fallback in prod — both mounted by `src/server/index.ts`).
   app.use(pageRouter());
+
+  // P12-T12.4 (D-055) — Global 4-param Express error handler. Logs the stack,
+  // captures to Sentry (when configured), and returns a safe JSON error
+  // response. 500 bodies are masked in production to avoid leaking internals.
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const status = typeof (err as { status?: number }).status === "number"
+      ? (err as { status: number }).status
+      : 500;
+    // eslint-disable-next-line no-console
+    console.error("[express/error]", err);
+    captureException(err);
+    const message =
+      process.env.NODE_ENV === "production" && status >= 500
+        ? "internal server error"
+        : (err instanceof Error ? err.message : String(err));
+    res.status(status).json({ error: message });
+  });
 
   return app;
 }
