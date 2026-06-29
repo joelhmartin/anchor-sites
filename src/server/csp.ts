@@ -48,8 +48,13 @@ export function buildCsp(env: NodeJS.ProcessEnv): Record<string, string[]> {
   return {
     defaultSrc: ["'self'"],
     scriptSrc,
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    imgSrc: ["'self'", "data:", "storage.googleapis.com"],
+    // fonts.googleapis.com serves the CSS @font-face stylesheet loaded in index.html.
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    // fonts.gstatic.com serves the actual font binaries referenced by the Google Fonts CSS.
+    fontSrc: ["'self'", "https://fonts.gstatic.com"],
+    // blob: allows file-upload previews (URL.createObjectURL); images.unsplash.com
+    // is used for hero/blog images in the marketing-site pages.
+    imgSrc: ["'self'", "data:", "blob:", "storage.googleapis.com", "https://images.unsplash.com"],
     connectSrc,
     frameSrc,
     objectSrc: ["'none'"],

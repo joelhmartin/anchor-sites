@@ -53,10 +53,26 @@ describe("buildCsp (12.5)", () => {
     expect(directives).toHaveProperty("defaultSrc");
     expect(directives).toHaveProperty("scriptSrc");
     expect(directives).toHaveProperty("styleSrc");
+    expect(directives).toHaveProperty("fontSrc");
     expect(directives).toHaveProperty("imgSrc");
     expect(directives).toHaveProperty("connectSrc");
     expect(directives).toHaveProperty("frameSrc");
     expect(directives).toHaveProperty("objectSrc");
+  });
+
+  it("includes Google Fonts origins for the SPA index.html stylesheet", () => {
+    const directives = buildCsp({});
+    const styleSrc = (directives.styleSrc as string[]).join(" ");
+    const fontSrc = (directives.fontSrc as string[]).join(" ");
+    expect(styleSrc).toContain("https://fonts.googleapis.com");
+    expect(fontSrc).toContain("https://fonts.gstatic.com");
+  });
+
+  it("includes blob: and images.unsplash.com in imgSrc for SPA pages", () => {
+    const directives = buildCsp({});
+    const imgSrc = (directives.imgSrc as string[]).join(" ");
+    expect(imgSrc).toContain("blob:");
+    expect(imgSrc).toContain("https://images.unsplash.com");
   });
 
   it("injects ANALYTICS_BASE_URL into scriptSrc and connectSrc", () => {
