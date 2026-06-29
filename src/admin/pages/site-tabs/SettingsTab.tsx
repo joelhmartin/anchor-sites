@@ -25,6 +25,7 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
 
   const [displayName, setDisplayName] = useState(site.display_name);
   const [tokens, setTokens] = useState<Record<string, string>>(initialTokens);
+  const [ctmAccountId, setCtmAccountId] = useState(site.ctm_account_id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -36,7 +37,8 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
 
   const nameChanged = displayName.trim() !== site.display_name;
   const tokensChanged = JSON.stringify(tokens) !== JSON.stringify(initialTokens);
-  const hasChanges = nameChanged || tokensChanged;
+  const ctmChanged = ctmAccountId.trim() !== (site.ctm_account_id ?? "");
+  const hasChanges = nameChanged || tokensChanged || ctmChanged;
   const canSave = hasChanges && displayName.trim().length > 0 && !busy;
 
   async function save() {
@@ -44,9 +46,14 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
     setBusy(true);
     setError(null);
     setSaved(false);
-    const body: { display_name?: string; default_brand_tokens?: Record<string, string> } = {};
+    const body: {
+      display_name?: string;
+      default_brand_tokens?: Record<string, string>;
+      ctm_account_id?: string | null;
+    } = {};
     if (nameChanged) body.display_name = displayName.trim();
     if (tokensChanged) body.default_brand_tokens = tokens;
+    if (ctmChanged) body.ctm_account_id = ctmAccountId.trim() || null;
     try {
       await apiFetch(`/api/sites/${site.id}`, { method: "PATCH", body });
       setSaved(true);
@@ -71,6 +78,20 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
                 setDisplayName(e.target.value);
               }}
             />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="settings-ctm-account-id">CTM account ID</Label>
+            <Input
+              id="settings-ctm-account-id"
+              placeholder="e.g. 12345"
+              value={ctmAccountId}
+              onChange={(e) => {
+                setSaved(false);
+                setCtmAccountId(e.target.value);
+              }}
+            />
+            <p className="text-xs text-zinc-400">Leave empty to disable CTM script injection for this site.</p>
           </div>
 
           <div className="flex flex-col gap-2">

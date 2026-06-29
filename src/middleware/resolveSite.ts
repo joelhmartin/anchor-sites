@@ -17,6 +17,8 @@ export type ResolvedSite = {
   default_brand_tokens: Record<string, unknown>;
   /** P9-T9.3 — site-level SEO defaults (`sites.seo_defaults`), applied under per-page seo. */
   seo_defaults: Record<string, unknown>;
+  /** P11-T11.1 (D-052) — CTM account ID; null/undefined = CTM not installed for this site. */
+  ctm_account_id: string | null;
   matched_via: "domain" | "subdomain";
   plugins: PluginInstance[];
 };
@@ -127,6 +129,7 @@ type SiteRow = {
   display_name: string;
   default_brand_tokens: Record<string, unknown> | null;
   seo_defaults: Record<string, unknown> | null;
+  ctm_account_id: string | null;
   plugins: PluginInstance[] | null;
 };
 
@@ -143,7 +146,8 @@ const PLUGINS_SUBQUERY = `COALESCE((
 
 async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | null> {
   const domainRes = await pool.query<SiteRow>(
-    `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, s.seo_defaults, ${PLUGINS_SUBQUERY}
+    `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, s.seo_defaults,
+            s.ctm_account_id, ${PLUGINS_SUBQUERY}
        FROM site_domains d
        JOIN sites s ON s.id = d.site_id
       WHERE d.hostname = $1 AND s.status = 'active'
@@ -158,7 +162,8 @@ async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | 
   if (match) {
     const slug = match[1].toLowerCase();
     const slugRes = await pool.query<SiteRow>(
-      `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, s.seo_defaults, ${PLUGINS_SUBQUERY}
+      `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, s.seo_defaults,
+              s.ctm_account_id, ${PLUGINS_SUBQUERY}
          FROM sites s WHERE s.slug = $1 AND s.status = 'active' LIMIT 1`,
       [slug],
     );
@@ -177,6 +182,7 @@ function toResolvedSite(row: SiteRow, matched_via: ResolvedSite["matched_via"]):
     display_name: row.display_name,
     default_brand_tokens: row.default_brand_tokens ?? {},
     seo_defaults: row.seo_defaults ?? {},
+    ctm_account_id: row.ctm_account_id ?? null,
     matched_via,
     plugins: row.plugins ?? [],
   };

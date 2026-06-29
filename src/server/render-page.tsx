@@ -66,6 +66,16 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * P11-T11.2 (D-052) — Builds the CTM loader script tag for a given account ID.
+ * Attribute-escaped so the account ID cannot break out of the data attribute.
+ * Emitted BEFORE headExtra in shell() so CTM runs before the page bundle.
+ */
+export function ctmScriptTag(accountId: string): string {
+  const safeId = escapeHtml(accountId);
+  return `<script src="https://cdn.calltracking.com/call-tracking.min.js" async data-ctm-account-id="${safeId}"></script>`;
+}
+
 function brandTokenCss(tokens: Record<string, string>): string {
   return Object.entries(tokens)
     .map(([k, v]) => `${k}: ${v};`)
@@ -174,13 +184,14 @@ function shell(opts: {
   const brandStyle = brandTokenCss(merged);
   const styles = `:root { ${brandStyle} }${SHELL_BASE_CSS}${PACKAGE_BLOCK_CSS}${RICH_TEXT_CSS}${opts.extraCss ?? ""}`;
 
+  const ctmTag = opts.site.ctm_account_id ? `\n  ${ctmScriptTag(opts.site.ctm_account_id)}` : "";
   const html = `<!doctype html>
 <html lang="en" data-site-slug="${escapeHtml(opts.site.slug)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(opts.title)}</title>
-  ${opts.description ? `<meta name="description" content="${escapeHtml(opts.description)}" />` : ""}
+  ${opts.description ? `<meta name="description" content="${escapeHtml(opts.description)}" />` : ""}${ctmTag}
   ${opts.headExtra ?? ""}
   <style>${styles}</style>
 </head>

@@ -31,14 +31,18 @@ const patchSitePayload = z
     // P9-T9.3 — site-level SEO defaults (titleTemplate, defaultDescription,
     // defaultOgImageAssetId, twitterHandle).
     seo_defaults: siteSeoDefaultsSchema.optional(),
+    // P11-T11.1 (D-052) — CTM account ID. Null clears it (removes CTM script).
+    ctm_account_id: z.string().max(200).nullable().optional(),
   })
   .refine(
     (v) =>
       v.display_name !== undefined ||
       v.default_brand_tokens !== undefined ||
-      v.seo_defaults !== undefined,
+      v.seo_defaults !== undefined ||
+      v.ctm_account_id !== undefined,
     {
-      message: "at least one of display_name, default_brand_tokens or seo_defaults is required",
+      message:
+        "at least one of display_name, default_brand_tokens, seo_defaults or ctm_account_id is required",
     },
   );
 
@@ -143,7 +147,8 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         const { siteId } = req.params;
         const result = await pool.query(
           `SELECT s.id, s.slug, s.display_name, s.status,
-                  s.default_brand_tokens, s.seo_defaults, s.created_at,
+                  s.default_brand_tokens, s.seo_defaults, s.ctm_account_id, s.crm_site_id,
+                  s.created_at,
                   (SELECT COUNT(*)::int FROM pages WHERE site_id = s.id) AS pages_count,
                   (SELECT COUNT(*)::int FROM media_assets WHERE site_id = s.id) AS media_count
              FROM sites s
@@ -204,19 +209,24 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         return;
       }
       const { siteId } = req.params;
-      const { display_name, default_brand_tokens, seo_defaults } = parsed.data;
+      const { display_name, default_brand_tokens, seo_defaults, ctm_account_id } = parsed.data;
       try {
+        // ctm_account_id: undefined = not in payload (leave as-is); null = explicit clear.
+        const ctmValue = ctm_account_id === undefined ? undefined : ctm_account_id;
         const result = await pool.query<{ id: string }>(
           `UPDATE sites
               SET display_name = COALESCE($1, display_name),
                   default_brand_tokens = COALESCE($2::jsonb, default_brand_tokens),
-                  seo_defaults = COALESCE($3::jsonb, seo_defaults)
-            WHERE id = $4
+                  seo_defaults = COALESCE($3::jsonb, seo_defaults),
+                  ctm_account_id = CASE WHEN $5 THEN $4 ELSE ctm_account_id END
+            WHERE id = $6
             RETURNING id`,
           [
             display_name ?? null,
             default_brand_tokens ? JSON.stringify(default_brand_tokens) : null,
             seo_defaults ? JSON.stringify(seo_defaults) : null,
+            ctmValue ?? null,
+            ctmValue !== undefined,
             siteId,
           ],
         );
@@ -233,7 +243,8 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         for (const row of hosts.rows) evictSiteCache(row.hostname);
 
         const updated = await pool.query(
-          `SELECT id, slug, display_name, status, default_brand_tokens, seo_defaults, created_at FROM sites WHERE id = $1`,
+          `SELECT id, slug, display_name, status, default_brand_tokens, seo_defaults,
+                  ctm_account_id, crm_site_id, created_at FROM sites WHERE id = $1`,
           [siteId],
         );
         res.json({ site: updated.rows[0] });
