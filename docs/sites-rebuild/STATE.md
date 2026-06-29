@@ -23,9 +23,9 @@ Two cloud routines, every 4 hours, offset by 2 hours. Anchor-sites runs at HALF 
 of anchor-operations and on opposite (odd) UTC hours so two heavy builds never collide and
 total fleet token usage stays bounded.
 
-- **Routine A — BUILD** (`sites-rebuild-A`, cron `17 1-23/4 * * *` → 01:17/05:17/09:17/13:17/17:17/21:17 UTC):
+- **Routine A — BUILD** (`sites-rebuild-A`, id `trig_01DZT2rcE4cYDsfZUzvhcGgb`, cron `17 1-23/4 * * *` → 01:17/05:17/09:17/13:17/17:17/21:17 UTC):
   builds the first `ready` phase → opens a PR (CodeRabbit auto-reviews it). Never reviews or merges.
-- **Routine B — REVIEW/MERGE + PREP** (`sites-rebuild-B`, cron `17 3-23/4 * * *` → 03:17/07:17/11:17/15:17/19:17/23:17 UTC, 2h after each A):
+- **Routine B — REVIEW/MERGE + PREP** (`sites-rebuild-B`, id `trig_01ELQjhHMMfMcjaXc1pcUsDP`, cron `17 3-23/4 * * *` → 03:17/07:17/11:17/15:17/19:17/23:17 UTC, 2h after each A):
   reviews the open PR, folds in valid CodeRabbit comments + its own independent review, fixes
   defects, merges if green → marks the phase `complete`. **Then, as wrap-up, prepares the NEXT
   phase**: if the next phase is `pending-plan`, it scopes it (research the codebase, write the
@@ -58,12 +58,14 @@ Steady-state timeline: `A builds Pn → (2h) → B reviews+merges Pn AND preps P
 5. Green + clean → `gh pr merge --squash --delete-branch`; set the phase `complete` (record merge
    commit + which CodeRabbit items were addressed); also append a deploy note once CI lands.
 6. Unfixable this run → set the phase `blocked` with notes, leave the PR open, STOP (skip prep).
-7. **Prep wrap-up** — if the next phase in the table is `pending-plan`: scope it (read PLAN.md +
+7. **Prep wrap-up** — prep ONLY when, after the review, NO phase is `ready` and NONE is `in_review`
+   but a `pending-plan` phase remains (so A always has exactly one `ready` phase and B never preps
+   ahead of an unbuilt phase). Take the first `pending-plan` phase: scope it (read PLAN.md +
    relevant code/docs, derive the task list like the Phase-10 prep), write
    `docs/sites-rebuild/plans/2026-06-28-pN-<slug>.md`, record any design decisions (next free
-   D-number), flip the phase `pending-plan → ready`, commit+push this file + the plan. NO human
-   confirmation gate (operator pre-approved autonomous completion). If the next phase is already
-   `ready`/`in_review`/`complete`, nothing to prep.
+   D-number after D-049), flip the phase `pending-plan → ready`, commit+push this file + the plan.
+   NO human confirmation gate (operator pre-approved autonomous completion). If a `ready`/`in_review`
+   phase already exists, nothing to prep.
 
 ### Hard safety rules (non-negotiable)
 - Never merge with red tests (B only).
@@ -114,6 +116,14 @@ A phase flips `pending-plan → ready` only once its plan doc is committed to `m
 
 - 2026-06-28 — setup: A/B system created mirroring anchor-operations `ops-rebuild`. Phases 1–9
   already complete & deployed to prod (rev 00032-tsd; Phase 9 SEO shipped via PR #1). P10 plan
-  bootstrapped + marked `ready`; P11/P12 `pending-plan` (Routine B preps each as wrap-up). Routines
-  `sites-rebuild-A` (`17 1-23/4 * * *`) + `sites-rebuild-B` (`17 3-23/4 * * *`) — 4h cadence on odd
-  UTC hours, offset from anchor-operations (even-hour builds) so heavy builds never collide.
+  bootstrapped + marked `ready`; P11/P12 `pending-plan` (Routine B preps each as wrap-up). Cloud
+  routines created via /schedule: `sites-rebuild-A` (id `trig_01DZT2rcE4cYDsfZUzvhcGgb`,
+  `17 1-23/4 * * *`, first run 2026-06-29 05:17 UTC) + `sites-rebuild-B` (id
+  `trig_01ELQjhHMMfMcjaXc1pcUsDP`, `17 3-23/4 * * *`, first run 2026-06-29 03:17 UTC) — model
+  claude-sonnet-4-6, env env_01WDeAQYFDWv4J1Qs9qFX4U8. 4h cadence on odd UTC hours, offset from
+  anchor-operations (ops-A builds even hours :00) so two heavy builds never collide and fleet token
+  usage stays bounded. NOTE: PR #2 (Remove Kinsta → pluggable DnsProvider, GoDaddy default) was
+  merged to main outside this system 2026-06-28 — it already did much of P10's D-050 DNS work;
+  Routine A will re-read the P10 plan against current code and skip what's done. First B run at
+  03:17 has nothing in_review and P10 is already `ready`, so it will no-op (no prep). First A run at
+  05:17 builds P10.
