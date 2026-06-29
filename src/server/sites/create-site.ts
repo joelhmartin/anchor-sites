@@ -1,6 +1,10 @@
 import type { PoolClient } from "pg";
 import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
 import { seedSiteCopyIn } from "./copy-in.js";
+import { resolveCrmClient, type CrmEnv } from "../crm/resolve.js";
+import type { CrmClient } from "../crm/client.js";
+import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
+import type { CrmSyncInput } from "../crm/sync-job.js";
 
 /**
  * Shared site-creation primitive (P7-T7.6). Extracted from the inline logic in
@@ -25,7 +29,15 @@ export class SiteSlugConflictError extends Error {
 
 export async function createSiteWithDomains(
   client: PoolClient,
-  opts: { slug: string; displayName: string; brandTokens?: Record<string, string> },
+  opts: {
+    slug: string;
+    displayName: string;
+    brandTokens?: Record<string, string>;
+    /** Injectable CRM client for tests. Defaults to resolveCrmClient(). */
+    crmClient?: CrmClient;
+    /** Injectable env for CRM client resolution. Defaults to process.env. */
+    crmEnv?: CrmEnv;
+  },
 ): Promise<{ siteId: string; canonical: string; canonicalDomainId: string }> {
   const dup = await client.query(`SELECT 1 FROM sites WHERE slug = $1`, [opts.slug]);
   if (dup.rowCount && dup.rowCount > 0) {
@@ -58,6 +70,30 @@ export async function createSiteWithDomains(
 
   // P8-T8.12 (D-047): per-site copy-in — tenant auth config + starter content.
   await seedSiteCopyIn(client, siteId);
+
+  // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site creation.
+  const crmClient = opts.crmClient ?? resolveCrmClient(opts.crmEnv);
+  try {
+    const { crmSiteId } = await crmClient.provisionSite(siteId, opts.displayName, canonical);
+    if (crmSiteId) {
+      await client.query(`UPDATE sites SET crm_site_id = $1 WHERE id = $2`, [crmSiteId, siteId]);
+    }
+  } catch (err) {
+    // Best-effort: log and continue. Enqueue crm.sync retry job so pg-boss retries
+    // up to 3× with back-off (T11.7 / D-053). Boss may not be started in test env —
+    // that failure is also swallowed so site creation is never blocked.
+    // eslint-disable-next-line no-console
+    console.error("[crm] provisionSite failed — site creation continues:", err);
+    try {
+      void getBoss().send(
+        CRM_SYNC_JOB,
+        { action: "provision", siteId } satisfies CrmSyncInput,
+        { retryLimit: 3 },
+      );
+    } catch {
+      // Boss not started (JOBS_ENABLED=false or not yet booted) — skip retry enqueue.
+    }
+  }
 
   return { siteId, canonical, canonicalDomainId };
 }

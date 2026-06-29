@@ -54,8 +54,15 @@ describe("buildPuckConfig (P5-T5.4)", () => {
         expect(field.type).toBe(expected[key].type);
       }
       expect(component.defaultProps).toEqual(zodSchemaDefaults(entry.schema));
-      // render is the SAME component the prod renderer uses (no editor fork).
-      expect(component.render).toBe(entry.component);
+      // render is the prod component for normal blocks (D-018 — no editor fork).
+      // Blocks with requiresEditorWrapper=true get a wrapper that injects
+      // isEditorPreview=true (e.g. crm_form — D-006 / PHI constraint).
+      if (entry.requiresEditorWrapper) {
+        expect(typeof component.render).toBe("function");
+        expect(component.render).not.toBe(entry.component);
+      } else {
+        expect(component.render).toBe(entry.component);
+      }
     }
   });
 

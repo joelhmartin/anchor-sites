@@ -9,9 +9,15 @@ import {
   handleMaterializeTemplate,
   type MaterializeTemplateInput,
 } from "./materialize-template.js";
+import {
+  handleCrmSync,
+  CRM_SYNC_JOB,
+  type CrmSyncInput,
+} from "../crm/sync-job.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
+export { CRM_SYNC_JOB };
 
 /**
  * pg-boss bootstrap (D-030, P3-T3.8).
@@ -147,6 +153,12 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(TEMPLATE_MATERIALIZE);
   await boss.work<MaterializeTemplateInput>(TEMPLATE_MATERIALIZE, async ([job]) => {
     await handleMaterializeTemplate(job.data, { pool: defaultPool });
+  });
+
+  // P11-T11.7 (D-053): CRM sync retries.
+  await boss.createQueue(CRM_SYNC_JOB);
+  await boss.work<CrmSyncInput>(CRM_SYNC_JOB, async ([job]) => {
+    await handleCrmSync(job.data, { pool: defaultPool });
   });
 }
 

@@ -8,6 +8,10 @@ import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 import { evictSiteCache } from "../../middleware/resolveSite.js";
 import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-site.js";
 import { siteSeoDefaultsSchema } from "../seo/schema.js";
+import { resolveCrmClient } from "../crm/resolve.js";
+import type { CrmClient } from "../crm/client.js";
+import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
+import type { CrmSyncInput } from "../crm/sync-job.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -31,14 +35,18 @@ const patchSitePayload = z
     // P9-T9.3 — site-level SEO defaults (titleTemplate, defaultDescription,
     // defaultOgImageAssetId, twitterHandle).
     seo_defaults: siteSeoDefaultsSchema.optional(),
+    // P11-T11.1 (D-052) — CTM account ID. Null clears it (removes CTM script).
+    ctm_account_id: z.string().max(200).nullable().optional(),
   })
   .refine(
     (v) =>
       v.display_name !== undefined ||
       v.default_brand_tokens !== undefined ||
-      v.seo_defaults !== undefined,
+      v.seo_defaults !== undefined ||
+      v.ctm_account_id !== undefined,
     {
-      message: "at least one of display_name, default_brand_tokens or seo_defaults is required",
+      message:
+        "at least one of display_name, default_brand_tokens, seo_defaults or ctm_account_id is required",
     },
   );
 
@@ -50,10 +58,13 @@ const createPagePayload = z.object({
 export type AdminSitesOptions = {
   pool?: Pool;
   createRateLimit?: RateLimitOptions;
+  /** Injectable CRM client for tests. Defaults to resolveCrmClient(). */
+  crmClient?: CrmClient;
 };
 
 export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
   const pool = opts.pool ?? defaultPool;
+  const crmClient = opts.crmClient ?? resolveCrmClient(process.env);
   const router = Router();
   const admin = requireAdmin();
   const createLimiter = rateLimit(opts.createRateLimit ?? { max: 10, windowMs: 60_000 });
@@ -105,6 +116,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           slug,
           displayName: display_name,
           brandTokens: default_brand_tokens,
+          crmClient,
         });
         await client.query("COMMIT");
         // P10-10.8: canonical domain row is created in site_domains (pending).
@@ -143,7 +155,8 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         const { siteId } = req.params;
         const result = await pool.query(
           `SELECT s.id, s.slug, s.display_name, s.status,
-                  s.default_brand_tokens, s.seo_defaults, s.created_at,
+                  s.default_brand_tokens, s.seo_defaults, s.ctm_account_id, s.crm_site_id,
+                  s.created_at,
                   (SELECT COUNT(*)::int FROM pages WHERE site_id = s.id) AS pages_count,
                   (SELECT COUNT(*)::int FROM media_assets WHERE site_id = s.id) AS media_count
              FROM sites s
@@ -204,19 +217,24 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         return;
       }
       const { siteId } = req.params;
-      const { display_name, default_brand_tokens, seo_defaults } = parsed.data;
+      const { display_name, default_brand_tokens, seo_defaults, ctm_account_id } = parsed.data;
       try {
+        // ctm_account_id: undefined = not in payload (leave as-is); null = explicit clear.
+        const ctmValue = ctm_account_id === undefined ? undefined : ctm_account_id;
         const result = await pool.query<{ id: string }>(
           `UPDATE sites
               SET display_name = COALESCE($1, display_name),
                   default_brand_tokens = COALESCE($2::jsonb, default_brand_tokens),
-                  seo_defaults = COALESCE($3::jsonb, seo_defaults)
-            WHERE id = $4
+                  seo_defaults = COALESCE($3::jsonb, seo_defaults),
+                  ctm_account_id = CASE WHEN $5 THEN $4 ELSE ctm_account_id END
+            WHERE id = $6
             RETURNING id`,
           [
             display_name ?? null,
             default_brand_tokens ? JSON.stringify(default_brand_tokens) : null,
             seo_defaults ? JSON.stringify(seo_defaults) : null,
+            ctmValue ?? null,
+            ctmValue !== undefined,
             siteId,
           ],
         );
@@ -232,11 +250,59 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         );
         for (const row of hosts.rows) evictSiteCache(row.hostname);
 
-        const updated = await pool.query(
-          `SELECT id, slug, display_name, status, default_brand_tokens, seo_defaults, created_at FROM sites WHERE id = $1`,
+        const updated = await pool.query<{
+          id: string;
+          display_name: string;
+          crm_site_id: string | null;
+          status: string;
+        }>(
+          `SELECT id, slug, display_name, status, default_brand_tokens, seo_defaults,
+                  ctm_account_id, crm_site_id, created_at FROM sites WHERE id = $1`,
           [siteId],
         );
-        res.json({ site: updated.rows[0] });
+        const site = updated.rows[0];
+        res.json({ site });
+
+        // P11-T11.7 (D-053): best-effort CRM sync after PATCH.
+        if (site.crm_site_id && (display_name !== undefined)) {
+          const primaryRow = await pool.query<{ hostname: string }>(
+            `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+            [siteId],
+          );
+          crmClient.updateSite(site.crm_site_id, {
+            name: site.display_name,
+            primaryDomain: primaryRow.rows[0]?.hostname,
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error("[crm] updateSite failed (best-effort):", err);
+            try {
+              void getBoss().send(
+                CRM_SYNC_JOB,
+                { action: "update", siteId } satisfies CrmSyncInput,
+                { retryLimit: 3 },
+              );
+            } catch {
+              // Boss not started — skip retry enqueue.
+            }
+          });
+        }
+        // Deprovision when site is archived via PATCH status (status not in patchSitePayload yet,
+        // but guard here for when it lands — D-053).
+        if (site.crm_site_id && site.status === "archived") {
+          crmClient.deprovisionSite(site.crm_site_id).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error("[crm] deprovisionSite failed (best-effort):", err);
+            try {
+              void getBoss().send(
+                CRM_SYNC_JOB,
+                { action: "deprovision", siteId } satisfies CrmSyncInput,
+                { retryLimit: 3 },
+              );
+            } catch {
+              // Boss not started — skip retry enqueue.
+            }
+          });
+        }
       } catch (err) {
         next(err);
       }

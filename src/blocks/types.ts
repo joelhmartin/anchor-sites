@@ -37,4 +37,6 @@ export type BlockRegistryEntry<TSchema extends z.ZodTypeAny = z.ZodTypeAny> = {
   aiHints?: string;
   /** Editor grouping — "header", "content", "layout", "cta", etc. */
   category: string;
+  /** When true, buildPuckConfig injects isEditorPreview=true (e.g. crm_form, D-006). */
+  requiresEditorWrapper?: boolean;
 };
