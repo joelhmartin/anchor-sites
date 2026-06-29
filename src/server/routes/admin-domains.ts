@@ -7,6 +7,7 @@ import { evictSiteCache } from "../../middleware/resolveSite.js";
 import { getDomainConfig, isUnderSitesDomain } from "../../config/domain.js";
 import { resolveDnsProvider } from "../dns/resolve.js";
 import type { DnsProvider } from "../dns/provider.js";
+import { ManualDnsProvider } from "../dns/manual.js";
 import { CloudRunDomainsClient } from "../gcloud/run-domains.js";
 
 /** Classify a hostname as managed (our DNS) or client-owned (external DNS). */
@@ -202,7 +203,10 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
         const { hostname } = row.rows[0];
         const cfg = getDomainConfig();
         const cloudRun = getCloudRun();
-        const dns = getDns();
+        // Client-owned domains (outside the Anchor zone) must use ManualDnsProvider:
+        // their records are surfaced to the operator rather than auto-written via GoDaddy.
+        const dns =
+          opts.dns ?? (domainClass(hostname) === "managed" ? resolveDnsProvider() : new ManualDnsProvider());
 
         // Step 1: Cloud Run mapping
         let mapping;

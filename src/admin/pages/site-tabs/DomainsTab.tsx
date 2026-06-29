@@ -201,16 +201,14 @@ function DomainCard({
         </div>
 
         <div className="flex gap-2">
-          {!domain.is_primary && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={onProvision}
-            >
-              {busy ? <Spinner /> : "Provision"}
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={onProvision}
+          >
+            {busy ? <Spinner /> : "Provision"}
+          </Button>
           {!domain.is_primary && (
             <Button
               size="sm"

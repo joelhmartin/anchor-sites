@@ -394,3 +394,60 @@ d("admin domains API — POST provision + GET status (10.6)", () => {
     expect(r.status).toBe(404);
   });
 });
+
+d("admin domains API — provision client-owned domain uses manual DNS (no opts.dns injection)", () => {
+  let pool: Pool;
+  let mockCloudRun: ReturnType<typeof makeMockCloudRun>;
+  let app: express.Express;
+  let muldoonId: string;
+  let domainId: string;
+  const hostname = "client-nodns.example.com";
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
+       VALUES ($1, $2, false, 'pending', 'pending')
+       RETURNING id`,
+      [muldoonId, hostname],
+    );
+    domainId = ins.rows[0].id;
+
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    mockCloudRun = makeMockCloudRun({
+      resourceRecords: [{ name: hostname, type: "CNAME", rrdata: "ghs.googlehosted.com." }],
+    });
+    // No opts.dns — simulates production without GoDaddy creds (or with them: the code
+    // must select ManualDnsProvider for client-owned domains regardless of env).
+    app = buildApp(pool, { cloudRun: mockCloudRun });
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM site_domains WHERE hostname = $1`, [hostname]).catch(() => undefined);
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  it("provision of client-owned domain reports external DNS (not a DNS error)", async () => {
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${domainId}/provision`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+
+    const dnsStep = r.body.steps.find((s: { step: string }) => s.step === "dns");
+    expect(dnsStep).toBeDefined();
+    // Manual provider returns "external" for every record — should surface as ok/external, not error.
+    expect(dnsStep.status).toBe("ok");
+    expect(dnsStep.detail).toMatch(/external|manual/i);
+
+    // Required records are still returned for the operator.
+    expect(Array.isArray(r.body.required_records)).toBe(true);
+    expect(r.body.required_records.length).toBeGreaterThan(0);
+  });
+});

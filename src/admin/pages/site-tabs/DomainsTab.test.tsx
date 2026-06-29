@@ -113,7 +113,7 @@ describe("DomainsTab (P10-10.7)", () => {
     });
   });
 
-  it("Provision button appears for non-primary domains and calls provision endpoint", async () => {
+  it("Provision button appears for all domains (including primary) and calls provision endpoint", async () => {
     const fetchMock = vi.fn(async (url: unknown, opts?: RequestInit) => {
       if (String(url).includes("/provision") && opts?.method === "POST") {
         return json({ steps: [{ step: "cloud_run", status: "ok" }], required_records: [] });
@@ -128,8 +128,10 @@ describe("DomainsTab (P10-10.7)", () => {
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.example.com"));
 
-    const provisionBtn = screen.getByRole("button", { name: /provision/i });
-    fireEvent.click(provisionBtn);
+    // Both domains (primary managed + non-primary client-owned) show a Provision button.
+    const provisionBtns = screen.getAllByRole("button", { name: /provision/i });
+    expect(provisionBtns.length).toBe(2);
+    fireEvent.click(provisionBtns[0]);
 
     await waitFor(() => {
       const provCalls = fetchMock.mock.calls.filter(
@@ -161,7 +163,9 @@ describe("DomainsTab (P10-10.7)", () => {
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.example.com"));
 
-    fireEvent.click(screen.getByRole("button", { name: /provision/i }));
+    // Two Provision buttons — click the first (primary managed domain).
+    const provisionBtns = screen.getAllByRole("button", { name: /provision/i });
+    fireEvent.click(provisionBtns[0]);
 
     await waitFor(() => {
       expect(screen.getByText("ghs.googlehosted.com")).toBeTruthy();
