@@ -15,6 +15,7 @@ import { SettingsTab } from "./site-tabs/SettingsTab.js";
 import { PluginsTab } from "./site-tabs/PluginsTab.js";
 import { MembersTab } from "./site-tabs/MembersTab.js";
 import { SeoSettingsTab } from "./site-tabs/SeoSettingsTab.js";
+import { DomainsTab } from "./site-tabs/DomainsTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
@@ -30,6 +31,7 @@ const TABS = [
   { key: "members", label: "Members" },
   { key: "media", label: "Media" },
   { key: "plugins", label: "Plugins" },
+  { key: "domains", label: "Domains" },
   { key: "seo", label: "SEO" },
   { key: "settings", label: "Settings" },
 ] as const;
@@ -148,6 +150,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             {tab === "members" && <MembersTab siteId={site.id} />}
             {tab === "media" && <MediaTab siteId={site.id} />}
             {tab === "plugins" && <PluginsTab siteId={site.id} />}
+            {tab === "domains" && <DomainsTab siteId={site.id} />}
             {tab === "seo" && <SeoSettingsTab site={site} />}
             {tab === "settings" && <SettingsTab site={site} />}
           </div>
