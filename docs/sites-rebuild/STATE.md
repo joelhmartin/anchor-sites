@@ -127,3 +127,4 @@ A phase flips `pending-plan → ready` only once its plan doc is committed to `m
   Routine A will re-read the P10 plan against current code and skip what's done. First B run at
   03:17 has nothing in_review and P10 is already `ready`, so it will no-op (no prep). First A run at
   05:17 builds P10.
+- 2026-06-29 03:17 — B run: no in_review phase; P10 already `ready` → no prep (rule: prep only when no ready/in_review phase exists). Docker unavailable in env (no DB); GitHub MCP auth confirmed. No-op run as anticipated.
