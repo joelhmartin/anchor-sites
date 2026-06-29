@@ -26,7 +26,7 @@ export class SiteSlugConflictError extends Error {
 export async function createSiteWithDomains(
   client: PoolClient,
   opts: { slug: string; displayName: string; brandTokens?: Record<string, string> },
-): Promise<{ siteId: string; canonical: string }> {
+): Promise<{ siteId: string; canonical: string; canonicalDomainId: string }> {
   const dup = await client.query(`SELECT 1 FROM sites WHERE slug = $1`, [opts.slug]);
   if (dup.rowCount && dup.rowCount > 0) {
     throw new SiteSlugConflictError(opts.slug);

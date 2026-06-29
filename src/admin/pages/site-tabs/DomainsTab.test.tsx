@@ -57,9 +57,7 @@ describe("DomainsTab (P10-10.7)", () => {
   it("shows a loading spinner while fetching", () => {
     global.fetch = vi.fn(() => new Promise(() => undefined)) as unknown as typeof fetch;
     render(<DomainsTab siteId={SITE_ID} />);
-    // Spinner or loading state present
-    const spinner = document.querySelector("[data-slot=spinner]") ?? document.querySelector("[aria-label=Loading]");
-    // At minimum no error shown and no domain rows visible
+    // No domain rows visible while loading
     expect(screen.queryByText("acme.sites.anchorcorps.com")).toBeNull();
   });
 
@@ -86,13 +84,18 @@ describe("DomainsTab (P10-10.7)", () => {
   });
 
   it("shows add-domain form and POSTs a new hostname", async () => {
-    const fetchMock = vi.fn(async (url: unknown) => {
-      if (String(url).includes("/domains") && !String(url).includes("/provision") && !String(url).includes("/status")) {
+    const fetchMock = vi.fn(async (url: unknown, opts?: RequestInit) => {
+      if (
+        String(url).includes("/domains") &&
+        !String(url).includes("/provision") &&
+        !String(url).includes("/status")
+      ) {
+        if (opts?.method === "POST") return json({ domain: CLIENT_DOMAIN }, 201);
         return json({ domains: [MANAGED_DOMAIN] });
       }
-      return json({ domain: CLIENT_DOMAIN }, 201);
-    }) as unknown as typeof fetch;
-    global.fetch = fetchMock;
+      return json({});
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.sites.anchorcorps.com"));
@@ -103,8 +106,8 @@ describe("DomainsTab (P10-10.7)", () => {
 
     await waitFor(() => {
       const posts = fetchMock.mock.calls.filter(
-        ([url, opts]: [unknown, RequestInit]) =>
-          String(url).includes("/domains") && opts?.method === "POST",
+        ([url, o]: [unknown, RequestInit?]) =>
+          String(url).includes("/domains") && o?.method === "POST",
       );
       expect(posts.length).toBeGreaterThanOrEqual(1);
     });
@@ -112,15 +115,15 @@ describe("DomainsTab (P10-10.7)", () => {
 
   it("Provision button appears for non-primary domains and calls provision endpoint", async () => {
     const fetchMock = vi.fn(async (url: unknown, opts?: RequestInit) => {
-      if (String(url).includes("/provision")) {
+      if (String(url).includes("/provision") && opts?.method === "POST") {
         return json({ steps: [{ step: "cloud_run", status: "ok" }], required_records: [] });
       }
       if (String(url).includes("/domains")) {
         return json({ domains: [MANAGED_DOMAIN, CLIENT_DOMAIN] });
       }
       return json({});
-    }) as unknown as typeof fetch;
-    global.fetch = fetchMock;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.example.com"));
@@ -129,8 +132,9 @@ describe("DomainsTab (P10-10.7)", () => {
     fireEvent.click(provisionBtn);
 
     await waitFor(() => {
-      const provCalls = fetchMock.mock.calls.filter(([url, opts]: [unknown, RequestInit]) =>
-        String(url).includes("/provision") && opts?.method === "POST",
+      const provCalls = fetchMock.mock.calls.filter(
+        ([url, o]: [unknown, RequestInit?]) =>
+          String(url).includes("/provision") && o?.method === "POST",
       );
       expect(provCalls.length).toBeGreaterThanOrEqual(1);
     });
@@ -141,15 +145,18 @@ describe("DomainsTab (P10-10.7)", () => {
       { name: "acme.example.com", type: "CNAME", data: "ghs.googlehosted.com" },
     ];
     const fetchMock = vi.fn(async (url: unknown, opts?: RequestInit) => {
-      if (String(url).includes("/provision")) {
-        return json({ steps: [{ step: "cloud_run", status: "ok" }], required_records: requiredRecords });
+      if (String(url).includes("/provision") && opts?.method === "POST") {
+        return json({
+          steps: [{ step: "cloud_run", status: "ok" }],
+          required_records: requiredRecords,
+        });
       }
       if (String(url).includes("/domains")) {
         return json({ domains: [MANAGED_DOMAIN, CLIENT_DOMAIN] });
       }
       return json({});
-    }) as unknown as typeof fetch;
-    global.fetch = fetchMock;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.example.com"));
@@ -175,13 +182,13 @@ describe("DomainsTab (P10-10.7)", () => {
   });
 
   it("Remove button DELETEs and reloads the list", async () => {
-    const fetchMock = vi.fn(async (url: unknown, opts?: RequestInit) => {
+    const fetchMock = vi.fn(async (_url: unknown, opts?: RequestInit) => {
       if (opts?.method === "DELETE") {
         return new Response(null, { status: 204 });
       }
       return json({ domains: [MANAGED_DOMAIN, CLIENT_DOMAIN] });
-    }) as unknown as typeof fetch;
-    global.fetch = fetchMock;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.example.com"));
@@ -190,14 +197,16 @@ describe("DomainsTab (P10-10.7)", () => {
 
     await waitFor(() => {
       const delCalls = fetchMock.mock.calls.filter(
-        ([, opts]: [unknown, RequestInit]) => opts?.method === "DELETE",
+        ([, o]: [unknown, RequestInit?]) => o?.method === "DELETE",
       );
       expect(delCalls.length).toBeGreaterThanOrEqual(1);
     });
   });
 
   it("shows an error message if the list fetch fails", async () => {
-    global.fetch = vi.fn(async () => json({ error: "server error" }, 500)) as unknown as typeof fetch;
+    global.fetch = vi.fn(async () =>
+      json({ error: "server error" }, 500),
+    ) as unknown as typeof fetch;
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => {
       expect(screen.getByText(/server error|couldn't load/i)).toBeTruthy();
