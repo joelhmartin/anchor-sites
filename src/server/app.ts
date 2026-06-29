@@ -15,6 +15,7 @@ import { templatesRouter } from "./routes/templates.js";
 import { pluginsRouter } from "./routes/plugins.js";
 import { adminTenantRouter } from "./routes/admin-tenant.js";
 import { adminDomainsRouter } from "./routes/admin-domains.js";
+import { adminCrmRouter } from "./routes/admin-crm.js";
 import { meRouter } from "./routes/me.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
@@ -91,6 +92,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // P10: domain provisioning API — list/add/remove domains + provision/status.
   app.use("/api", adminDomainsRouter());
+
+  // P11: CRM proxy API — phone numbers + campaigns read-through.
+  app.use("/api", adminCrmRouter());
 
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces

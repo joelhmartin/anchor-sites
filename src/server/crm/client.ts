@@ -138,7 +138,7 @@ export class StubCrmClient implements CrmClient {
     console.log(`[CRM stub] ${msg}`);
   }
 
-  async provisionSite(siteId: string, name: string): Promise<CrmSiteProvisionResult> {
+  async provisionSite(siteId: string, name: string, _primaryDomain: string): Promise<CrmSiteProvisionResult> {
     this.log(`provisionSite(${siteId}, "${name}") — stub`);
     return { crmSiteId: `stub-${siteId}` };
   }
@@ -165,15 +165,15 @@ export class StubCrmClient implements CrmClient {
 // ---------------------------------------------------------------------------
 
 export class NullCrmClient implements CrmClient {
-  async provisionSite(): Promise<CrmSiteProvisionResult> {
+  async provisionSite(_siteId: string, _name: string, _primaryDomain: string): Promise<CrmSiteProvisionResult> {
     return { crmSiteId: "" };
   }
-  async updateSite(): Promise<void> {}
-  async deprovisionSite(): Promise<void> {}
-  async listPhoneNumbers(): Promise<CrmPhoneNumber[]> {
+  async updateSite(_crmSiteId: string, _patch: { name?: string; primaryDomain?: string }): Promise<void> {}
+  async deprovisionSite(_crmSiteId: string): Promise<void> {}
+  async listPhoneNumbers(_crmSiteId: string): Promise<CrmPhoneNumber[]> {
     return [];
   }
-  async listCampaigns(): Promise<CrmCampaign[]> {
+  async listCampaigns(_crmSiteId: string): Promise<CrmCampaign[]> {
     return [];
   }
 }

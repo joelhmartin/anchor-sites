@@ -2,6 +2,7 @@
 
 > Phase 1 schema. Migration `1747571000000_sites_pages_revisions.cjs`. See `DECISIONS.md` D-001 (block JSON as source of truth) and D-002 (Zod schemas as the contract).
 > Phase 10 design decisions: **D-050** (pluggable `DnsProvider`, Kinsta retired — see `docs/domains.md`) and **D-051** (two domain classes: managed subdomains + client-owned custom domains). Full domain model in `docs/domains.md`.
+> Phase 11 design decisions: **D-052** (CTM per-site config + PhoneNumber block) and **D-053** (CRM HTTP client, crm_form block, CRM lifecycle hooks). Full CRM/CTM model in **`docs/crm.md`**.
 
 ## Tables
 
@@ -15,6 +16,8 @@ The top-level multi-tenant entity.
 | `display_name` | `text` | Shown in admin UI |
 | `status` | `text` | CHECK: `'active' \| 'archived' \| 'suspended'`. Default `'active'` |
 | `default_brand_tokens` | `jsonb` | Per-site CSS custom properties — e.g. `{"--theme-main": "#0a3d62"}`. Injected into HTML `<head>` by the renderer (Task 1.6) |
+| `ctm_account_id` | `text` nullable | CallTrackingMetrics account ID (D-052). When set, the renderer injects the CTM script tag. Set via **Settings → CTM account ID** |
+| `crm_site_id` | `text` nullable | anchor-hub CRM site ID (D-053). Populated by `provisionSite()` at site creation; null = not yet provisioned |
 | `created_at` | `timestamptz` | |
 
 ### `site_domains`
