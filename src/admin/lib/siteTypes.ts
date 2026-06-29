@@ -17,5 +17,7 @@ export type SiteDetail = SiteListRow & {
   ctm_account_id?: string | null;
   /** P11-T11.1 (D-053) — CRM site ID; null = not yet provisioned. */
   crm_site_id?: string | null;
+  /** P12-T12.1 (D-054) — analytics opt-out flag. */
+  analytics_disabled?: boolean;
   media_count: number;
 };

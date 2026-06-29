@@ -19,6 +19,8 @@ export type ResolvedSite = {
   seo_defaults: Record<string, unknown>;
   /** P11-T11.1 (D-052) — CTM account ID; null/undefined = CTM not installed for this site. */
   ctm_account_id: string | null;
+  /** P12-T12.1 (D-054) — when true, analytics script injection is skipped for this site. */
+  analytics_disabled: boolean;
   matched_via: "domain" | "subdomain";
   plugins: PluginInstance[];
 };
@@ -130,6 +132,7 @@ type SiteRow = {
   default_brand_tokens: Record<string, unknown> | null;
   seo_defaults: Record<string, unknown> | null;
   ctm_account_id: string | null;
+  analytics_disabled: boolean;
   plugins: PluginInstance[] | null;
 };
 
@@ -147,7 +150,7 @@ const PLUGINS_SUBQUERY = `COALESCE((
 async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | null> {
   const domainRes = await pool.query<SiteRow>(
     `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, s.seo_defaults,
-            s.ctm_account_id, ${PLUGINS_SUBQUERY}
+            s.ctm_account_id, s.analytics_disabled, ${PLUGINS_SUBQUERY}
        FROM site_domains d
        JOIN sites s ON s.id = d.site_id
       WHERE d.hostname = $1 AND s.status = 'active'
@@ -163,7 +166,7 @@ async function lookupSite(pool: Pool, hostname: string): Promise<ResolvedSite | 
     const slug = match[1].toLowerCase();
     const slugRes = await pool.query<SiteRow>(
       `SELECT s.id, s.slug, s.display_name, s.default_brand_tokens, s.seo_defaults,
-              s.ctm_account_id, ${PLUGINS_SUBQUERY}
+              s.ctm_account_id, s.analytics_disabled, ${PLUGINS_SUBQUERY}
          FROM sites s WHERE s.slug = $1 AND s.status = 'active' LIMIT 1`,
       [slug],
     );
@@ -183,6 +186,7 @@ function toResolvedSite(row: SiteRow, matched_via: ResolvedSite["matched_via"]):
     default_brand_tokens: row.default_brand_tokens ?? {},
     seo_defaults: row.seo_defaults ?? {},
     ctm_account_id: row.ctm_account_id ?? null,
+    analytics_disabled: row.analytics_disabled ?? false,
     matched_via,
     plugins: row.plugins ?? [],
   };

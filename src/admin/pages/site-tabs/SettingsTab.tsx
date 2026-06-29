@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useId } from "react";
 import { apiFetch } from "../../lib/apiFetch.js";
 import { tenantHostname } from "../../lib/siteUrl.js";
 import type { SiteDetail } from "../../lib/siteTypes.js";
@@ -26,6 +26,8 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
   const [displayName, setDisplayName] = useState(site.display_name);
   const [tokens, setTokens] = useState<Record<string, string>>(initialTokens);
   const [ctmAccountId, setCtmAccountId] = useState(site.ctm_account_id ?? "");
+  const [analyticsDisabled, setAnalyticsDisabled] = useState(site.analytics_disabled ?? false);
+  const analyticsToggleId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -38,7 +40,8 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
   const nameChanged = displayName.trim() !== site.display_name;
   const tokensChanged = JSON.stringify(tokens) !== JSON.stringify(initialTokens);
   const ctmChanged = ctmAccountId.trim() !== (site.ctm_account_id ?? "");
-  const hasChanges = nameChanged || tokensChanged || ctmChanged;
+  const analyticsChanged = analyticsDisabled !== (site.analytics_disabled ?? false);
+  const hasChanges = nameChanged || tokensChanged || ctmChanged || analyticsChanged;
   const canSave = hasChanges && displayName.trim().length > 0 && !busy;
 
   async function save() {
@@ -50,10 +53,12 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
       display_name?: string;
       default_brand_tokens?: Record<string, string>;
       ctm_account_id?: string | null;
+      analytics_disabled?: boolean;
     } = {};
     if (nameChanged) body.display_name = displayName.trim();
     if (tokensChanged) body.default_brand_tokens = tokens;
     if (ctmChanged) body.ctm_account_id = ctmAccountId.trim() || null;
+    if (analyticsChanged) body.analytics_disabled = analyticsDisabled;
     try {
       await apiFetch(`/api/sites/${site.id}`, { method: "PATCH", body });
       setSaved(true);
@@ -92,6 +97,20 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
               }}
             />
             <p className="text-xs text-zinc-400">Leave empty to disable CTM script injection for this site.</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              id={analyticsToggleId}
+              type="checkbox"
+              checked={analyticsDisabled}
+              onChange={(e) => {
+                setSaved(false);
+                setAnalyticsDisabled(e.target.checked);
+              }}
+              className="h-4 w-4"
+            />
+            <Label htmlFor={analyticsToggleId}>Disable analytics script injection for this site</Label>
           </div>
 
           <div className="flex flex-col gap-2">
