@@ -1,6 +1,7 @@
 // Side-effect import: registers every block (package blocks + inline rich-text)
 // into the shared registry, so the editor's Config reflects exactly what the
 // prod renderer renders (D-018 — same components, no editor-only fork).
+import { createElement, type ComponentType } from "react";
 import "../blocks/index.js";
 import { listBlocks } from "../blocks/registry.js";
 import { zodToPuckFields, zodSchemaDefaults } from "./zod-fields.js";
@@ -32,7 +33,13 @@ export function buildPuckConfig(opts: OverrideOpts = {}): Config {
       // picker fetch the right library.
       fields: applyFieldOverrides(type, zodToPuckFields(entry.schema), opts),
       defaultProps: zodSchemaDefaults(entry.schema),
-      render: entry.component as unknown as ComponentConfig["render"],
+      // Wrap render to pass isEditorPreview=true for blocks that use it
+      // (e.g. crm_form — prevents live dangerouslySetInnerHTML in editor).
+      render: ((props: Record<string, unknown>) =>
+        createElement(entry.component as ComponentType<Record<string, unknown>>, {
+          ...props,
+          isEditorPreview: true,
+        })) as unknown as ComponentConfig["render"],
     } as ComponentConfig;
   }
 

@@ -169,8 +169,13 @@ describe("resolveCrmClient", () => {
     expect(client).toBeInstanceOf(HttpCrmClient);
   });
 
-  it("returns StubCrmClient when credentials absent", () => {
-    const client = resolveCrmClient({});
+  it("returns StubCrmClient when credentials absent in non-production", () => {
+    const client = resolveCrmClient({ NODE_ENV: "development" });
     expect(client).toBeInstanceOf(StubCrmClient);
+  });
+
+  it("returns NullCrmClient in production without credentials (prevents stub IDs in DB)", () => {
+    const client = resolveCrmClient({ NODE_ENV: "production" });
+    expect(client).toBeInstanceOf(NullCrmClient);
   });
 });

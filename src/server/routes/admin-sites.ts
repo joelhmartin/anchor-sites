@@ -10,6 +10,8 @@ import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-si
 import { siteSeoDefaultsSchema } from "../seo/schema.js";
 import { resolveCrmClient } from "../crm/resolve.js";
 import type { CrmClient } from "../crm/client.js";
+import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
+import type { CrmSyncInput } from "../crm/sync-job.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -273,6 +275,15 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           }).catch((err) => {
             // eslint-disable-next-line no-console
             console.error("[crm] updateSite failed (best-effort):", err);
+            try {
+              void getBoss().send(
+                CRM_SYNC_JOB,
+                { action: "update", siteId } satisfies CrmSyncInput,
+                { retryLimit: 3 },
+              );
+            } catch {
+              // Boss not started — skip retry enqueue.
+            }
           });
         }
         // Deprovision when site is archived via PATCH status (status not in patchSitePayload yet,
@@ -281,6 +292,15 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           crmClient.deprovisionSite(site.crm_site_id).catch((err) => {
             // eslint-disable-next-line no-console
             console.error("[crm] deprovisionSite failed (best-effort):", err);
+            try {
+              void getBoss().send(
+                CRM_SYNC_JOB,
+                { action: "deprovision", siteId } satisfies CrmSyncInput,
+                { retryLimit: 3 },
+              );
+            } catch {
+              // Boss not started — skip retry enqueue.
+            }
           });
         }
       } catch (err) {

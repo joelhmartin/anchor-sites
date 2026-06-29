@@ -3,6 +3,8 @@ import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
 import { seedSiteCopyIn } from "./copy-in.js";
 import { resolveCrmClient, type CrmEnv } from "../crm/resolve.js";
 import type { CrmClient } from "../crm/client.js";
+import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
+import type { CrmSyncInput } from "../crm/sync-job.js";
 
 /**
  * Shared site-creation primitive (P7-T7.6). Extracted from the inline logic in
@@ -77,9 +79,20 @@ export async function createSiteWithDomains(
       await client.query(`UPDATE sites SET crm_site_id = $1 WHERE id = $2`, [crmSiteId, siteId]);
     }
   } catch (err) {
-    // Best-effort: log and continue. Retry handled by crm.sync pg-boss job (T11.7).
+    // Best-effort: log and continue. Enqueue crm.sync retry job so pg-boss retries
+    // up to 3× with back-off (T11.7 / D-053). Boss may not be started in test env —
+    // that failure is also swallowed so site creation is never blocked.
     // eslint-disable-next-line no-console
     console.error("[crm] provisionSite failed — site creation continues:", err);
+    try {
+      void getBoss().send(
+        CRM_SYNC_JOB,
+        { action: "provision", siteId } satisfies CrmSyncInput,
+        { retryLimit: 3 },
+      );
+    } catch {
+      // Boss not started (JOBS_ENABLED=false or not yet booted) — skip retry enqueue.
+    }
   }
 
   return { siteId, canonical, canonicalDomainId };
