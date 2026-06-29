@@ -21,6 +21,12 @@
 #   MAILGUN_API_KEY               — shared with anchor-hub (D-023).
 #   MAILGUN_DOMAIN                — shared with anchor-hub.
 #   MAILGUN_DEFAULT_FROM          — shared with anchor-hub.
+#   GOOGLE_CLIENT_ID              — Studio Google OAuth web client (D-034).
+#   GOOGLE_CLIENT_SECRET          — Studio Google OAuth secret.
+#   BETTER_AUTH_SECRET            — 32+ random bytes; Studio session signing.
+#   GODADDY_API_KEY               — GoDaddy DNS API key (DnsProvider, shared
+#                                   project-wide across the Cloud Run services).
+#   GODADDY_API_SECRET            — GoDaddy DNS API secret.
 
 substitutions:
   _REGION: us-central1
@@ -99,7 +105,11 @@ steps:
       - --port=8080
       - --add-cloudsql-instances=${_SQL_INSTANCE}
       - --set-env-vars=NODE_ENV=production
-      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,ADMIN_API_TOKEN=ANCHOR_SITES_ADMIN_API_TOKEN:latest,MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest,MAILGUN_DEFAULT_FROM=MAILGUN_DEFAULT_FROM:latest
+      # NOTE: --set-secrets REPLACES the service's entire secret list on every
+      # deploy. Any secret NOT listed here is dropped from the next revision —
+      # so OAuth (Studio Google sign-in) and GoDaddy DNS MUST be listed here, or
+      # a CI deploy silently disables them. Keep this in sync with Secret Manager.
+      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,ADMIN_API_TOKEN=ANCHOR_SITES_ADMIN_API_TOKEN:latest,MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest,MAILGUN_DEFAULT_FROM=MAILGUN_DEFAULT_FROM:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,GODADDY_API_KEY=GODADDY_API_KEY:latest,GODADDY_API_SECRET=GODADDY_API_SECRET:latest
       - --min-instances=0
       - --max-instances=10
       - --cpu=1
