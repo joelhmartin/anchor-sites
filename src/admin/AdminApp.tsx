@@ -9,6 +9,7 @@ import { EditorPage } from "./pages/EditorPage.js";
 import { PostEditorPage } from "./pages/PostEditorPage.js";
 import { EventEditorPage } from "./pages/EventEditorPage.js";
 import { NotFound } from "./pages/NotFound.js";
+import { ErrorBoundary } from "./components/ErrorBoundary.js";
 
 /**
  * Admin SPA route tree (P4-T4.9). Mounted by `src/App.jsx` when running
@@ -17,6 +18,7 @@ import { NotFound } from "./pages/NotFound.js";
  */
 export function AdminApp() {
   return (
+    <ErrorBoundary>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAdmin />}>
@@ -31,5 +33,6 @@ export function AdminApp() {
         </Route>
       </Route>
     </Routes>
+    </ErrorBoundary>
   );
 }

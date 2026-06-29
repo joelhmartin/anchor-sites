@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
@@ -16,11 +16,15 @@ import { pluginsRouter } from "./routes/plugins.js";
 import { adminTenantRouter } from "./routes/admin-tenant.js";
 import { adminDomainsRouter } from "./routes/admin-domains.js";
 import { adminCrmRouter } from "./routes/admin-crm.js";
+import { vitalsRouter } from "./routes/vitals.js";
+import { adminJobsRouter } from "./routes/admin-jobs.js";
 import { meRouter } from "./routes/me.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
 import type { StudioAuth } from "./auth/studio-auth.js";
+import { captureException } from "./sentry/index.js";
+import { buildCsp } from "./csp.js";
 
 export type CreateAppOptions = {
   /**
@@ -40,7 +44,7 @@ export type CreateAppOptions = {
 export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
 
-  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(helmet({ contentSecurityPolicy: { directives: buildCsp(process.env) } }));
   app.use(cors());
 
   // Studio Google-OAuth handler (D-034/D-046). MUST precede express.json() —
@@ -96,6 +100,12 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // P11: CRM proxy API — phone numbers + campaigns read-through.
   app.use("/api", adminCrmRouter());
 
+  // P12-T12.3: web-vitals ingestion (tenant pages post metrics here; no admin gate).
+  app.use("/api", vitalsRouter());
+
+  // P12-T12.7: pg-boss health endpoint (admin-only).
+  app.use("/api", adminJobsRouter());
+
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces
   // per-site enablement internally (D-016 / D-045). `activePlugins` is the
@@ -118,6 +128,23 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // above match first. Unknown hosts pass through (Vite/SPA fallback in dev,
   // static-index fallback in prod — both mounted by `src/server/index.ts`).
   app.use(pageRouter());
+
+  // P12-T12.4 (D-055) — Global 4-param Express error handler. Logs the stack,
+  // captures to Sentry (when configured), and returns a safe JSON error
+  // response. 500 bodies are masked in production to avoid leaking internals.
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const status = typeof (err as { status?: number }).status === "number"
+      ? (err as { status: number }).status
+      : 500;
+    // eslint-disable-next-line no-console
+    console.error("[express/error]", err);
+    captureException(err);
+    const message =
+      process.env.NODE_ENV === "production" && status >= 500
+        ? "internal server error"
+        : (err instanceof Error ? err.message : String(err));
+    res.status(status).json({ error: message });
+  });
 
   return app;
 }
