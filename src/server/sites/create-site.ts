@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
 import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
 import { seedSiteCopyIn } from "./copy-in.js";
+import { resolveCrmClient, type CrmEnv } from "../crm/resolve.js";
+import type { CrmClient } from "../crm/client.js";
 
 /**
  * Shared site-creation primitive (P7-T7.6). Extracted from the inline logic in
@@ -25,7 +27,15 @@ export class SiteSlugConflictError extends Error {
 
 export async function createSiteWithDomains(
   client: PoolClient,
-  opts: { slug: string; displayName: string; brandTokens?: Record<string, string> },
+  opts: {
+    slug: string;
+    displayName: string;
+    brandTokens?: Record<string, string>;
+    /** Injectable CRM client for tests. Defaults to resolveCrmClient(). */
+    crmClient?: CrmClient;
+    /** Injectable env for CRM client resolution. Defaults to process.env. */
+    crmEnv?: CrmEnv;
+  },
 ): Promise<{ siteId: string; canonical: string; canonicalDomainId: string }> {
   const dup = await client.query(`SELECT 1 FROM sites WHERE slug = $1`, [opts.slug]);
   if (dup.rowCount && dup.rowCount > 0) {
@@ -58,6 +68,19 @@ export async function createSiteWithDomains(
 
   // P8-T8.12 (D-047): per-site copy-in — tenant auth config + starter content.
   await seedSiteCopyIn(client, siteId);
+
+  // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site creation.
+  const crmClient = opts.crmClient ?? resolveCrmClient(opts.crmEnv);
+  try {
+    const { crmSiteId } = await crmClient.provisionSite(siteId, opts.displayName, canonical);
+    if (crmSiteId) {
+      await client.query(`UPDATE sites SET crm_site_id = $1 WHERE id = $2`, [crmSiteId, siteId]);
+    }
+  } catch (err) {
+    // Best-effort: log and continue. Retry handled by crm.sync pg-boss job (T11.7).
+    // eslint-disable-next-line no-console
+    console.error("[crm] provisionSite failed — site creation continues:", err);
+  }
 
   return { siteId, canonical, canonicalDomainId };
 }

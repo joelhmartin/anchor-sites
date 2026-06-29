@@ -8,6 +8,8 @@ import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 import { evictSiteCache } from "../../middleware/resolveSite.js";
 import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-site.js";
 import { siteSeoDefaultsSchema } from "../seo/schema.js";
+import { resolveCrmClient } from "../crm/resolve.js";
+import type { CrmClient } from "../crm/client.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -54,10 +56,13 @@ const createPagePayload = z.object({
 export type AdminSitesOptions = {
   pool?: Pool;
   createRateLimit?: RateLimitOptions;
+  /** Injectable CRM client for tests. Defaults to resolveCrmClient(). */
+  crmClient?: CrmClient;
 };
 
 export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
   const pool = opts.pool ?? defaultPool;
+  const crmClient = opts.crmClient ?? resolveCrmClient(process.env);
   const router = Router();
   const admin = requireAdmin();
   const createLimiter = rateLimit(opts.createRateLimit ?? { max: 10, windowMs: 60_000 });
@@ -109,6 +114,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           slug,
           displayName: display_name,
           brandTokens: default_brand_tokens,
+          crmClient,
         });
         await client.query("COMMIT");
         // P10-10.8: canonical domain row is created in site_domains (pending).
@@ -242,12 +248,41 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         );
         for (const row of hosts.rows) evictSiteCache(row.hostname);
 
-        const updated = await pool.query(
+        const updated = await pool.query<{
+          id: string;
+          display_name: string;
+          crm_site_id: string | null;
+          status: string;
+        }>(
           `SELECT id, slug, display_name, status, default_brand_tokens, seo_defaults,
                   ctm_account_id, crm_site_id, created_at FROM sites WHERE id = $1`,
           [siteId],
         );
-        res.json({ site: updated.rows[0] });
+        const site = updated.rows[0];
+        res.json({ site });
+
+        // P11-T11.7 (D-053): best-effort CRM sync after PATCH.
+        if (site.crm_site_id && (display_name !== undefined)) {
+          const primaryRow = await pool.query<{ hostname: string }>(
+            `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+            [siteId],
+          );
+          crmClient.updateSite(site.crm_site_id, {
+            name: site.display_name,
+            primaryDomain: primaryRow.rows[0]?.hostname,
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error("[crm] updateSite failed (best-effort):", err);
+          });
+        }
+        // Deprovision when site is archived via PATCH status (status not in patchSitePayload yet,
+        // but guard here for when it lands — D-053).
+        if (site.crm_site_id && site.status === "archived") {
+          crmClient.deprovisionSite(site.crm_site_id).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error("[crm] deprovisionSite failed (best-effort):", err);
+          });
+        }
       } catch (err) {
         next(err);
       }
