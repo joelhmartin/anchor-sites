@@ -43,11 +43,13 @@ export async function createSiteWithDomains(
   const cfg = getDomainConfig();
   const canonical = hostnameForSlug(opts.slug, cfg);
   const localhostName = `${opts.slug}.localhost`;
-  await client.query(
+  const domRes = await client.query<{ id: string }>(
     `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
-     VALUES ($1, $2, true, 'pending', 'pending')`,
+     VALUES ($1, $2, true, 'pending', 'pending')
+     RETURNING id`,
     [siteId, canonical],
   );
+  const canonicalDomainId = domRes.rows[0].id;
   await client.query(
     `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
      VALUES ($1, $2, false, 'verified', 'active')`,
@@ -57,5 +59,5 @@ export async function createSiteWithDomains(
   // P8-T8.12 (D-047): per-site copy-in — tenant auth config + starter content.
   await seedSiteCopyIn(client, siteId);
 
-  return { siteId, canonical };
+  return { siteId, canonical, canonicalDomainId };
 }
