@@ -10,6 +10,7 @@ import type { ResolvedSite } from "../middleware/resolveSite.js";
 import { mergeBrandTokens } from "../blocks/brand-tokens.js";
 import { MediaProvider, type MediaAssetData } from "@anchorcorps/components";
 import { hostnameForSlug } from "../config/domain.js";
+import { analyticsScriptTag } from "./analytics.js";
 import {
   applyTitleTemplate,
   effectiveRobots,
@@ -66,23 +67,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/**
- * P12-T12.2 (D-054) — Analytics script tag for Plausible CE or Umami.
- * Domain and baseUrl are HTML-escaped. The tag is injected after ctmScriptTag
- * when ANALYTICS_BASE_URL is set and the site has not opted out.
- */
-export function analyticsScriptTag(
-  domain: string,
-  baseUrl: string,
-  provider: string = "plausible",
-): string {
-  const d = escapeHtml(domain);
-  const b = escapeHtml(baseUrl);
-  if (provider === "umami") {
-    return `<script defer src="${b}/script.js" data-website-id="${d}"></script>`;
-  }
-  return `<script defer src="${b}/js/script.js" data-domain="${d}"></script>`;
-}
+export { analyticsScriptTag } from "./analytics.js";
 
 /**
  * P11-T11.2 (D-052) — Builds the CTM loader script tag for a given account ID.

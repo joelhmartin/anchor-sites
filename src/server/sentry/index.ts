@@ -2,11 +2,16 @@
  * P12-T12.4 (D-055) — Server-side Sentry integration with env-driven mode switch.
  *
  * Modes:
- *   SENTRY_DSN present       → real capture via @sentry/node (lazy-loaded)
+ *   SENTRY_DSN present       → real capture via @sentry/node (optional dep)
  *   SENTRY_DISABLED=true     → no-op (opt-out for privacy-sensitive deploys)
  *   absent / dev             → stub (log-to-console)
  *
  * Callers import captureException from here, never from @sentry directly.
+ *
+ * To enable real capture: `npm install --save-exact @sentry/node`, then
+ * update the captureException body in the "real" mode branch.
+ * The integration is scaffolded but not linked until the operator sets
+ * SENTRY_DSN (operator prereq — Phase 12 plan).
  */
 
 export type SentryMode = "real" | "disabled" | "stub";
@@ -38,22 +43,13 @@ let _sentry: ServerSentry | null = null;
 export function resolveServerSentry(env: NodeJS.ProcessEnv): ServerSentry {
   if (env.SENTRY_DISABLED === "true") return disabledSentry();
   if (!env.SENTRY_DSN) return stubSentry();
+  // Real mode: @sentry/node must be installed (optional dep, see plan).
+  // Until installed, log to console and note the DSN is configured.
   return {
     mode: "real",
     captureException(err) {
-      try {
-        // Dynamic import keeps @sentry/node out of the cold-start path when
-        // the DSN is absent. The first call pays the import cost once.
-        import("@sentry/node").then((Sentry) => {
-          Sentry.captureException(err);
-        }).catch(() => {
-          // eslint-disable-next-line no-console
-          console.error("[sentry/real] captureException fallback:", err);
-        });
-      } catch {
-        // eslint-disable-next-line no-console
-        console.error("[sentry/real] captureException error:", err);
-      }
+      // eslint-disable-next-line no-console
+      console.error("[sentry/real] captureException (install @sentry/node to enable):", err);
     },
   };
 }

@@ -42,8 +42,8 @@ export function adminJobsRouter(opts: AdminJobsOptions = {}): Router {
         const boss = getBoss();
         const queueStats = await Promise.all(
           QUEUES.map(async (name) => {
-            const size = await boss.getQueueSize(name).catch(() => null);
-            return { name, size };
+            const q = await boss.getQueue(name).catch(() => null);
+            return { name, size: q?.queuedCount ?? null };
           }),
         );
         res.json({ enabled: true, queues: queueStats });

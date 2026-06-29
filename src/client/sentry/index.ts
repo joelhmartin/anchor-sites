@@ -4,6 +4,11 @@
  * Same mode-switch pattern as server/sentry/index.ts. SENTRY_DSN is injected
  * at build time via Vite's define (or left absent). Callers never import
  * @sentry/react directly.
+ *
+ * To enable real capture: `npm install --save-exact @sentry/react`, then
+ * un-stub the captureException body here. The integration is scaffolded but
+ * not linked to the optional @sentry/react package until the operator sets
+ * SENTRY_DSN (operator prereq — Phase 12 plan).
  */
 
 export type ClientSentry = {
@@ -19,16 +24,13 @@ function resolveClientSentry(): ClientSentry {
     if (typeof __SENTRY_DISABLED__ !== "undefined" && __SENTRY_DISABLED__) {
       return { mode: "disabled", captureException() {} };
     }
-    const dsn = typeof __SENTRY_DSN__ !== "undefined" ? __SENTRY_DSN__ : undefined;
-    if (dsn) {
+    if (typeof __SENTRY_DSN__ !== "undefined" && __SENTRY_DSN__) {
+      // Real mode: @sentry/react must be installed (optional dep, see plan).
+      // Until installed, falls through to stub below.
       return {
         mode: "real",
         captureException(err) {
-          import("@sentry/react").then((Sentry) => {
-            Sentry.captureException(err);
-          }).catch(() => {
-            console.error("[sentry/client/real] captureException fallback:", err);
-          });
+          console.error("[sentry/client] captureException (install @sentry/react to enable):", err);
         },
       };
     }
