@@ -104,7 +104,7 @@ A phase flips `pending-plan → ready` only once its plan doc is committed to `m
 
 | Phase | Title | Plan | Status | Branch / PR | Notes |
 |---|---|---|---|---|---|
-| P10 | Domain provisioning (Cloud Run mapping, DNS, SSL) | `2026-06-28-p10-domain-provisioning.md` | **ready** | — | Bootstrapped 2026-06-28 from the live scoping research. Builds on the existing skeleton (site_domains, run-domains.ts Cloud Run mapping + AUTOMATIC SSL, orchestrator.ts whose DNS step is hardcoded to Kinsta). Incorporates the 2026-06-28 spec (pluggable DnsProvider, retire Kinsta). D-050 (DNS provider), D-051 (custom client domains). |
+| P10 | Domain provisioning (Cloud Run mapping, DNS, SSL) | `2026-06-28-p10-domain-provisioning.md` | **in_review** | `feat/sites-p10-domain-provisioning` / PR #3 | Tasks 10.1-10.4 already in main (PR #2). This PR adds 10.5-10.9: domain CRUD API, provision/status endpoints, DomainsTab UI, canonical_domain_id in create-site response, docs/domains.md + D-050/D-051. Cold suite: 72 passed (vs 70 on main), 36 pre-existing failures unchanged, typecheck clean. |
 | P11 | CRM integration + CTM install | _(B preps)_ | **pending-plan** | — | Routine B writes the plan after P10 merges. CTM = CallTrackingMetrics (see the `ctm` skill / API). |
 | P12 | Hardening + first real client migration | _(B preps)_ | **pending-plan** | — | Per PLAN.md / D-021 (Plausible/Umami analytics), D-019 pg-boss workers, rate limiting, web-vitals, error tracking, first live client migration. Final phase. |
 
@@ -128,3 +128,4 @@ A phase flips `pending-plan → ready` only once its plan doc is committed to `m
   03:17 has nothing in_review and P10 is already `ready`, so it will no-op (no prep). First A run at
   05:17 builds P10.
 - 2026-06-29 03:17 — B run: no in_review phase; P10 already `ready` → no prep (rule: prep only when no ready/in_review phase exists). Docker unavailable in env (no DB); GitHub MCP auth confirmed. No-op run as anticipated.
+- 2026-06-29 05:17 — A run: built P10 (tasks 10.5-10.9; 10.1-10.4 already in main from PR #2). Postgres provisioned on port 5432 (Docker unavailable, used local pg cluster). Branch feat/sites-p10-domain-provisioning, PR #3. Cold suite 72 passed / 36 pre-existing failures / typecheck clean. P10 → in_review.
