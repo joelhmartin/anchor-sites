@@ -1,6 +1,7 @@
 # Data model
 
 > Phase 1 schema. Migration `1747571000000_sites_pages_revisions.cjs`. See `DECISIONS.md` D-001 (block JSON as source of truth) and D-002 (Zod schemas as the contract).
+> Phase 10 design decisions: **D-050** (pluggable `DnsProvider`, Kinsta retired — see `docs/domains.md`) and **D-051** (two domain classes: managed subdomains + client-owned custom domains). Full domain model in `docs/domains.md`.
 
 ## Tables
 

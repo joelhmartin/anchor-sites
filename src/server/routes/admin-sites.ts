@@ -101,12 +101,15 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const { siteId, canonical } = await createSiteWithDomains(client, {
+        const { siteId, canonical, canonicalDomainId } = await createSiteWithDomains(client, {
           slug,
           displayName: display_name,
           brandTokens: default_brand_tokens,
         });
         await client.query("COMMIT");
+        // P10-10.8: canonical domain row is created in site_domains (pending).
+        // Trigger provisioning via POST /api/sites/:id/domains/:domainId/provision
+        // (available in the Studio Domains tab) to map it on Cloud Run.
         res.status(201).json({
           site: {
             id: siteId,
@@ -115,6 +118,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
             status: "active",
             default_brand_tokens: default_brand_tokens ?? {},
             canonical_hostname: canonical,
+            canonical_domain_id: canonicalDomainId,
           },
         });
       } catch (err) {

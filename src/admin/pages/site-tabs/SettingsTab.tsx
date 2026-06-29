@@ -105,7 +105,7 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
         <CardContent className="flex flex-col gap-2 pt-5">
           <Label>Hostnames</Label>
           <p className="font-mono text-sm text-zinc-700">{tenantHostname(site.slug)}</p>
-          <p className="text-xs text-zinc-400">Custom domains are managed in Phase 10.</p>
+          <p className="text-xs text-zinc-400">Manage all domains (add custom hostnames, provision SSL) in the <strong>Domains</strong> tab.</p>
         </CardContent>
       </Card>
     </div>

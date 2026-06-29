@@ -14,6 +14,7 @@ import { adminSitesRouter } from "./routes/admin-sites.js";
 import { templatesRouter } from "./routes/templates.js";
 import { pluginsRouter } from "./routes/plugins.js";
 import { adminTenantRouter } from "./routes/admin-tenant.js";
+import { adminDomainsRouter } from "./routes/admin-domains.js";
 import { meRouter } from "./routes/me.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
@@ -87,6 +88,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // P8-T8.13: admin tenant-content API — per-site blog/events CRUD + members/
   // auth-config. Scoped by :siteId, gated by requireAdmin (dual-mode).
   app.use("/api", adminTenantRouter());
+
+  // P10: domain provisioning API — list/add/remove domains + provision/status.
+  app.use("/api", adminDomainsRouter());
 
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces
