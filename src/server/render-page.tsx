@@ -67,6 +67,24 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * P12-T12.2 (D-054) — Analytics script tag for Plausible CE or Umami.
+ * Domain and baseUrl are HTML-escaped. The tag is injected after ctmScriptTag
+ * when ANALYTICS_BASE_URL is set and the site has not opted out.
+ */
+export function analyticsScriptTag(
+  domain: string,
+  baseUrl: string,
+  provider: string = "plausible",
+): string {
+  const d = escapeHtml(domain);
+  const b = escapeHtml(baseUrl);
+  if (provider === "umami") {
+    return `<script defer src="${b}/script.js" data-website-id="${d}"></script>`;
+  }
+  return `<script defer src="${b}/js/script.js" data-domain="${d}"></script>`;
+}
+
+/**
  * P11-T11.2 (D-052) — Builds the CTM loader script tag for a given account ID.
  * Attribute-escaped so the account ID cannot break out of the data attribute.
  * Emitted BEFORE headExtra in shell() so CTM runs before the page bundle.
@@ -185,13 +203,38 @@ function shell(opts: {
   const styles = `:root { ${brandStyle} }${SHELL_BASE_CSS}${PACKAGE_BLOCK_CSS}${RICH_TEXT_CSS}${opts.extraCss ?? ""}`;
 
   const ctmTag = opts.site.ctm_account_id ? `\n  ${ctmScriptTag(opts.site.ctm_account_id)}` : "";
+
+  const analyticsBaseUrl = process.env.ANALYTICS_BASE_URL;
+  const analyticsProvider = process.env.ANALYTICS_PROVIDER ?? "plausible";
+  let canonicalHost: string;
+  try { canonicalHost = hostnameForSlug(opts.site.slug); } catch { canonicalHost = opts.site.slug; }
+  const analyticsTag =
+    analyticsBaseUrl && !opts.site.analytics_disabled
+      ? `\n  ${analyticsScriptTag(canonicalHost, analyticsBaseUrl, analyticsProvider)}`
+      : "";
+
+  const webVitalsEndpoint = process.env.WEB_VITALS_ENDPOINT;
+  const vitalsTag = webVitalsEndpoint
+    ? `\n  <script>(function(){` +
+      `var ep=${JSON.stringify(webVitalsEndpoint)};` +
+      `function rep(m){try{fetch(ep,{method:"POST",` +
+      `headers:{"content-type":"application/json"},` +
+      `body:JSON.stringify({name:m.name,value:m.value,id:m.id,delta:m.delta}),` +
+      `keepalive:true});}catch(_){}}` +
+      `var s=document.createElement("script");` +
+      `s.src="https://unpkg.com/web-vitals/dist/web-vitals.iife.js";` +
+      `s.onload=function(){["onLCP","onCLS","onFCP","onTTFB","onINP"].forEach(function(f){` +
+      `if(webVitals[f])webVitals[f](rep);});};` +
+      `document.head.appendChild(s);})()</script>`
+    : "";
+
   const html = `<!doctype html>
 <html lang="en" data-site-slug="${escapeHtml(opts.site.slug)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(opts.title)}</title>
-  ${opts.description ? `<meta name="description" content="${escapeHtml(opts.description)}" />` : ""}${ctmTag}
+  ${opts.description ? `<meta name="description" content="${escapeHtml(opts.description)}" />` : ""}${ctmTag}${analyticsTag}${vitalsTag}
   ${opts.headExtra ?? ""}
   <style>${styles}</style>
 </head>
