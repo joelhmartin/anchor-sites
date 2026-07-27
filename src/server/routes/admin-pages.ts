@@ -271,6 +271,23 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // published, instead of only matching every NON-home slug.
         const previewPath = page.slug === "home" ? "/" : `/${page.slug}`;
 
+        // Critical 2 (defense in depth alongside the iframe's `sandbox`
+        // attribute): this response is served same-origin at /api/... and
+        // renders operator/AI-authored blocks that may include inline
+        // scripts (SiteDetailPage.tsx's DraftPreview embeds it in an
+        // iframe). `res.setHeader` REPLACES app.ts's global helmet CSP
+        // (buildCsp) for this one response rather than fighting it — that
+        // global policy is tuned for the admin SPA shell, not for
+        // rendered-page HTML, so a minimal, self-contained policy is
+        // clearer than trying to merge with it. The `sandbox` directive
+        // does the real work (browsers that honor CSP-level sandbox
+        // enforce the same opaque-origin restriction as the iframe's HTML
+        // attribute, as a second layer); the rest just keeps the page's own
+        // assets loading.
+        res.setHeader(
+          "Content-Security-Policy",
+          "sandbox allow-scripts; default-src 'self' https: data:; frame-ancestors *",
+        );
         const { html } = renderPage(site, page, { assets, path: previewPath });
         res.status(200).type("html").send(html);
       } catch (err) {

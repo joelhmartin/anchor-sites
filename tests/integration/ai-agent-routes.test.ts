@@ -344,6 +344,36 @@ d("agent HTTP API (integration, Task 10)", () => {
     expect(enqueueSpy).toHaveBeenCalledWith({ conversationId, siteId: site.id });
   });
 
+  it("Important 5 — a promoted turn whose continuation enqueue fails reports a second turn_done error frame and marks the conversation status:error instead of stalling silently", async () => {
+    const site = await db.seedSite("agent-routes-promoted-enqueue-fails");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+
+    runTurnSpy.mockImplementationOnce(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
+      input.onEvent?.({ type: "turn_done", reason: "promoted" });
+      return { reason: "promoted" as const, toolCalls: 15 };
+    });
+    enqueueSpy.mockImplementationOnce(async () => null);
+
+    const res = await auth(
+      request(app)
+        .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
+        .buffer(true)
+        .parse(sseParser),
+    ).send({ message: "do a big build" });
+
+    // Both turn_done frames land: the loop's own "promoted" (already told
+    // the client a continuation was expected) and the route's follow-up
+    // "error" once the enqueue for that continuation came back empty.
+    expect(res.body).toContain("promoted");
+    expect(res.body).toContain("continuation could not be queued");
+
+    const detail = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    expect(detail.body.conversation.status).toBe("error");
+  });
+
   it("catches a throwing turn and streams a turn_done error frame instead of crashing", async () => {
     const site = await db.seedSite("agent-routes-turn-throws");
     const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
@@ -362,6 +392,14 @@ d("agent HTTP API (integration, Task 10)", () => {
 
     expect(res.body).toContain("turn_done");
     expect(res.body).toContain("\"reason\":\"error\"");
+
+    // Minor 6: symmetry with the job path (agent-turn.ts) — an inline model
+    // call that throws must also leave the conversation in status:"error",
+    // not "active", so the existing resume-on-error path picks it back up.
+    const detail = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    expect(detail.body.conversation.status).toBe("error");
   });
 
   describe("GET .../events snapshot semantics (fix round 1, reviewer extra #2)", () => {
@@ -406,16 +444,15 @@ d("agent HTTP API (integration, Task 10)", () => {
       expect(ids).not.toContain(m1.id);
     });
 
-    it("authenticates via ?token= with no header (tokenFromQuery shim, same as preview)", async () => {
-      const site = await db.seedSite("agent-routes-events-token");
+    it("Important 3 — no longer authenticates via ?token=: the drawer's tail always sends X-Admin-Token, so the query-string shim is 401'd here to keep the admin token out of URLs/logs (unlike the preview route, which still needs it for its <iframe>)", async () => {
+      const site = await db.seedSite("agent-routes-events-no-query-token");
       const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
       const conversationId = created.body.conversation.id;
 
-      const event = (await fetchFirstSseEvent(
-        app,
+      const res = await request(app).get(
         `/api/sites/${site.id}/agent/conversations/${conversationId}/events?token=${ADMIN_TOKEN}`,
-      )) as { type: string };
-      expect(event.type).toBe("snapshot");
+      );
+      expect(res.status).toBe(401);
     });
   });
 
@@ -430,6 +467,11 @@ d("agent HTTP API (integration, Task 10)", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
       expect(res.text).toContain("Preview Marker 12345");
+      // Critical 2: the preview response carries its own CSP with a
+      // `sandbox` directive (second layer alongside the iframe's `sandbox`
+      // attribute in SiteDetailPage.tsx) so embedded/injected scripts can't
+      // reach the parent admin origin.
+      expect(res.headers["content-security-policy"]).toContain("sandbox allow-scripts");
     });
 
     it("404s when the page belongs to a different site", async () => {

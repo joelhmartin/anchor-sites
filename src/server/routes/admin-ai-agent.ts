@@ -11,6 +11,7 @@ import {
   listConversations,
   appendMessage,
   listMessages,
+  setConversationStatus,
 } from "../ai/agent/repo.js";
 import { getBoss, AGENT_TURN } from "../jobs/index.js";
 import type { AgentTurnInput } from "../jobs/agent-turn.js";
@@ -287,9 +288,34 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
             limits: { maxToolCalls: 15, deadlineMs: 45_000 },
           });
           if (result.reason === "promoted") {
-            await enqueue({ conversationId, siteId });
+            const jobId = await enqueue({ conversationId, siteId });
+            if (!jobId) {
+              // Important 5: the client already saw `turn_done`
+              // reason:"promoted" (emitted by runTurn's onEvent above) —
+              // without this, a failed enqueue here stalls the conversation
+              // silently: the drawer thinks a background job is coming to
+              // finish the turn, but nothing was ever queued. Tell the
+              // client explicitly (a second turn_done frame, reason:"error")
+              // and flip the conversation to status:"error" so the existing
+              // resume path (a conversation in status:'error' is allowed
+              // through on the next message, per the route's header
+              // comment) picks it back up on retry.
+              console.error("[agent] promoted-turn continuation enqueue returned no id", {
+                conversationId,
+                siteId,
+              });
+              await setConversationStatus(pool, conversationId, "error");
+              if (!clientGone) {
+                sseSend(res, {
+                  type: "turn_done",
+                  reason: "error",
+                  message: "continuation could not be queued — press Resume or send another message",
+                });
+              }
+            }
           }
         } catch {
+          await setConversationStatus(pool, conversationId, "error").catch(() => undefined);
           if (!clientGone) sseSend(res, { type: "turn_done", reason: "error", message: "internal" });
         } finally {
           if (!clientGone) res.end();
@@ -303,13 +329,20 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
   // -------------------------------------------------------------------------
   // GET /sites/:siteId/agent/conversations/:conversationId/events?after=<id>
   // SSE tail for job-run turns (progress lands in ai_messages; there's no
-  // in-request onEvent to stream). `tokenFromQuery` first so a native
-  // EventSource (which can't set custom headers) can authenticate via
-  // `?token=`.
+  // in-request onEvent to stream). Unlike the preview route, this one is
+  // fetched by `streamAgentEvents` (AgentChatDrawer.tsx / agent-api.ts)
+  // via `fetch()` with an `X-Admin-Token` header, never a native
+  // EventSource — so it doesn't need `tokenFromQuery`'s `?token=` shim, and
+  // dropping it here means the long-lived admin token never has to appear
+  // in a URL (server access logs, browser history, proxy logs) for this
+  // route. IMPORTANT 3 follow-up: the page-preview route (admin-pages.ts)
+  // still needs `tokenFromQuery` — its consumer IS a plain <iframe
+  // src=...>, which can't set headers — but replacing that long-lived admin
+  // token with a short-lived, single-use preview token is deferred to a
+  // later phase.
   // -------------------------------------------------------------------------
   router.get(
     "/sites/:siteId/agent/conversations/:conversationId/events",
-    tokenFromQuery,
     admin,
     async (req: Request, res: Response, next: NextFunction) => {
       const { siteId, conversationId } = req.params;
@@ -362,6 +395,11 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
       }, 1000);
 
       const heartbeatTimer = setInterval(() => {
+        // Minor 8: same dead-socket guard as `sseSend` — without it, a
+        // heartbeat tick that lands after the client disconnects (but
+        // before this timer is cleared by the `close` handler below) writes
+        // to an already-ended response and throws.
+        if (res.writableEnded) return;
         res.write(": hb\n\n");
       }, 15_000);
 

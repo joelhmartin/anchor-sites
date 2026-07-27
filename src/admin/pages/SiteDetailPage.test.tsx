@@ -149,6 +149,10 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
     const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
     expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?token=tok`);
+    // Critical 2: the preview iframe is same-origin (served from /api/...),
+    // so it MUST be sandboxed — allow-scripts without allow-same-origin
+    // gives it an opaque origin that can't reach the admin's storage/cookies.
+    expect(iframe.getAttribute("sandbox")).toBe("allow-scripts");
   });
 
   it("omits the token query param when Studio runs on session auth (no token stored)", async () => {

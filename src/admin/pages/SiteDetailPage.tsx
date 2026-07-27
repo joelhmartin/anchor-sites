@@ -247,6 +247,14 @@ function DraftPreview({
         title="Draft preview"
         src={previewSrc}
         key={previewNonce}
+        // Critical 2: the preview response is same-origin HTML rendered
+        // from operator/AI-authored blocks — without a sandbox, an
+        // embedded <script> block runs with the parent's origin (reachable
+        // localStorage/cookies/DOM). `allow-scripts` alone (no
+        // `allow-same-origin`) forces the iframe into an opaque, unique
+        // origin: scripts still run (blocks that need them keep working),
+        // but they can't read/write anything under the admin's real origin.
+        sandbox="allow-scripts"
         className="h-96 w-full rounded border border-zinc-200"
       />
     </div>
