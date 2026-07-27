@@ -18,6 +18,7 @@ import { adminDomainsRouter } from "./routes/admin-domains.js";
 import { adminCrmRouter } from "./routes/admin-crm.js";
 import { vitalsRouter } from "./routes/vitals.js";
 import { adminJobsRouter } from "./routes/admin-jobs.js";
+import { adminAiAgentRouter } from "./routes/admin-ai-agent.js";
 import { meRouter } from "./routes/me.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
@@ -105,6 +106,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // P12-T12.7: pg-boss health endpoint (admin-only).
   app.use("/api", adminJobsRouter());
+
+  // Task 10 (AI site agent): conversation CRUD + SSE message/tail routes.
+  app.use("/api", adminAiAgentRouter());
 
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces

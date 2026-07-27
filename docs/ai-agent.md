@@ -79,17 +79,18 @@ always link to the page and, when a `revision_id` is present, offer Revert.
 
 ## Turn lifecycle
 
-**Status:** the loop (`src/server/ai/agent/loop.ts`, `runAgentTurn`, Task 8)
-and the `ai.agent-turn` pg-boss job (`src/server/jobs/agent-turn.ts`,
-`handleAgentTurn`, Task 9) are implemented and tested. The HTTP layer that
-exposes them to the browser (`src/server/routes/admin-ai-agent.ts`, Task 10 —
-conversation CRUD, the inline SSE message route, and the job-tail SSE route)
-had not landed as of this writing, even though the admin UI that calls it
-(`AgentChatDrawer`, `agent-api.ts`, Tasks 11–12) was already built against the
-contract below. That contract is authoritative from the spec and plan (and
-matches the types the drawer already declares in
-`src/admin/lib/agent-api.ts`) — treat this section as the design contract
-Task 10 must satisfy, not a report of routes observed on disk.
+**Status:** the loop (`src/server/ai/agent/loop.ts`, `runAgentTurn`, Task 8),
+the `ai.agent-turn` pg-boss job (`src/server/jobs/agent-turn.ts`,
+`handleAgentTurn`, Task 9), and the HTTP layer that exposes them to the
+browser (`src/server/routes/admin-ai-agent.ts`, Task 10 — conversation CRUD,
+the inline SSE message route, and the job-tail SSE route) are all implemented
+and tested (`tests/integration/ai-agent-routes.test.ts`), and mounted in
+`createApp` (`src/server/app.ts`) alongside the other `/api` routers. The
+admin UI that calls it (`AgentChatDrawer`, `agent-api.ts`, Tasks 11–12) was
+built against the contract below ahead of Task 10 landing; the routes now
+match it, including the draft-preview endpoint
+(`GET /api/sites/:siteId/pages/:pageId/preview`, added to
+`src/server/routes/admin-pages.ts`) that Task 12's preview iframe consumes.
 
 Two execution paths by turn weight, per the spec:
 

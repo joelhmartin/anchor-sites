@@ -14,6 +14,10 @@ import "../../blocks/index.js";
 import { proposeEdit } from "../ai/propose.js";
 import type { Block } from "../../blocks/types.js";
 import { seoFieldsSchema } from "../seo/schema.js";
+import { renderPage, type PageRecord } from "../render-page.js";
+import type { ResolvedSite } from "../../middleware/resolveSite.js";
+import { loadAssetsForBlocks } from "../render-hydration.js";
+import { tokenFromQuery } from "./admin-ai-agent.js";
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
@@ -192,6 +196,75 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           return;
         }
         res.json({ page: result.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // GET /api/sites/:siteId/pages/:pageId/preview — render a page's CURRENT
+  // blocks (any status — this is the point: it's how the operator/AI-agent
+  // preview a draft before publishing). `tokenFromQuery` first so an iframe
+  // (which can't set custom headers) can authenticate via `?token=`, same
+  // shim the agent SSE tail uses (Task 10 — src/server/routes/admin-ai-agent.ts).
+  // Mirrors the tenant page route's (`src/server/routes/page.ts`) media
+  // hydration so images/hero-slider resolve identically in preview.
+  // -------------------------------------------------------------------------
+  router.get(
+    "/sites/:siteId/pages/:pageId/preview",
+    tokenFromQuery,
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, pageId } = req.params;
+      try {
+        const siteRes = await pool.query<{
+          id: string;
+          slug: string;
+          display_name: string;
+          default_brand_tokens: Record<string, unknown> | null;
+          seo_defaults: Record<string, unknown> | null;
+          ctm_account_id: string | null;
+          analytics_disabled: boolean;
+        }>(
+          `SELECT id, slug, display_name, default_brand_tokens, seo_defaults,
+                  ctm_account_id, analytics_disabled
+             FROM sites WHERE id = $1`,
+          [siteId],
+        );
+        if (siteRes.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const siteRow = siteRes.rows[0];
+
+        const pageRes = await pool.query<PageRecord>(
+          `SELECT title, blocks, seo, brand_tokens_override
+             FROM pages WHERE id = $1 AND site_id = $2`,
+          [pageId, siteId],
+        );
+        if (pageRes.rowCount === 0) {
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+        const page = pageRes.rows[0];
+
+        const assets = await loadAssetsForBlocks(pool, siteId, page.blocks);
+
+        const site: ResolvedSite = {
+          id: siteRow.id,
+          slug: siteRow.slug,
+          display_name: siteRow.display_name,
+          default_brand_tokens: siteRow.default_brand_tokens ?? {},
+          seo_defaults: siteRow.seo_defaults ?? {},
+          ctm_account_id: siteRow.ctm_account_id ?? null,
+          analytics_disabled: siteRow.analytics_disabled ?? false,
+          matched_via: "domain",
+          plugins: [],
+        };
+
+        const { html } = renderPage(site, page, { assets });
+        res.status(200).type("html").send(html);
       } catch (err) {
         next(err);
       }
