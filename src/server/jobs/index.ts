@@ -167,7 +167,18 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   });
 
   // Task 9 (AI site agent): build-turn worker.
-  await boss.createQueue(AGENT_TURN);
+  //
+  // Bot-review fix wave round 2, item 1 (Important — singletonKey was
+  // inert): pg-boss's default queue policy is `standard`, under which
+  // `singletonKey` has NO dedupe effect at all (empirically verified: two
+  // `send()` calls with the same `singletonKey` against a `standard` queue
+  // both return distinct job ids). `stately` is the policy that actually
+  // enforces "at most one job per state (queued/active) per singletonKey" —
+  // a second `send()` for a conversation that already has one queued or
+  // active returns `null`. The policy must be set at queue-creation time
+  // (pg-boss refuses to change it afterward), and this queue is new in this
+  // PR, so there's no migration concern.
+  await boss.createQueue(AGENT_TURN, { policy: "stately" });
   await boss.work<AgentTurnInput>(AGENT_TURN, async ([job]) => {
     await handleAgentTurn(job.data, { pool: defaultPool });
   });

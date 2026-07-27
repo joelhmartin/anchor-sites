@@ -140,10 +140,18 @@ export async function setConversationStatus(
  * release, and appendMessage bumps `updated_at` on every persisted message,
  * so a genuinely active turn keeps re-arming this window well under 10
  * minutes). Returns true iff THIS call won the claim.
+ *
+ * Round 2 fix, item 4 (Minor): the UPDATE also bumps `updated_at` to `now()`
+ * at claim time, not just on the first `appendMessage` afterward — a job can
+ * sit queued for a while before pg-boss dequeues it (e.g. under load, or
+ * behind other queued turns), and without this, that queued time counts
+ * against the 10-minute stale-takeover window. A long-queued-but-not-yet-
+ * started job could otherwise become "stale" and get its lock stolen out
+ * from under it before its first model call ever persists anything.
  */
 export async function claimConversationTurn(pool: Pool, id: string): Promise<boolean> {
   const r = await pool.query(
-    `UPDATE ai_conversations SET status = 'running'
+    `UPDATE ai_conversations SET status = 'running', updated_at = now()
      WHERE id = $1
        AND (status IN ('active','error') OR (status = 'running' AND updated_at < now() - interval '10 minutes'))
      RETURNING id`,

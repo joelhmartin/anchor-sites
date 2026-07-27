@@ -25,13 +25,22 @@ export type AgentTurnDeps = { pool: Pool; runTurn?: typeof runAgentTurn };
  * is a duplicate — return without running rather than replaying turn side
  * effects that already partially committed.
  *
- * Job duplication (item 2): `singletonKey`+`retryLimit:0` on the enqueueing
- * `send()` call (admin-ai-agent.ts) is the PRIMARY defense against two
- * AGENT_TURN jobs for the same conversation ever being queued/active at
- * once, and against pg-boss auto-retrying a failed turn (which would replay
- * already-committed writes — unsafe, since a turn's tool calls are not
- * idempotent). This handler's own claim is the backstop for whatever that
- * doesn't cover (e.g. a manually re-triggered delivery).
+ * Job duplication (item 2, corrected in round 2): `singletonKey` on the
+ * enqueueing `send()` call (admin-ai-agent.ts) only dedupes because the
+ * `ai.agent-turn` QUEUE is created with `policy: "stately"`
+ * (src/server/jobs/index.ts) — pg-boss's default `standard` policy does
+ * NOT enforce `singletonKey` at all (empirically verified: two `send()`
+ * calls with the same key against a `standard` queue both return distinct
+ * job ids; the round-1 version of this comment asserted the opposite).
+ * With `stately`, that `singletonKey`+`retryLimit:0` is the PRIMARY defense
+ * against two AGENT_TURN jobs for the same conversation ever being
+ * queued/active at once, and against pg-boss auto-retrying a failed turn
+ * (which would replay already-committed writes — unsafe, since a turn's
+ * tool calls are not idempotent). This handler's own claim is the backstop
+ * for whatever that doesn't cover (e.g. a manually re-triggered delivery).
+ * A `null` `send()` result is now ambiguous (queue down vs. deduped) — see
+ * `admin-ai-agent.ts`'s `hasLiveAgentTurnJob` for how the route tells them
+ * apart before deciding whether to report 503.
  */
 export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps): Promise<void> {
   const runTurn = deps.runTurn ?? runAgentTurn;

@@ -30,9 +30,13 @@ catalog, and the edit-op applier/validator all come from Phase 6.
   write is a `page_revisions` row (`source: 'ai'`), so it's always
   revertible through the existing restore endpoint. Publishing stays a
   manual operator action and is deliberately **not** an agent tool.
-- **Data model** — two tables (`db/migrations/1747601000000_ai_agent.cjs`):
+- **Data model** — two tables (`db/migrations/1747601000000_ai_agent.cjs`,
+  `status` extended with `'running'` by
+  `db/migrations/1747602000000_ai_agent_running_status.cjs` — see "Turn
+  serialization" below):
   - `ai_conversations` — `id, site_id (FK CASCADE), title, status
-    ('active'|'error'|'archived'), token_usage jsonb, created_at, updated_at`.
+    ('active'|'error'|'archived'|'running'), token_usage jsonb, created_at,
+    updated_at`.
   - `ai_messages` — `id, conversation_id (FK CASCADE), role
     ('user'|'assistant'|'tool'), content jsonb, created_at`. `content` stores
     the raw Anthropic content-block array so `tool_use`/`tool_result` replay
@@ -40,8 +44,10 @@ catalog, and the edit-op applier/validator all come from Phase 6.
 - Repo functions (`src/server/ai/agent/repo.ts`): `createConversation`,
   `getConversation` (site-scoped — returns `null` across tenants),
   `listConversations`, `appendMessage`, `listMessages`,
-  `setConversationStatus`, `addTokenUsage`, `getTodayUsage`. All pool-first,
-  mirroring `src/server/blog/repo.ts`.
+  `setConversationStatus`, `claimConversationTurn` / `releaseConversationTurn`
+  (the turn-serialization lock — see "Turn serialization" below),
+  `addTokenUsage`, `getTodayUsage`. All pool-first, mirroring
+  `src/server/blog/repo.ts`.
 
 ## Tool belt
 
@@ -62,8 +68,8 @@ contract: `src/server/ai/agent/tools/types.ts` (`AgentTool`, `AgentToolCtx`,
 | `create_page` | `tools/pages.ts` | `{ slug, title, blocks?: [{type,props}] }` | Assigns block ids, `validateBlocks`, inserts `pages` (status `draft`) + a `page_revisions` row (`source:'ai'`) in one transaction. Duplicate slug → `ok:false "slug already in use"`. |
 | `update_page` | `tools/pages.ts` | `{ page_id, title?, ops: editOpsSchema }` | Loads the page site-scoped, runs Phase 6's `applyAndValidate` (insert/update/delete/move ops), writes new blocks + a revision (existing `seo` carried over) in one transaction. Failure returns `ok:false` with the failing stage/details so the model can self-correct. |
 | `delete_page` | `tools/pages.ts` | `{ page_id }` | `SELECT ... FOR UPDATE` over the site's pages (closes a TOCTOU on the "last page" guard), then deletes. Refuses to delete a site's only page. |
-| `set_brand_tokens` | `tools/settings.ts` | `{ tokens: brandTokensSchema }` | `UPDATE sites.default_brand_tokens`, then `evictSiteCacheForSite` (covers explicit `site_domains` rows AND the canonical subdomain fallback). |
-| `set_seo_defaults` | `tools/settings.ts` | `{ seo_defaults: siteSeoDefaultsSchema }` | `UPDATE sites.seo_defaults` + cache eviction. |
+| `set_brand_tokens` | `tools/settings.ts` | `{ tokens: brandTokensSchema }` | REPLACES `sites.default_brand_tokens` wholesale (unlike `set_seo_defaults` below), then `evictSiteCacheForSite` (covers explicit `site_domains` rows AND the canonical subdomain fallback). |
+| `set_seo_defaults` | `tools/settings.ts` | `{ seo_defaults: siteSeoDefaultsSchema }` | Shallow-merges the input over the site's CURRENT `seo_defaults` (a partial update no longer drops fields it didn't mention), writes, then cache eviction. |
 | `set_page_seo` | `tools/settings.ts` | `{ page_id, seo: seoFieldsSchema }` | Site-scoped `UPDATE pages.seo` + a `page_revisions` row (blocks unchanged, new `seo`). |
 | `apply_site_template` | `tools/assets.ts` | `{ template_id: uuid }` | Loads the template (must be `kind:'site'`, `status:'active'`), refuses if the site already has pages, then calls `handleMaterializeTemplate` **directly** (synchronous — the agent needs pages to exist before its next tool call; the operator-initiated `/sites/from-template` route enqueues the same handler as a pg-boss job instead). |
 | `search_stock_images` | `tools/assets.ts` | `{ query, per_page?: 1-20 (default 9) }` | `searchPixabay()` (`src/server/media/pixabay.ts`); no side effects. Stub mode (no `PIXABAY_API_KEY`) returns 3 deterministic `example.invalid` hits. |
@@ -107,6 +113,62 @@ Two execution paths by turn weight, per the spec:
   `limits: { maxToolCalls: 15, deadlineMs: 45_000 }` into `runAgentTurn`; the
   job path passes no limits, so it falls back to the env-configured caps
   (`AI_AGENT_MAX_TOOL_CALLS`, no deadline).
+
+**Turn serialization.** A conversation can only have ONE turn in flight at a
+time — a second `POST .../messages` (either `run:"inline"` or `run:"job"`) or
+`POST .../conversations` (`run:"job"`, message given) while another turn is
+already running would otherwise interleave invalid Anthropic history and
+conflicting mutations (e.g. the composer being enabled while the drawer is
+still tailing a job-run build). Enforced via a DB-level lock, `status:'running'`,
+claimed atomically (`claimConversationTurn`, `src/server/ai/agent/repo.ts`)
+before a turn starts and released (`releaseConversationTurn`) when it ends:
+
+- **Claiming** succeeds from `status:'active'` or `status:'error'` (the
+  normal "nothing running" states), or from a `status:'running'` row whose
+  `updated_at` is more than **10 minutes** stale (a takeover for a turn that
+  crashed without releasing — `appendMessage` bumps `updated_at` on every
+  persisted message, so a genuinely active turn keeps re-arming this window
+  well under 10 minutes; the claim itself also bumps `updated_at`, so a job
+  that sits queued for a while before pg-boss dequeues it doesn't start the
+  clock early).
+- **A failed claim returns `409 { error: "turn already running" }`** on both
+  message-POST routes and on conversation-create-with-job. The Studio
+  drawer renders this as a system line ("A build is already running — wait
+  for it to finish.") and re-enables the composer.
+- **Who holds the lock, and for how long:** the inline route holds it for the
+  whole in-request turn, releasing (conditionally — only if still `running`,
+  so an already-`error`'d turn isn't clobbered back to `active`) in a
+  `finally` block. The two job-enqueuing paths claim, append the seed
+  message, then RELEASE before calling `enqueue()` — ownership of the
+  long-lived hold passes to the `ai.agent-turn` job handler
+  (`src/server/jobs/agent-turn.ts`), which claims again at entry and holds
+  it for the turn's full (potentially long) execution. This ordering matters:
+  releasing before enqueueing (rather than after, the original round-1
+  shape) closes a gap where a worker fast enough to dequeue-and-claim in
+  between `send()` and the route's post-enqueue release would lose its own
+  claim attempt against the route's still-held lock, while pg-boss marked
+  the delivery complete anyway — the build would silently never run.
+- **Job dedup:** the `ai.agent-turn` pg-boss queue uses the `stately` policy
+  (`src/server/jobs/index.ts` — pg-boss's default `standard` policy does
+  NOT enforce `singletonKey` at all) plus `retryLimit: 0`, so a second
+  `send()` for a conversation that already has one queued/active job
+  returns `null` instead of enqueueing a duplicate (a turn's tool calls
+  commit real side effects as they go, so a pg-boss auto-retry would be
+  unsafe). Because `null` is now ambiguous — it also means "the queue is
+  down" (`getBoss()` threw) — the routes disambiguate via
+  `hasLiveAgentTurnJob` (a direct, defensive read of pg-boss's own
+  `pgboss.job` table for a `created`/`active`/`retry` row with this
+  conversation's id as `singleton_key`; pg-boss has no per-key "already
+  queued?" query in its public API): a genuine dedupe responds
+  `202 { queued: true, deduped: true }`, otherwise `503 { error: "job queue
+  unavailable" }`.
+- **Deferred (recorded, not implemented):** the claim has no owner-fencing
+  token. A worker whose claim was itself invalidated by a stale-takeover
+  (it hung past the 10-minute window and another delivery took over) could
+  still run to completion and release, incorrectly flipping the NEWER
+  claim's `running` back to `active` before that turn finishes. Low
+  probability; closing it fully needs a lease token threaded through
+  claim/release.
 
 **Resume semantics.** When the deadline is hit, the loop returns
 `{ reason: "promoted" }` **without persisting anything extra** — the last

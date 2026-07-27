@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Pool } from "pg";
 import express from "express";
 import request from "supertest";
 import http from "node:http";
@@ -95,6 +96,12 @@ d("agent HTTP API (integration, Task 10)", () => {
   let noEnqueueApp: express.Express;
   let enqueueSpy: ReturnType<typeof vi.fn>;
   let runTurnSpy: ReturnType<typeof vi.fn>;
+  // Round 2 fix, item 1: injectable so a null `enqueue()` result can be
+  // driven down either the "queue is down" (503) or "pg-boss deduped it"
+  // (202 deduped:true) path without touching the real pgboss schema.
+  // Defaults to `false` — the same outcome the real default implementation
+  // has whenever no matching job row exists.
+  let hasLiveAgentTurnJobSpy: ReturnType<typeof vi.fn>;
 
   beforeAll(async () => {
     await db.runMigrations();
@@ -106,6 +113,7 @@ d("agent HTTP API (integration, Task 10)", () => {
       input.onEvent?.({ type: "turn_done", reason: "end_turn" });
       return { reason: "end_turn" as const, toolCalls: 0 };
     });
+    hasLiveAgentTurnJobSpy = vi.fn(async () => false);
 
     const a = express();
     a.use(express.json());
@@ -115,6 +123,7 @@ d("agent HTTP API (integration, Task 10)", () => {
         pool: db.getPool(),
         runTurn: runTurnSpy,
         enqueue: enqueueSpy,
+        hasLiveAgentTurnJob: hasLiveAgentTurnJobSpy,
         messageRateLimit: { max: 200, windowMs: 60_000 },
       }),
     );
@@ -590,6 +599,177 @@ d("agent HTTP API (integration, Task 10)", () => {
 
       const convAfter = await getConversation(db.getPool(), conversationId, site.id);
       expect(convAfter!.status).toBe("active");
+    });
+
+    // ── Round 2 fixes ──
+
+    it("releases the lock BEFORE calling enqueue, not after (item 2 — closes the silent lost-build window)", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-order");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      // The enqueue mock reads the conversation's OWN status, from inside
+      // the call — this is what actually proves the ordering (not just the
+      // end state after the whole request completes, which round 1's tests
+      // already cover): if the route still held 'running' across the
+      // enqueue call (the round-1 shape), this would observe 'running', not
+      // 'active'.
+      let statusAtEnqueueTime: string | undefined;
+      enqueueSpy.mockImplementationOnce(async (input: { conversationId: string; siteId: string }) => {
+        const conv = await getConversation(db.getPool(), input.conversationId, input.siteId);
+        statusAtEnqueueTime = conv?.status;
+        return "job-id-order";
+      });
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "keep going", run: "job" });
+      expect(res.status).toBe(202);
+      expect(statusAtEnqueueTime).toBe("active");
+    });
+
+    it("conversation-create-with-job also releases BEFORE enqueue (item 2, same fix on the other job path)", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-order-create");
+
+      let statusAtEnqueueTime: string | undefined;
+      enqueueSpy.mockImplementationOnce(async (input: { conversationId: string; siteId: string }) => {
+        const conv = await getConversation(db.getPool(), input.conversationId, input.siteId);
+        statusAtEnqueueTime = conv?.status;
+        return "job-id-order-create";
+      });
+
+      const res = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({
+        message: "build me a site",
+        run: "job",
+      });
+      expect(res.status).toBe(202);
+      expect(statusAtEnqueueTime).toBe("active");
+    });
+
+    it("a null enqueue result that's actually a pg-boss dedupe reports 202 deduped:true, not 503 (item 1)", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-dedupe");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      enqueueSpy.mockImplementationOnce(async () => null);
+      hasLiveAgentTurnJobSpy.mockImplementationOnce(async () => true);
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "keep going", run: "job" });
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ queued: true, deduped: true });
+      expect(hasLiveAgentTurnJobSpy).toHaveBeenCalledWith(conversationId);
+
+      // The lock was already released before the (deduped) enqueue attempt —
+      // a live job for this conversation is expected to still flip it back
+      // to 'active' itself when it finishes, same as any other job turn.
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("active");
+    });
+
+    it("a null enqueue result that's genuinely a down queue still reports 503 (hasLiveAgentTurnJob returns false)", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-down");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      enqueueSpy.mockImplementationOnce(async () => null);
+      hasLiveAgentTurnJobSpy.mockImplementationOnce(async () => false);
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "keep going", run: "job" });
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "job queue unavailable" });
+    });
+
+    it("an exception between claim and append releases the lock (to 'error') instead of leaking it for 10 minutes (item 3)", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-exception");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      // A minimal fake pool: `query()` (used by claim/release/getConversation
+      // — everything except appendMessage's transaction) delegates straight
+      // to the real pool, so claim genuinely succeeds against the real DB.
+      // `connect()` (only used by appendMessage's BEGIN/INSERT/COMMIT
+      // transaction) returns a fake client whose INSERT throws — the
+      // simplest way to force a genuine failure between claim and append
+      // without touching repo.ts internals. BEGIN/ROLLBACK are no-ops since
+      // nothing needs to actually commit for this test.
+      const realPool = db.getPool();
+      const failingPool = {
+        query: (...args: unknown[]) => (realPool.query as (...a: unknown[]) => unknown)(...args),
+        connect: async () => ({
+          query: async (sql: string) => {
+            if (sql.startsWith("INSERT INTO ai_messages")) {
+              throw new Error("boom (simulated append failure)");
+            }
+            return { rows: [], rowCount: 0 };
+          },
+          release: () => undefined,
+        }),
+      };
+      const failingApp = express();
+      failingApp.use(express.json());
+      failingApp.use(
+        "/api",
+        adminAiAgentRouter({
+          pool: failingPool as unknown as Pool,
+          runTurn: runTurnSpy,
+          enqueue: enqueueSpy,
+          hasLiveAgentTurnJob: hasLiveAgentTurnJobSpy,
+          messageRateLimit: { max: 200, windowMs: 60_000 },
+        }),
+      );
+
+      const res = await auth(
+        request(failingApp).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "keep going", run: "job" });
+      expect(res.status).toBe(500);
+
+      // The lock was released to 'error', not left stuck at 'running'.
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("error");
+    });
+
+    it("the same exception-safety applies to the inline path's claim→append too", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-exception-inline");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const realPool = db.getPool();
+      const failingPool = {
+        query: (...args: unknown[]) => (realPool.query as (...a: unknown[]) => unknown)(...args),
+        connect: async () => ({
+          query: async (sql: string) => {
+            if (sql.startsWith("INSERT INTO ai_messages")) {
+              throw new Error("boom (simulated append failure)");
+            }
+            return { rows: [], rowCount: 0 };
+          },
+          release: () => undefined,
+        }),
+      };
+      const failingApp = express();
+      failingApp.use(express.json());
+      failingApp.use(
+        "/api",
+        adminAiAgentRouter({
+          pool: failingPool as unknown as Pool,
+          runTurn: runTurnSpy,
+          enqueue: enqueueSpy,
+          hasLiveAgentTurnJob: hasLiveAgentTurnJobSpy,
+          messageRateLimit: { max: 200, windowMs: 60_000 },
+        }),
+      );
+
+      const res = await auth(
+        request(failingApp).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "hello" }); // no run:"job" -> inline path
+      expect(res.status).toBe(500);
+
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("error");
     });
   });
 });
