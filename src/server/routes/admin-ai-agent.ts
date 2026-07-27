@@ -443,7 +443,17 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         initialMessages.length > 0 ? initialMessages[initialMessages.length - 1].id : (after ?? null);
       let lastStatus = conversation.status;
 
+      // Item 12 (CodeRabbit — tail poll overlap): a `setInterval` tick fires
+      // on a fixed clock regardless of whether the PREVIOUS tick's async DB
+      // work has finished — under a slow/loaded DB, two overlapping ticks
+      // could both read the same "new since lastSeenId" window and each
+      // advance `lastSeenId` off their own (possibly differently-ordered)
+      // results, or double-send a message. `inFlight` makes a tick that
+      // starts while the previous one is still running a no-op instead.
+      let inFlight = false;
       const pollTimer = setInterval(() => {
+        if (inFlight) return;
+        inFlight = true;
         void (async () => {
           try {
             const newMessages = lastSeenId
@@ -462,6 +472,8 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
             // Best-effort poll — keep the connection alive; a transient DB
             // hiccup shouldn't kill the tail (the client just sees no update
             // this tick, then heartbeats keep the connection open for retry).
+          } finally {
+            inFlight = false;
           }
         })();
       }, 1000);

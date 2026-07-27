@@ -25,7 +25,9 @@ const setBrandTokensParams = z.object({ tokens: brandTokensSchema });
 
 const setBrandTokens: AgentTool = {
   name: "set_brand_tokens",
-  description: "Set the site's default brand tokens (CSS custom properties like --theme-main).",
+  description:
+    "Set the site's default brand tokens (CSS custom properties like --theme-main). " +
+    "REPLACES the entire token set — include every token you want kept, not just the ones you're changing.",
   paramsSchema: setBrandTokensParams,
   async execute(
     ctx: AgentToolCtx,
@@ -51,21 +53,35 @@ const setSeoDefaultsParams = z.object({ seo_defaults: siteSeoDefaultsSchema });
 const setSeoDefaults: AgentTool = {
   name: "set_seo_defaults",
   description:
-    "Set the site's default SEO fields (title template, description, default og image, twitter handle).",
+    "Set the site's default SEO fields (title template, description, default og image, twitter handle). " +
+    "MERGES with the existing defaults — fields you omit are left as they were.",
   paramsSchema: setSeoDefaultsParams,
   async execute(
     ctx: AgentToolCtx,
     input: z.infer<typeof setSeoDefaultsParams>,
   ): Promise<AgentToolResult> {
+    // Item 10 (CodeRabbit — overwrite semantics): unlike set_brand_tokens
+    // (which intentionally stays replace-only — see its description), a
+    // partial set_seo_defaults call must not silently drop fields the
+    // model didn't mention this time (e.g. calling it again to just update
+    // `twitterHandle` shouldn't blank out an already-set `titleTemplate`).
+    // Read-modify-write, shallow merge: the new input's keys win, anything
+    // it omits survives from the current row.
+    const current = await ctx.pool.query<{ seo_defaults: Record<string, unknown> | null }>(
+      `SELECT seo_defaults FROM sites WHERE id = $1`,
+      [ctx.siteId],
+    );
+    const merged = { ...(current.rows[0]?.seo_defaults ?? {}), ...input.seo_defaults };
+
     await ctx.pool.query(`UPDATE sites SET seo_defaults = $1::jsonb WHERE id = $2`, [
-      JSON.stringify(input.seo_defaults),
+      JSON.stringify(merged),
       ctx.siteId,
     ]);
     await evictSiteCacheForSite(ctx.pool, ctx.siteId);
 
     return {
       ok: true,
-      data: { seo_defaults: input.seo_defaults },
+      data: { seo_defaults: merged },
       summary: "SEO defaults updated.",
       change: { kind: "site_updated", summary: "SEO defaults updated." },
     };

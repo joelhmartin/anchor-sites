@@ -31,6 +31,26 @@ describe("searchPixabay", () => {
     expect(res.hits[0]).toMatchObject({ id: 111, user: "photog" });
   });
 
+  // Item 14 (CodeRabbit): Pixabay's documented per_page minimum is 3 — a
+  // caller-requested 1 or 2 must not reach the real API as-is (it 400s).
+  it("clamps a per_page of 1 or 2 up to Pixabay's minimum of 3 in the outgoing request", async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => FIXTURE })) as unknown as typeof fetch;
+    await searchPixabay("dentist office", {
+      env: { PIXABAY_API_KEY: "k123" } as NodeJS.ProcessEnv, fetchFn, perPage: 1,
+    });
+    const url = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).toContain("per_page=3");
+  });
+
+  it("leaves a per_page of 3 or more unchanged", async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => FIXTURE })) as unknown as typeof fetch;
+    await searchPixabay("dentist office", {
+      env: { PIXABAY_API_KEY: "k123" } as NodeJS.ProcessEnv, fetchFn, perPage: 12,
+    });
+    const url = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).toContain("per_page=12");
+  });
+
   it("throws a descriptive error on non-OK responses", async () => {
     const fetchFn = vi.fn(async () => ({ ok: false, status: 429 })) as unknown as typeof fetch;
     await expect(

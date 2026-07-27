@@ -137,6 +137,34 @@ d("agent settings tools", () => {
       });
     });
 
+    it("shallow-merges with the existing defaults instead of dropping omitted fields (item 10)", async () => {
+      const seedCtx: AgentToolCtx = { ...ctx, siteId: (await db.seedSite(`t6-seo-merge-${runId}`)).id };
+
+      const first = await executeAgentTool(seedCtx, "set_seo_defaults", {
+        seo_defaults: { titleTemplate: "%s — First", twitterHandle: "@first" },
+      });
+      expect(first.ok).toBe(true);
+
+      // A second, PARTIAL call that only mentions twitterHandle must not
+      // blank out titleTemplate — it wasn't in this call's input at all.
+      const second = await executeAgentTool(seedCtx, "set_seo_defaults", {
+        seo_defaults: { twitterHandle: "@second" },
+      });
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error("unreachable");
+      expect(second.data).toEqual({
+        seo_defaults: { titleTemplate: "%s — First", twitterHandle: "@second" },
+      });
+
+      const row = await db.getPool().query(`SELECT seo_defaults FROM sites WHERE id = $1`, [
+        seedCtx.siteId,
+      ]);
+      expect(row.rows[0].seo_defaults).toEqual({
+        titleTemplate: "%s — First",
+        twitterHandle: "@second",
+      });
+    });
+
     it("rejects invalid seo defaults via the dispatcher", async () => {
       // titleTemplate has no `.catch()` guard (unlike twitterHandle/
       // defaultOgImageAssetId, which are field-tolerant per schema.ts) — a

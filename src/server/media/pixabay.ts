@@ -25,9 +25,15 @@ export async function searchPixabay(
   if (!key) return { mode: "stub", hits: STUB_HITS };
 
   const fetchFn = opts.fetchFn ?? fetch;
+  // Item 14 (CodeRabbit — verified against Pixabay's docs: `per_page`'s
+  // documented minimum is 3): the agent tool's own schema
+  // (tools/assets.ts's searchStockImagesParams) allows 1-20, so a request
+  // for 1 or 2 would otherwise reach the real API and get rejected outright
+  // — clamp the OUTGOING value up to 3 rather than letting that 400 happen.
+  const outgoingPerPage = Math.max(opts.perPage ?? 9, 3);
   const params = new URLSearchParams({
     key, q, image_type: "photo", safesearch: "true",
-    per_page: String(opts.perPage ?? 9),
+    per_page: String(outgoingPerPage),
   });
   const res = await fetchFn(`https://pixabay.com/api/?${params.toString()}`);
   if (!res.ok) throw new Error(`pixabay search failed: ${res.status}`);
