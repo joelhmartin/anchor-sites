@@ -314,6 +314,22 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
             "script-src 'none'; frame-ancestors 'self'",
         );
+        // Item 9 (CodeRabbit — preview refresh): the client now busts the
+        // URL itself with a `v=<nonce>` query param on every change
+        // (SiteDetailPage.tsx), but `no-store` closes the same gap
+        // server-side too — a draft preview must never be served from any
+        // cache (browser or intermediary), stale or otherwise.
+        res.setHeader("Cache-Control", "no-store");
+        // Item 13 (CodeRabbit, cheap adjunct to the SSRF/token work above):
+        // the URL this response is served at carries `?token=<admin token>`
+        // (tokenFromQuery, since the <iframe> can't set a header) — without
+        // this, any same-origin/https subresource the rendered page's own
+        // blocks load (an image, a linked resource) would send that whole
+        // URL, token included, as its Referer. `no-referrer` means this
+        // document never sends a Referer header at all. The full fix (a
+        // short-lived, single-use preview token instead of the long-lived
+        // admin token) is deferred — see the route-header comment above.
+        res.setHeader("Referrer-Policy", "no-referrer");
         const { html } = renderPage(site, page, { assets, path: previewPath });
         res.status(200).type("html").send(html);
       } catch (err) {

@@ -237,4 +237,25 @@ describe("NewSiteWizard (P4-T4.11 + P7-T7.8)", () => {
 
     await waitFor(() => expect(screen.getByText(/already in use/)).toBeTruthy());
   });
+
+  it("ai: navigates to ?ai=1&ai_error=1 instead of stranding the operator when the site was created but the conversation/job POST fails (item 8)", async () => {
+    const fetchMock = routeFetch({ aiConversation: () => json({ error: "job queue unavailable" }, 503) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderWizard();
+    fillStep1("Acme Co", "acme-co");
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "ai" } });
+    fireEvent.change(screen.getByLabelText(/Describe the business/), {
+      target: { value: "A dental clinic site with services and contact page." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create with AI" }));
+
+    // Navigated anyway — the site exists — rather than showing a form error.
+    await waitFor(() => expect(screen.getByText(/site route reached: acme-co/)).toBeTruthy());
+    expect(screen.getByText(/search=\?ai=1&ai_error=1/)).toBeTruthy();
+    expect(screen.queryByText(/already in use/)).toBeNull();
+
+    // The site POST itself still only fired once — no retry loop.
+    expect(postCalls(fetchMock, "/api/sites").length).toBe(1);
+  });
 });

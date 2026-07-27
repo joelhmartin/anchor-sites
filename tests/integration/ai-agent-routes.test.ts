@@ -472,6 +472,13 @@ d("agent HTTP API (integration, Task 10)", () => {
       // attribute in SiteDetailPage.tsx) so embedded/injected scripts can't
       // reach the parent admin origin.
       expect(res.headers["content-security-policy"]).toContain("sandbox allow-scripts");
+      // Item 9 (CodeRabbit — preview refresh): the response must never be
+      // servable from a cache, stale or otherwise (the client also busts
+      // the URL itself with a `v=<nonce>` query param — SiteDetailPage.tsx).
+      expect(res.headers["cache-control"]).toBe("no-store");
+      // Item 13 (CodeRabbit): keeps the `?token=` URL out of subresource
+      // Referer headers until the short-lived-token redesign lands.
+      expect(res.headers["referrer-policy"]).toBe("no-referrer");
     });
 
     it("404s when the page belongs to a different site", async () => {

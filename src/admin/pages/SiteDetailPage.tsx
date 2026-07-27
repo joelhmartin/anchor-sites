@@ -102,6 +102,11 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   const [aiOpen, setAiOpen] = useState(searchParams.get("ai") === "1");
   const [previewPageId, setPreviewPageId] = useState<string | null>(null);
   const [previewNonce, setPreviewNonce] = useState(0);
+  // Bot-review fix wave item 8: the wizard's AI path lands here with
+  // `ai_error=1` when the site was created but kicking off the initial
+  // build's conversation/job failed — the drawer opens empty (no
+  // conversation exists yet), which would otherwise look unexplained.
+  const aiError = searchParams.get("ai_error") === "1";
 
   function handleChangeEvent(c: AgentChangeEvent) {
     if (c.page_id) setPreviewPageId(c.page_id);
@@ -143,6 +148,15 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>
       </div>
+
+      {aiError && (
+        <Card>
+          <CardContent className="pt-5 text-sm text-amber-700">
+            The site was created, but the initial AI build couldn’t be started automatically. Send a
+            message in Studio chat to kick it off.
+          </CardContent>
+        </Card>
+      )}
 
       {loading && (
         <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -232,10 +246,16 @@ function DraftPreview({
   const effectivePreviewPageId = previewPageId ?? firstPageId;
 
   const adminToken = getAdminToken();
+  // Item 9 (CodeRabbit — preview refresh): append `v=${previewNonce}` so
+  // every change bumps to a genuinely distinct URL, not just a re-mounted
+  // <iframe> pointed at the SAME url (which a cache — browser HTTP cache or
+  // an intermediary — could legitimately serve stale for). Paired with the
+  // preview route's own `Cache-Control: no-store` (admin-pages.ts).
+  const previewQuery = adminToken
+    ? `token=${encodeURIComponent(adminToken)}&v=${previewNonce}`
+    : `v=${previewNonce}`;
   const previewSrc = effectivePreviewPageId
-    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview${
-        adminToken ? `?token=${encodeURIComponent(adminToken)}` : ""
-      }`
+    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview?${previewQuery}`
     : null;
 
   if (!previewSrc) return null;

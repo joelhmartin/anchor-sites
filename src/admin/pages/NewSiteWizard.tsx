@@ -125,6 +125,17 @@ export function NewSiteWizard() {
   // AI → reuse the blank-site POST /api/sites call + response shape, then
   // kick a job-run conversation with the operator's description as the first
   // message, and land on site detail with the Studio drawer open.
+  //
+  // Bot-review fix wave item 8: the site-create call and the
+  // conversation-create call are handled in SEPARATE try/catches. Only a
+  // site-create failure is a real form error (handleConflict — most likely
+  // a duplicate slug, still fixable by editing the form). Once the site
+  // exists, a conversation-create failure (e.g. the job queue returning
+  // 503) must NOT strand the operator on this form: a retry would just
+  // resubmit the same slug and hit admin-sites.ts's 409. Navigate to site
+  // detail regardless — the site is real, and the Studio drawer (opened via
+  // `?ai=1`) is the recovery surface for trying the build again;
+  // `ai_error=1` lets SiteDetailPage explain why the drawer came up empty.
   async function submitWithAi() {
     if (!step1Valid || !isAiMode) return;
     setBusy(true);
@@ -136,11 +147,16 @@ export function NewSiteWizard() {
       });
       const siteId = site.site?.id ?? site.id;
       if (!siteId) throw new Error("Site created, but no id was returned.");
-      await apiFetch(`/api/sites/${siteId}/agent/conversations`, {
-        method: "POST",
-        body: { title: "Initial build", message: description.trim(), run: "job" },
-      });
-      navigate(`/sites/${slug}?ai=1`);
+
+      try {
+        await apiFetch(`/api/sites/${siteId}/agent/conversations`, {
+          method: "POST",
+          body: { title: "Initial build", message: description.trim(), run: "job" },
+        });
+        navigate(`/sites/${slug}?ai=1`);
+      } catch {
+        navigate(`/sites/${slug}?ai=1&ai_error=1`);
+      }
     } catch (err) {
       handleConflict(err);
     } finally {

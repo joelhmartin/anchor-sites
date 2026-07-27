@@ -113,6 +113,21 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     await waitFor(() => expect(screen.getByText(/No site found for/)).toBeTruthy());
   });
 
+  it("shows a banner when the wizard hands off with ai_error=1 (item 8 — conversation/job POST failed after site creation)", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme", "?ai=1&ai_error=1");
+    await waitFor(() =>
+      expect(screen.getByText(/initial AI build couldn.t be started automatically/)).toBeTruthy(),
+    );
+  });
+
+  it("does not show the ai_error banner on a normal ?ai=1 hand-off", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme", "?ai=1");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    expect(screen.queryByText(/initial AI build couldn.t be started automatically/)).toBeNull();
+  });
+
   it("opens the Studio drawer on ?ai=1 (wizard hand-off) with autoTail on", async () => {
     mockApi([SITE], SITE);
     renderAt("acme", "?ai=1");
@@ -148,7 +163,9 @@ describe("SiteDetailPage (P4-T4.12)", () => {
 
     await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
     const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
-    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?token=tok`);
+    // Item 9: `v=<previewNonce>` (0 on the first render) makes each preview
+    // bump a distinct URL, not just a re-mounted iframe pointed at the same one.
+    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?token=tok&v=0`);
     // Critical 2: the preview iframe is same-origin (served from /api/...),
     // so it MUST be sandboxed — allow-scripts without allow-same-origin
     // gives it an opaque origin that can't reach the admin's storage/cookies.
@@ -166,7 +183,7 @@ describe("SiteDetailPage (P4-T4.12)", () => {
 
     await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
     const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
-    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview`);
+    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?v=0`);
   });
 
   it("only fetches the site's pages list when the AI drawer is open (doesn't duplicate PagesTab's own fetch)", async () => {
@@ -210,5 +227,9 @@ describe("SiteDetailPage (P4-T4.12)", () => {
         "/pages/pg2/preview",
       ),
     );
+    // Item 9: the nonce bump must also show up in the URL itself (not just
+    // the swapped page id) — that's what makes it a genuinely distinct URL
+    // a cache can't legitimately serve stale.
+    expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain("v=1");
   });
 });
