@@ -2,25 +2,24 @@ import { z } from "zod";
 import type { AgentTool, AgentToolCtx, AgentToolResult } from "./types.js";
 import { brandTokensSchema } from "../../../../blocks/brand-tokens.js";
 import { siteSeoDefaultsSchema, seoFieldsSchema } from "../../../seo/schema.js";
-import { evictSiteCache } from "../../../../middleware/resolveSite.js";
+import { evictSiteCacheForSite } from "../../../../middleware/resolveSite.js";
 
 /**
  * Site-settings tools (Task 6): set_brand_tokens, set_seo_defaults,
  * set_page_seo. Brand/SEO-default mutations evict the resolveSite cache for
- * every hostname pointing at the site (mirrors `admin-sites.ts:253-257`) so
- * the next request sees fresh data without waiting out the 60s TTL.
+ * every hostname the site could resolve under via `evictSiteCacheForSite`
+ * (used the same way by `plugins.ts`'s toggle route) so the next request
+ * sees fresh data without waiting out the 60s TTL. This covers both explicit
+ * `site_domains` rows AND the canonical `<slug>.<base>` / `<slug>.localhost`
+ * subdomain-fallback forms (`resolveSite.ts`'s `lookupSite` falls back to
+ * subdomain matching when a site has no `site_domains` row at all) — an
+ * inline `SELECT hostname FROM site_domains ...` loop (as in
+ * `admin-sites.ts:253-257`) would miss that fallback and serve stale data up
+ * to the TTL for any site resolved only by subdomain.
  * `set_page_seo` mirrors the transaction + revision pattern of
  * `tools/pages.ts` (`update_page`) so AI-driven SEO edits land in
  * `page_revisions` exactly like the human save path.
  */
-
-async function evictAllHostnamesForSite(ctx: AgentToolCtx): Promise<void> {
-  const hosts = await ctx.pool.query<{ hostname: string }>(
-    `SELECT hostname FROM site_domains WHERE site_id = $1`,
-    [ctx.siteId],
-  );
-  for (const row of hosts.rows) evictSiteCache(row.hostname);
-}
 
 const setBrandTokensParams = z.object({ tokens: brandTokensSchema });
 
@@ -36,7 +35,7 @@ const setBrandTokens: AgentTool = {
       JSON.stringify(input.tokens),
       ctx.siteId,
     ]);
-    await evictAllHostnamesForSite(ctx);
+    await evictSiteCacheForSite(ctx.pool, ctx.siteId);
 
     return {
       ok: true,
@@ -62,7 +61,7 @@ const setSeoDefaults: AgentTool = {
       JSON.stringify(input.seo_defaults),
       ctx.siteId,
     ]);
-    await evictAllHostnamesForSite(ctx);
+    await evictSiteCacheForSite(ctx.pool, ctx.siteId);
 
     return {
       ok: true,

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupAgentDb } from "../../../../../tests/helpers/agent-db.js";
 import { executeAgentTool } from "./index.js";
 import { evictSiteCache, lookupSiteForDebug } from "../../../../middleware/resolveSite.js";
+import { hostnameForSlug } from "../../../../config/domain.js";
 import type { AgentToolCtx } from "./types.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -12,6 +13,7 @@ const runId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 d("agent settings tools", () => {
   let siteId: string;
+  let siteSlug: string;
   let otherSiteId: string;
   let pageId: string;
   let otherPageId: string;
@@ -19,7 +21,7 @@ d("agent settings tools", () => {
 
   beforeAll(async () => {
     await db.runMigrations();
-    siteId = (await db.seedSite(`t6-settings-a-${runId}`)).id;
+    ({ id: siteId, slug: siteSlug } = await db.seedSite(`t6-settings-a-${runId}`));
     otherSiteId = (await db.seedSite(`t6-settings-b-${runId}`)).id;
     pageId = (await db.seedPage(siteId, `home-${runId}`, [{ id: "b1", type: "hero", props: {} }])).id;
     otherPageId = (await db.seedPage(otherSiteId, `home-${runId}`, [])).id;
@@ -50,15 +52,15 @@ d("agent settings tools", () => {
       expect(row.rows[0].default_brand_tokens).toEqual({ "--theme-main": "#112233" });
     });
 
-    it("evicts the resolveSite cache for every hostname on the site", async () => {
+    it("evicts the resolveSite cache for an explicit site_domains hostname", async () => {
       const hostname = `t6-cache-${runId}.example.test`;
       await db.getPool().query(
         `INSERT INTO site_domains (site_id, hostname, is_primary) VALUES ($1, $2, true)`,
         [siteId, hostname],
       );
       // Warm the cache with a bogus entry, then confirm the tool eviction
-      // clears it (evictSiteCache is a pure in-memory operation — safe to
-      // call directly in tests per the brief).
+      // clears it (evictSiteCache/lookupSiteForDebug are pure in-memory /
+      // read operations — safe to call directly in tests per the brief).
       evictSiteCache(hostname); // start clean
       const before = await lookupSiteForDebug(db.getPool(), hostname);
       expect(before.cache_hit).toBe(false);
@@ -67,6 +69,32 @@ d("agent settings tools", () => {
 
       const result = await executeAgentTool(ctx, "set_brand_tokens", {
         tokens: { "--theme-main": "#445566" },
+      });
+      expect(result.ok).toBe(true);
+
+      const afterEviction = await lookupSiteForDebug(db.getPool(), hostname);
+      expect(afterEviction.cache_hit).toBe(false);
+    });
+
+    it("evicts the resolveSite cache for the canonical subdomain form even with no site_domains row", async () => {
+      // Regression coverage for the review finding: a site can resolve via
+      // the `<slug>.<base>` subdomain fallback (resolveSite.ts's lookupSite)
+      // with NO site_domains row at all. An eviction loop that only reads
+      // `site_domains` (the admin-sites.ts:253-257 pattern) would miss this
+      // hostname entirely and leave it serving stale cached data until the
+      // 60s TTL expires. evictSiteCacheForSite (used by settings.ts) must
+      // cover this form too.
+      const hostname = hostnameForSlug(siteSlug);
+      evictSiteCache(hostname); // start clean
+      const before = await lookupSiteForDebug(db.getPool(), hostname);
+      expect(before.cache_hit).toBe(false);
+      expect(before.site?.id).toBe(siteId);
+      expect(before.site?.matched_via).toBe("subdomain");
+      const cachedAgain = await lookupSiteForDebug(db.getPool(), hostname);
+      expect(cachedAgain.cache_hit).toBe(true);
+
+      const result = await executeAgentTool(ctx, "set_seo_defaults", {
+        seo_defaults: { titleTemplate: "%s — Subdomain Check" },
       });
       expect(result.ok).toBe(true);
 
