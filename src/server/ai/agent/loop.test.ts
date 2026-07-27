@@ -188,9 +188,20 @@ d("runAgentTurn", () => {
     const blocks = pageRow.rows[0].blocks as { props: { html: string } }[];
     expect(blocks[0].props.html).toBe("<p>After</p>");
 
-    // Only the successful attempt produced a revision.
-    const revRows = await db.getPool().query(`SELECT id FROM page_revisions WHERE page_id = $1`, [page.id]);
-    expect(revRows.rowCount).toBe(1);
+    // The rejected proposal (badOp) never reaches the transaction, so it
+    // produced no revision at all. The successful attempt produces TWO:
+    // since this page (seeded directly via db.seedPage) had no revision yet,
+    // update_page's Critical 1 fix (tools/pages.ts) synthesizes a pre-write
+    // snapshot of the page's original blocks before writing the after-state
+    // revision — so `change.revision_id` is a genuine "before" to restore
+    // to, not the after-state update_page just created.
+    const revRows = await db.getPool().query<{ blocks: { props: { html: string } }[] }>(
+      `SELECT blocks FROM page_revisions WHERE page_id = $1 ORDER BY created_at ASC`,
+      [page.id],
+    );
+    expect(revRows.rowCount).toBe(2);
+    expect(revRows.rows[0].blocks[0].props.html).toBe("<p>Before</p>");
+    expect(revRows.rows[1].blocks[0].props.html).toBe("<p>After</p>");
   });
 
   it("failure streak: the same tool failing 3x in a row stops the turn with status error", async () => {
