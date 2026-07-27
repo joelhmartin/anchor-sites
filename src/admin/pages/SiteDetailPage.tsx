@@ -92,28 +92,21 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
 
   // P12-T12 "Start with AI": the wizard's AI path lands here with `?ai=1` to
   // pop the Studio drawer open and start tailing the job-run conversation it
-  // just kicked off. Fetched independently of the Pages tab (which loads
-  // lazily on mount) so the preview iframe has a fallback page even before
-  // that tab has been visited.
+  // just kicked off. `previewPageId`/`previewNonce` live here (fed by the
+  // drawer's onChangeEvent, which fires regardless of whether the preview
+  // column is mounted) but the pages-list fallback fetch itself lives in
+  // <DraftPreview>, which only mounts while the drawer is open — otherwise
+  // every site-detail load would issue the same GET the (lazily-mounted)
+  // Pages tab already makes.
   const [searchParams] = useSearchParams();
   const [aiOpen, setAiOpen] = useState(searchParams.get("ai") === "1");
   const [previewPageId, setPreviewPageId] = useState<string | null>(null);
   const [previewNonce, setPreviewNonce] = useState(0);
-  const { data: pagesData } = useApi<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`);
-  const firstPageId = pagesData?.pages[0]?.id ?? null;
-  const effectivePreviewPageId = previewPageId ?? firstPageId;
 
   function handleChangeEvent(c: AgentChangeEvent) {
     if (c.page_id) setPreviewPageId(c.page_id);
     setPreviewNonce((n) => n + 1);
   }
-
-  const adminToken = getAdminToken();
-  const previewSrc = effectivePreviewPageId
-    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview${
-        adminToken ? `?token=${encodeURIComponent(adminToken)}` : ""
-      }`
-    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -197,16 +190,8 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
               {tab === "settings" && <SettingsTab site={site} />}
             </div>
 
-            {aiOpen && previewSrc && (
-              <div className="flex w-full max-w-md flex-col gap-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
-                <iframe
-                  title="Draft preview"
-                  src={previewSrc}
-                  key={previewNonce}
-                  className="h-96 w-full rounded border border-zinc-200"
-                />
-              </div>
+            {aiOpen && (
+              <DraftPreview siteId={siteId} previewPageId={previewPageId} previewNonce={previewNonce} />
             )}
           </div>
 
@@ -221,6 +206,49 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           />
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Draft preview column (P12-T12). Only mounted while the AI drawer is open,
+ * so its pages-list fallback fetch (`GET /api/sites/:id/pages`) doesn't fire
+ * on every site-detail load — that GET is otherwise identical to the one the
+ * (lazily-mounted) Pages tab already makes. Shows the page from the latest
+ * drawer change event, falling back to the site's first page; `previewNonce`
+ * is used as the iframe's `key` to force a reload on every change event.
+ */
+function DraftPreview({
+  siteId,
+  previewPageId,
+  previewNonce,
+}: {
+  siteId: string;
+  previewPageId: string | null;
+  previewNonce: number;
+}) {
+  const { data: pagesData } = useApi<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`);
+  const firstPageId = pagesData?.pages[0]?.id ?? null;
+  const effectivePreviewPageId = previewPageId ?? firstPageId;
+
+  const adminToken = getAdminToken();
+  const previewSrc = effectivePreviewPageId
+    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview${
+        adminToken ? `?token=${encodeURIComponent(adminToken)}` : ""
+      }`
+    : null;
+
+  if (!previewSrc) return null;
+
+  return (
+    <div className="flex w-full max-w-md flex-col gap-2">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
+      <iframe
+        title="Draft preview"
+        src={previewSrc}
+        key={previewNonce}
+        className="h-96 w-full rounded border border-zinc-200"
+      />
     </div>
   );
 }

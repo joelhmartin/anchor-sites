@@ -165,6 +165,25 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview`);
   });
 
+  it("only fetches the site's pages list when the AI drawer is open (doesn't duplicate PagesTab's own fetch)", async () => {
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+
+    const pagesCalls = () => fetchMock.mock.calls.filter(([u]) => String(u) === "/api/sites/s1/pages").length;
+    // Pages is the default active tab, so PagesTab's own fetch already fired —
+    // that's the only reason this is 1, not 0. The drawer/preview must not
+    // add a second, redundant call while it's closed.
+    expect(pagesCalls()).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+    expect(pagesCalls()).toBe(2);
+  });
+
   it("bubbles a drawer change event into the preview: swaps the page id and forces a reload", async () => {
     mockApi([SITE], SITE, [
       { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
