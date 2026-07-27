@@ -29,6 +29,11 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
   const db = setupAgentDb();
   let app: express.Express;
   let savedApiKey: string | undefined;
+  // Sites created via POST /api/sites (not db.seedSite()) aren't tracked by
+  // setupAgentDb()'s teardown — clean them up ourselves so they don't
+  // accumulate in the shared test DB across runs (sibling precedent:
+  // tests/integration/admin-sites.test.ts's createdSlugs / afterAll).
+  const createdSiteIds: string[] = [];
 
   beforeAll(async () => {
     savedApiKey = process.env.ANTHROPIC_API_KEY;
@@ -58,6 +63,10 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
   });
 
   afterAll(async () => {
+    if (createdSiteIds.length > 0) {
+      // CASCADE cleans up the site's conversations/messages/pages/revisions.
+      await db.getPool().query(`DELETE FROM sites WHERE id = ANY($1)`, [createdSiteIds]);
+    }
     await db.teardown();
     delete process.env.ADMIN_API_TOKEN;
     if (savedApiKey !== undefined) {
@@ -75,6 +84,7 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
     });
     expect(siteRes.status).toBe(201);
     const siteId = siteRes.body.site.id as string;
+    createdSiteIds.push(siteId);
 
     // 2. Conversation via the API — no run, message persisted only.
     const convRes = await auth(request(app).post(`/api/sites/${siteId}/agent/conversations`)).send({
