@@ -235,6 +235,49 @@ d("ingestImageFromUrl SSRF guard (Important 4)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // Bot-review fix wave, item 11 (CodeRabbit — more SSRF encodings): the
+  // IPv4-compatible (no `ffff`) and NAT64 v6 forms are also just an IPv4
+  // address in disguise — Node's URL parser normalizes both to a bare
+  // hex-group tail (see ingest.ts's `ipv4EmbeddedToDotted` comment).
+  it("rejects the IPv4-compatible IPv6 form of the GCP metadata address ([::169.254.169.254])", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://[::169.254.169.254]/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects the NAT64 form of the GCP metadata address ([64:ff9b::169.254.169.254])", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://[64:ff9b::169.254.169.254]/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects CGNAT space (100.64.0.0/10)", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://100.64.0.1/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects the IPv6 unspecified address ::", async () => {
     const { storage } = fakeStorage();
     const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
@@ -272,5 +315,97 @@ d("ingestImageFromUrl SSRF guard (Important 4)", () => {
       "https://images.example.com/redirects-somewhere",
       expect.objectContaining({ redirect: "manual" }),
     );
+  });
+});
+
+// Bot-review fix wave, item 3 (Codex P1 + CodeRabbit): an unbounded download
+// of an operator/AI-supplied URL could hang forever or exhaust memory —
+// these prove the 20MB cap (both the Content-Length fast-path and the
+// streamed running-total path) and the 30s timeout signal.
+d("ingestImageFromUrl bounded download (item 3)", () => {
+  let siteId: string;
+
+  beforeAll(async () => {
+    await db.runMigrations();
+    siteId = (await db.seedSite("agent-ingest-bounded")).id;
+  });
+  afterAll(() => db.teardown());
+
+  it("rejects up front via Content-Length, without reading the body", async () => {
+    const { storage } = fakeStorage();
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name.toLowerCase() === "content-length" ? "31457280" : null) }, // 30MB
+      arrayBuffer,
+    }) as unknown as Response);
+
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://images.example.com/huge.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/exceeds.*size limit/i);
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("aborts a streamed download once the running total exceeds the cap, even with no Content-Length", async () => {
+    const { storage } = fakeStorage();
+    // Three ~8MB chunks (24MB total) — crosses the 20MB cap on the 3rd read
+    // without ever declaring Content-Length (simulates a chunked response).
+    const chunk = new Uint8Array(8 * 1024 * 1024);
+    let reads = 0;
+    const cancel = vi.fn(async () => undefined);
+    const reader = {
+      read: async () => {
+        reads += 1;
+        if (reads > 3) return { done: true, value: undefined };
+        return { done: false, value: chunk };
+      },
+      cancel,
+    };
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+      arrayBuffer: async () => {
+        throw new Error("should stream, not buffer whole-body");
+      },
+    }) as unknown as Response);
+
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://images.example.com/chunked.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/exceeds.*size limit/i);
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("passes a 30s AbortSignal.timeout to the fetch call", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url: "https://images.example.com/photo.png", alt: "x" },
+      { fetchFn: fetchSpy, storage, enqueue: async () => "job-1" },
+    );
+    const call = fetchSpy.mock.calls[0] as unknown as [string, { signal?: AbortSignal }];
+    expect(call[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("still accepts a normal small download under the cap", async () => {
+    const { storage, calls } = fakeStorage();
+    const result = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url: "https://images.example.com/small.png", alt: "a small photo" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+    expect(result.asset_id).toBeTruthy();
+    expect(calls).toHaveLength(1);
   });
 });

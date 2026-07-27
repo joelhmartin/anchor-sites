@@ -35,6 +35,11 @@ function isDisallowedIpv4(h: string): boolean {
   if (a === 192 && b === 168) return true; // RFC1918
   if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata IP)
   if (a === 0) return true; // "this network"
+  // Bot-review fix wave, item 11 (CodeRabbit — SSRF encodings): CGNAT space
+  // (RFC 6598) — routed by ISPs/cloud NAT layers, not publicly reachable,
+  // and (like the RFC1918 ranges above) not somewhere an image download
+  // should ever legitimately need to go.
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT (100.64.0.0/10)
   return false;
 }
 
@@ -48,15 +53,39 @@ function isDisallowedIpv4(h: string): boolean {
  * (none of which know about v4 ranges) even though it resolves to the exact
  * same cloud-metadata address `169.254.169.254` would.
  */
+function hexGroupsToDotted(hi: number, lo: number): string {
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
 function ipv4MappedToDotted(h: string): string | null {
   const dotted = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
   if (dotted) return dotted[1];
   const hex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
-  if (hex) {
-    const hi = parseInt(hex[1], 16);
-    const lo = parseInt(hex[2], 16);
-    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-  }
+  if (hex) return hexGroupsToDotted(parseInt(hex[1], 16), parseInt(hex[2], 16));
+  return null;
+}
+
+/**
+ * Bot-review fix wave, item 11 (CodeRabbit — SSRF encodings). Two more IPv6
+ * forms that are really an IPv4 address in disguise, same threat as the
+ * `::ffff:` mapped form above:
+ *
+ *  - IPv4-COMPATIBLE (deprecated RFC 4291, but still parses): `::a.b.c.d`,
+ *    which Node's URL parser normalizes to the hex-group shape `::XXXX:YYYY`
+ *    (e.g. `new URL("https://[::169.254.169.254]/").hostname` is
+ *    `"[::a9fe:a9fe]"`) — no `ffff` group, just the bare address after `::`.
+ *  - NAT64 (RFC 6052, `64:ff9b::/96`): `64:ff9b::a.b.c.d`, used by NAT64/
+ *    DNS64 gateways to embed an IPv4 destination in a v6 address — same
+ *    normalized hex-group tail.
+ *
+ * Both unwrap to the plain IPv4 address for the same `isDisallowedIpv4`
+ * range check the mapped form uses.
+ */
+function ipv4EmbeddedToDotted(h: string): string | null {
+  const compatible = h.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (compatible) return hexGroupsToDotted(parseInt(compatible[1], 16), parseInt(compatible[2], 16));
+  const nat64 = h.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (nat64) return hexGroupsToDotted(parseInt(nat64[1], 16), parseInt(nat64[2], 16));
   return null;
 }
 
@@ -80,10 +109,62 @@ function isDisallowedIngestHost(hostname: string): boolean {
     const mapped = ipv4MappedToDotted(h);
     if (mapped) return isDisallowedIpv4(mapped);
 
+    const embedded = ipv4EmbeddedToDotted(h);
+    if (embedded) return isDisallowedIpv4(embedded);
+
     return false;
   }
   // Not a literal IP at all — an ordinary DNS hostname, allowed.
   return false;
+}
+
+// Bot-review fix wave, item 3 (Codex P1 + CodeRabbit — bounded download):
+// an unbounded `res.arrayBuffer()` on an operator/AI-supplied URL lets a
+// malicious or misconfigured host hang the request indefinitely, or hand
+// back a response large enough to exhaust memory. `MAX_DOWNLOAD_BYTES` caps
+// the actual body size (checked against `Content-Length` up front when the
+// server sends one, AND against a running total while streaming — a host
+// can lie about or omit `Content-Length` for a chunked response);
+// `DOWNLOAD_TIMEOUT_MS` bounds the whole fetch (connect + body drain) via
+// the signal passed to `fetch` — Node 22's fetch/undici ties body-stream
+// reads to the same AbortSignal, so a slow/stalled download aborts too, not
+// just a slow initial response.
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024; // 20MB
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/**
+ * Reads `res`'s body into a Buffer, enforcing `MAX_DOWNLOAD_BYTES` against a
+ * running total as chunks arrive (so an unbounded/chunked response is caught
+ * without ever buffering past the limit). Falls back to a single
+ * `res.arrayBuffer()` call (still limit-checked, just after the fact) when
+ * `res.body` isn't a stream — real `fetch` always provides one, but this
+ * keeps the function usable with simpler test doubles that only implement
+ * `arrayBuffer()`.
+ */
+async function readBodyWithLimit(res: Response): Promise<Buffer> {
+  const body = (res as { body?: ReadableStream<Uint8Array> | null }).body;
+  if (!body || typeof body.getReader !== "function") {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_DOWNLOAD_BYTES) {
+      throw new Error(`image download failed: exceeds ${MAX_DOWNLOAD_BYTES}-byte size limit`);
+    }
+    return buf;
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_DOWNLOAD_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`image download failed: exceeds ${MAX_DOWNLOAD_BYTES}-byte size limit`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
 }
 
 /** Throws if `rawUrl` isn't a safe target for a server-side image fetch. */
@@ -125,14 +206,26 @@ export async function ingestImageFromUrl(
   // `redirect: "manual"` stops fetch from following it; any 3xx then comes
   // back as an ordinary (non-ok) response we reject explicitly below,
   // rather than silently chasing it.
-  const res = await fetchFn(input.url, { redirect: "manual" });
+  const res = await fetchFn(input.url, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
   if (res.status >= 300 && res.status < 400) {
     throw new Error(`image download failed: redirect not allowed for ${input.url}`);
   }
   if (!res.ok) {
     throw new Error(`image download failed: ${res.status} for ${input.url}`);
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+  const contentLengthHeader = res.headers?.get?.("content-length");
+  if (contentLengthHeader) {
+    const contentLength = Number(contentLengthHeader);
+    if (Number.isFinite(contentLength) && contentLength > MAX_DOWNLOAD_BYTES) {
+      throw new Error(
+        `image download failed: content-length ${contentLength} exceeds ${MAX_DOWNLOAD_BYTES}-byte size limit`,
+      );
+    }
+  }
+  const buf = await readBodyWithLimit(res);
   const contentType =
     input.contentType ?? res.headers?.get?.("content-type") ?? "application/octet-stream";
   const ext = extForContentType(contentType);
