@@ -66,13 +66,18 @@ type ToolResultContent = {
  */
 async function buildApiMessages(pool: Pool, conversationId: string): Promise<Anthropic.MessageParam[]> {
   const rows = await listMessages(pool, conversationId, { limit: 40 });
-  const mapped = rows.map((m) => ({
+  // Trim on the DB role, BEFORE mapping tool -> user: a window that starts on
+  // a `tool` row would otherwise map to "user" and survive the trim, handing
+  // the API a user turn of bare tool_result blocks whose tool_use_id has no
+  // matching tool_use in this truncated window (the assistant message that
+  // issued it fell off the front) — a guaranteed 400 from the API.
+  const firstUserIdx = rows.findIndex((m) => m.role === "user");
+  const trimmedRows = firstUserIdx === -1 ? [] : rows.slice(firstUserIdx);
+  const mapped = trimmedRows.map((m) => ({
     role: m.role === "tool" ? "user" : m.role,
     content: m.content,
   }));
-  const firstUserIdx = mapped.findIndex((m) => m.role === "user");
-  const trimmed = firstUserIdx === -1 ? [] : mapped.slice(firstUserIdx);
-  return trimmed as unknown as Anthropic.MessageParam[];
+  return mapped as unknown as Anthropic.MessageParam[];
 }
 
 async function persistAssistantText(
@@ -135,6 +140,7 @@ async function runStubTurn(params: {
         type: "tool_result",
         tool_use_id: "toolu_stub_1",
         content: JSON.stringify(result.ok ? result.data : { error: result.error, details: result.details }),
+        is_error: !result.ok,
       },
     ]);
     onEvent({ type: "tool_call", name: "create_page", input: createInput });
@@ -145,6 +151,16 @@ async function runStubTurn(params: {
       summary: result.ok ? result.summary : undefined,
       change: result.ok ? result.change : undefined,
     });
+
+    if (!result.ok) {
+      // Don't claim success on a failed stub write — this can only really
+      // happen if the fixed starter blocks somehow fail validation, but if it
+      // does, the turn should report the failure, not a cheerful lie.
+      const text = `Stub mode: failed to create the starter Home page (${result.error}).`;
+      await persistAssistantText(pool, conversationId, text, onEvent);
+      onEvent({ type: "turn_done", reason: "error", message: text });
+      return { reason: "error", toolCalls: 1 };
+    }
 
     await persistAssistantText(pool, conversationId, "Stub mode: created a starter Home page.", onEvent);
     onEvent({ type: "turn_done", reason: "end_turn" });
@@ -202,12 +218,19 @@ export async function runAgentTurn(input: {
   for (;;) {
     // Budget gate — runs before EVERY model call, including the first.
     const conv = await getConversation(pool, conversationId, siteId);
-    const usage = getTodayUsage(conv!);
+    if (!conv) {
+      // Nothing to persist against — the conversation/site pairing this call
+      // was given doesn't exist (or was scoped to the wrong site). Don't
+      // force-unwrap into a TypeError; report it as a normal turn failure.
+      onEvent({ type: "turn_done", reason: "error", message: "conversation not found for this site" });
+      return { reason: "error", toolCalls };
+    }
+    const usage = getTodayUsage(conv);
     if (usage.input + usage.output >= tokenBudget) {
       const text =
         "Daily token budget for this conversation is exhausted — try again tomorrow or raise AI_AGENT_TOKEN_BUDGET.";
       await persistAssistantText(pool, conversationId, text, onEvent);
-      onEvent({ type: "turn_done", reason: "budget" });
+      onEvent({ type: "turn_done", reason: "budget", message: text });
       return { reason: "budget", toolCalls };
     }
 
@@ -235,6 +258,15 @@ export async function runAgentTurn(input: {
     const toolUseBlocks = message.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
     );
+
+    if (toolUseBlocks.length === 0) {
+      // stop_reason said "tool_use" but the model didn't actually include a
+      // tool_use block (a malformed/edge-case response) — there's nothing to
+      // execute and no result to persist. Treat it as done rather than
+      // looping forever on an empty tool message.
+      onEvent({ type: "turn_done", reason: "end_turn" });
+      return { reason: "end_turn", toolCalls };
+    }
 
     const resultBlocks: ToolResultContent[] = [];
     for (const block of toolUseBlocks) {
@@ -277,14 +309,14 @@ export async function runAgentTurn(input: {
         `The "${toolName}" tool failed ${count} times in a row; stopping here rather than repeating the same mistake.`;
       await persistAssistantText(pool, conversationId, text, onEvent);
       await setConversationStatus(pool, conversationId, "error");
-      onEvent({ type: "turn_done", reason: "error" });
+      onEvent({ type: "turn_done", reason: "error", message: text });
       return { reason: "error", toolCalls };
     }
 
     if (toolCalls >= maxToolCalls) {
       const text = `Reached the limit of ${maxToolCalls} tool calls for this turn; stopping here.`;
       await persistAssistantText(pool, conversationId, text, onEvent);
-      onEvent({ type: "turn_done", reason: "max_tools" });
+      onEvent({ type: "turn_done", reason: "max_tools", message: text });
       return { reason: "max_tools", toolCalls };
     }
 

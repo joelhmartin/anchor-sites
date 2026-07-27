@@ -115,6 +115,36 @@ d("runAgentTurn", () => {
 
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     expect(getTodayUsage(convAfter!)).toEqual({ input: 270, output: 60 });
+
+    // Request payload shape (first call): system carries the intro + block
+    // catalog with prompt caching on, tools/tool_choice/max_tokens are wired
+    // through, and the only message is the pre-persisted user turn.
+    type CreateParams = {
+      system: { type: string; text: string; cache_control?: { type: string } }[];
+      messages: { role: string; content: unknown }[];
+      max_tokens: number;
+      tool_choice: { type: string };
+      tools: unknown[];
+    };
+    const firstCall = create.mock.calls[0][0] as CreateParams;
+    expect(firstCall.system).toHaveLength(1);
+    expect(firstCall.system[0].text).toContain("You are the site agent for the AnchorCorps site builder");
+    expect(firstCall.system[0].text).toContain("--- BLOCK CATALOG ---");
+    expect(firstCall.system[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(firstCall.max_tokens).toBe(8192);
+    expect(firstCall.tool_choice).toEqual({ type: "auto" });
+    expect(firstCall.tools.length).toBeGreaterThan(0);
+    expect(firstCall.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "Update the homepage copy" }] },
+    ]);
+
+    // Second call's history must include the persisted tool-result row
+    // remapped to API role "user" (there is no "tool" role in the Messages
+    // API — tool_result blocks ride in a user turn).
+    const secondCall = create.mock.calls[1][0] as CreateParams;
+    expect(secondCall.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    const toolResultTurn = secondCall.messages[2].content as { type: string; tool_use_id: string }[];
+    expect(toolResultTurn[0]).toMatchObject({ type: "tool_result", tool_use_id: "t1" });
   });
 
   it("self-correction: a rejected proposal doesn't touch the page; the model retries and succeeds", async () => {
@@ -238,7 +268,11 @@ d("runAgentTurn", () => {
     expect(create).not.toHaveBeenCalled();
     expect(result).toEqual({ reason: "budget", toolCalls: 0 });
     expect(events.map((e) => e.type)).toEqual(["assistant_text", "turn_done"]);
-    expect(events[1]).toEqual({ type: "turn_done", reason: "budget" });
+    expect(events[1]).toEqual({
+      type: "turn_done",
+      reason: "budget",
+      message: "Daily token budget for this conversation is exhausted — try again tomorrow or raise AI_AGENT_TOKEN_BUDGET.",
+    });
 
     const msgs = await listMessages(db.getPool(), conv.id);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
@@ -286,5 +320,42 @@ d("runAgentTurn", () => {
     expect(result).toEqual({ reason: "end_turn", toolCalls: 0 });
     const pages = await db.getPool().query(`SELECT COUNT(*)::int AS count FROM pages WHERE site_id = $1`, [site.id]);
     expect(pages.rows[0].count).toBe(1);
+  });
+
+  it("rebuilds the model context by trimming on the DB role, not the mapped API role, once history exceeds the 40-message window", async () => {
+    const site = await db.seedSite(`loop-trim-${runId}`);
+    await db.seedPage(site.id, "home", [{ id: "b1", type: "rich-text", props: { html: "<p>Hi</p>" } }]);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    // An old, now-irrelevant user turn, followed by 45 role-'tool' rows (junk
+    // — never a real assistant/tool_use pairing), then the real, current user
+    // turn. Total = 47 rows; the last-40 window starts inside the junk `tool`
+    // block. A buggy trim that maps tool -> user BEFORE finding the first
+    // "user" row would stop at the junk block's first row (now mis-mapped to
+    // "user") and hand the model 40 messages starting on bare tool_result
+    // content with no matching tool_use — this asserts the fix instead finds
+    // the one genuine `user` row and starts there.
+    await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "old request" }]);
+    for (let i = 0; i < 45; i++) {
+      await appendMessage(db.getPool(), conv.id, "tool", [
+        { type: "tool_result", tool_use_id: `junk-${i}`, content: "junk" },
+      ]);
+    }
+    await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "real request" }]);
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({ content: [textBlock("ok")], stop_reason: "end_turn", usage: usage(10, 5) }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ reason: "end_turn", toolCalls: 0 });
+    expect(create).toHaveBeenCalledTimes(1);
+    const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
+    expect(payload.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "real request" }] },
+    ]);
   });
 });
