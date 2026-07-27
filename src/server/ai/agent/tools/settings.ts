@@ -91,6 +91,36 @@ const setPageSeo: AgentTool = {
     const client = await ctx.pool.connect();
     try {
       await client.query("BEGIN");
+
+      // Critical 1 (mirrors update_page in tools/pages.ts): the drawer's
+      // Revert restores `change.revision_id`, so it must be the revision
+      // that existed BEFORE this write, not the after-state revision this
+      // call is about to create. Reuse the latest existing revision, or
+      // synthesize a pre-write snapshot (current blocks + current seo) if
+      // the page has none yet.
+      const currentRes = await client.query<{ seo: Record<string, unknown> }>(
+        `SELECT seo FROM pages WHERE id = $1`,
+        [input.page_id],
+      );
+      const currentSeo = currentRes.rows[0]?.seo ?? {};
+
+      const priorRevRes = await client.query<{ id: string }>(
+        `SELECT id FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [input.page_id],
+      );
+      let priorRevisionId: string;
+      if ((priorRevRes.rowCount ?? 0) > 0) {
+        priorRevisionId = priorRevRes.rows[0].id;
+      } else {
+        const snapshotRes = await client.query<{ id: string }>(
+          `INSERT INTO page_revisions (page_id, blocks, seo, source)
+           VALUES ($1, $2::jsonb, $3::jsonb, 'ai')
+           RETURNING id`,
+          [input.page_id, JSON.stringify(blocks), JSON.stringify(currentSeo)],
+        );
+        priorRevisionId = snapshotRes.rows[0].id;
+      }
+
       await client.query(
         `UPDATE pages SET seo = $1::jsonb, updated_at = now() WHERE id = $2 AND site_id = $3`,
         [JSON.stringify(input.seo), input.page_id, ctx.siteId],
@@ -101,17 +131,21 @@ const setPageSeo: AgentTool = {
          RETURNING id`,
         [input.page_id, JSON.stringify(blocks), JSON.stringify(input.seo)],
       );
-      const revisionId = revRes.rows[0].id;
+      const afterRevisionId = revRes.rows[0].id;
       await client.query("COMMIT");
 
       return {
         ok: true,
-        data: { page_id: input.page_id, revision_id: revisionId },
+        data: {
+          page_id: input.page_id,
+          revision_id: priorRevisionId,
+          after_revision_id: afterRevisionId,
+        },
         summary: "Page SEO updated.",
         change: {
           kind: "page_updated",
           page_id: input.page_id,
-          revision_id: revisionId,
+          revision_id: priorRevisionId,
           summary: "Page SEO updated.",
         },
       };

@@ -153,13 +153,22 @@ d("agent settings tools", () => {
 
   describe("set_page_seo", () => {
     it("updates seo and writes a revision row with the page's current blocks", async () => {
+      // `pageId` was seeded directly via db.seedPage — no page_revisions row
+      // exists for it yet, so this exercises the Critical 1 "synthesize a
+      // pre-write snapshot" branch (mirrors update_page in tools/pages.ts).
+      const preCount = await db.getPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM page_revisions WHERE page_id = $1`,
+        [pageId],
+      );
+      expect(preCount.rows[0].n).toBe(0);
+
       const result = await executeAgentTool(ctx, "set_page_seo", {
         page_id: pageId,
         seo: { title: "Home", description: "Welcome" },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error("unreachable");
-      const data = result.data as { page_id: string; revision_id: string };
+      const data = result.data as { page_id: string; revision_id: string; after_revision_id: string };
       expect(data.page_id).toBe(pageId);
       expect(data.revision_id).toBeTruthy();
       expect(result.change).toEqual({
@@ -172,6 +181,19 @@ d("agent settings tools", () => {
       const pageRow = await db.getPool().query(`SELECT seo FROM pages WHERE id = $1`, [pageId]);
       expect(pageRow.rows[0].seo).toEqual({ title: "Home", description: "Welcome" });
 
+      // Two revisions now exist: the synthesized pre-write snapshot
+      // (data.revision_id — pre-change seo, i.e. '{}') and the after-write one.
+      const revCount = await db.getPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM page_revisions WHERE page_id = $1`,
+        [pageId],
+      );
+      expect(revCount.rows[0].n).toBe(2);
+
+      // Critical 1: `data.revision_id` / `change.revision_id` must be the
+      // PRE-change snapshot — restoring it (what the drawer's Revert button
+      // does) must bring back the page's blocks AND its pre-change (empty)
+      // seo, proving it's a true inverse of this write, not a no-op replay
+      // of the write's own after-state.
       const revRow = await db.getPool().query(
         `SELECT page_id, source, blocks, seo FROM page_revisions WHERE id = $1`,
         [data.revision_id],
@@ -180,7 +202,14 @@ d("agent settings tools", () => {
       expect(revRow.rows[0].page_id).toBe(pageId);
       expect(revRow.rows[0].source).toBe("ai");
       expect(revRow.rows[0].blocks).toEqual([{ id: "b1", type: "hero", props: {} }]);
-      expect(revRow.rows[0].seo).toEqual({ title: "Home", description: "Welcome" });
+      expect(revRow.rows[0].seo).toEqual({});
+
+      const afterRevRow = await db.getPool().query(
+        `SELECT blocks, seo FROM page_revisions WHERE id = $1`,
+        [data.after_revision_id],
+      );
+      expect(afterRevRow.rows[0].blocks).toEqual([{ id: "b1", type: "hero", props: {} }]);
+      expect(afterRevRow.rows[0].seo).toEqual({ title: "Home", description: "Welcome" });
     });
 
     it("returns ok:false for a page belonging to another site, and writes no revision", async () => {

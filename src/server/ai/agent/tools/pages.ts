@@ -71,10 +71,16 @@ const createPage: AgentTool = {
         ok: true,
         data: { page_id: pageId, revision_id: revisionId },
         summary: `Created page "${input.title}" (${input.slug}).`,
+        // Critical 1: create_page's true inverse is delete_page, not restore
+        // — there is no "prior" revision to restore to (the page didn't
+        // exist). Deliberately omit `revision_id` from the change event so
+        // the drawer's Revert button (gated on `change.revision_id`, see
+        // AgentChatDrawer.tsx) doesn't render for a created page. `data`
+        // above still carries the new page's initial revision id for
+        // callers that need it (e.g. read tools).
         change: {
           kind: "page_created",
           page_id: pageId,
-          revision_id: revisionId,
           summary: `Created page "${input.title}" (${input.slug}).`,
         },
       };
@@ -124,6 +130,33 @@ const updatePage: AgentTool = {
     const client = await ctx.pool.connect();
     try {
       await client.query("BEGIN");
+
+      // Critical 1: the drawer's Revert button restores `change.revision_id`
+      // — for that to actually undo THIS write, it must be the revision that
+      // existed BEFORE the write below, not the after-state revision this
+      // call is about to create (restoring the after-state onto itself is a
+      // no-op). Find the latest existing revision first; if the page has
+      // never been saved before (e.g. seeded directly, or created without
+      // ever going through a save), synthesize one pre-write snapshot of the
+      // current (pre-change) blocks+seo so there's always a genuine "before"
+      // to restore to.
+      const priorRevRes = await client.query<{ id: string }>(
+        `SELECT id FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [input.page_id],
+      );
+      let priorRevisionId: string;
+      if ((priorRevRes.rowCount ?? 0) > 0) {
+        priorRevisionId = priorRevRes.rows[0].id;
+      } else {
+        const snapshotRes = await client.query<{ id: string }>(
+          `INSERT INTO page_revisions (page_id, blocks, seo, source)
+           VALUES ($1, $2::jsonb, $3::jsonb, 'ai')
+           RETURNING id`,
+          [input.page_id, JSON.stringify(before), JSON.stringify(seo ?? {})],
+        );
+        priorRevisionId = snapshotRes.rows[0].id;
+      }
+
       await client.query(
         `UPDATE pages SET blocks = $1::jsonb, title = COALESCE($2, title), updated_at = now() WHERE id = $3`,
         [JSON.stringify(after), input.title ?? null, input.page_id],
@@ -134,18 +167,26 @@ const updatePage: AgentTool = {
          RETURNING id`,
         [input.page_id, JSON.stringify(after), JSON.stringify(seo ?? {})],
       );
-      const revisionId = revRes.rows[0].id;
+      const afterRevisionId = revRes.rows[0].id;
       await client.query("COMMIT");
 
       const diff = diffBlocks(before, after);
       return {
         ok: true,
-        data: { page_id: input.page_id, revision_id: revisionId, diff },
+        data: {
+          page_id: input.page_id,
+          // Prior (pre-change) revision — this is what Revert restores.
+          revision_id: priorRevisionId,
+          // After-state revision this write just created, kept for callers
+          // that want the new revision id specifically (not used by Revert).
+          after_revision_id: afterRevisionId,
+          diff,
+        },
         summary: diff.summary,
         change: {
           kind: "page_updated",
           page_id: input.page_id,
-          revision_id: revisionId,
+          revision_id: priorRevisionId,
           summary: diff.summary,
         },
       };

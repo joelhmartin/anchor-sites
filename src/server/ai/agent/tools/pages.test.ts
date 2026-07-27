@@ -46,10 +46,15 @@ d("agent page write tools", () => {
       const data = result.data as { page_id: string; revision_id: string };
       expect(data.page_id).toBeTruthy();
       expect(data.revision_id).toBeTruthy();
+      // Critical 1: create_page's true inverse is delete, not restore — a
+      // created page has no "prior" state, so the change event must NOT
+      // carry a revision_id (that would let the drawer's Revert button
+      // restore the page onto its own initial revision, a no-op that looks
+      // like it undid the creation but didn't). `data.revision_id` is still
+      // populated for other callers.
       expect(result.change).toEqual({
         kind: "page_created",
         page_id: data.page_id,
-        revision_id: data.revision_id,
         summary: expect.any(String),
       });
 
@@ -114,6 +119,17 @@ d("agent page write tools", () => {
 
       const before = await db.getPool().query(`SELECT blocks FROM pages WHERE id = $1`, [page_id]);
       const beforeBlockId = (before.rows[0].blocks as { id: string }[])[0].id;
+      const beforeBlocks = before.rows[0].blocks;
+
+      // Critical 1: capture the revision that exists BEFORE this write —
+      // create_page's revision (source 'ai', "Before" html) — so we can
+      // assert the tool hands that one back as `revision_id`, not the
+      // after-state revision it's about to create.
+      const preChangeRev = await db.getPool().query<{ id: string }>(
+        `SELECT id FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [page_id],
+      );
+      const preChangeRevisionId = preChangeRev.rows[0].id;
 
       const result = await executeAgentTool(ctx, "update_page", {
         page_id,
@@ -142,6 +158,63 @@ d("agent page write tools", () => {
         data.revision_id,
       ]);
       expect(rev.rows[0].source).toBe("ai");
+
+      // Critical 1 (revert-is-a-no-op fix): `change.revision_id` must be the
+      // PRE-change revision, so it's the true inverse of this write — not
+      // the after-state revision this same call just created.
+      expect(result.change?.revision_id).toBe(preChangeRevisionId);
+      expect(data.revision_id).toBe(preChangeRevisionId);
+
+      // Prove it's a real inverse: restoring `data.revision_id` (what the
+      // drawer's Revert button does via the /restore route) must bring back
+      // the PRE-change blocks, not the after-change ones.
+      const restoreRev = await db.getPool().query<{ blocks: { props: { html: string } }[] }>(
+        `SELECT blocks FROM page_revisions WHERE id = $1`,
+        [data.revision_id],
+      );
+      expect(restoreRev.rows[0].blocks).toEqual(beforeBlocks);
+    });
+
+    it("synthesizes a pre-write snapshot revision when the page has never been saved before", async () => {
+      // db.seedPage inserts a page row directly (no page_revisions row) — the
+      // exact shape of a page that's never gone through create_page/save.
+      const page_id = (
+        await db.seedPage(siteId, `never-saved-${runId}`, [
+          { id: "seed-1", type: "rich-text", props: { html: "<p>Seeded</p>" } },
+        ])
+      ).id;
+
+      const preCount = await db.getPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM page_revisions WHERE page_id = $1`,
+        [page_id],
+      );
+      expect(preCount.rows[0].n).toBe(0);
+
+      const result = await executeAgentTool(ctx, "update_page", {
+        page_id,
+        ops: [{ op: "update_block", id: "seed-1", props: { html: "<p>Edited</p>" } }],
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      const data = result.data as { page_id: string; revision_id: string };
+
+      // Two revisions now exist: the synthesized pre-write snapshot
+      // (data.revision_id / change.revision_id) and the after-write one.
+      const revs = await db.getPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM page_revisions WHERE page_id = $1`,
+        [page_id],
+      );
+      expect(revs.rows[0].n).toBe(2);
+
+      const snapshot = await db.getPool().query<{ blocks: { props: { html: string } }[]; source: string }>(
+        `SELECT blocks, source FROM page_revisions WHERE id = $1`,
+        [data.revision_id],
+      );
+      expect(snapshot.rows[0].source).toBe("ai");
+      expect(snapshot.rows[0].blocks).toEqual([
+        { id: "seed-1", type: "rich-text", props: { html: "<p>Seeded</p>" } },
+      ]);
+      expect(result.change?.revision_id).toBe(data.revision_id);
     });
 
     it("returns ok:false for a page belonging to another site", async () => {

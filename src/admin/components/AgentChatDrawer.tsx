@@ -50,10 +50,18 @@ function deriveChangeFromToolData(data: unknown): AgentChangeEvent | null {
   const revision_id = typeof d.revision_id === "string" ? d.revision_id : undefined;
   const diff = d.diff as { summary?: string } | undefined;
   if (diff && typeof diff.summary === "string") {
+    // update_page's `data.revision_id` is now the PRIOR (pre-change)
+    // revision (Critical 1 fix, tools/pages.ts) — restoring it is a genuine
+    // undo of this change, so it's safe to carry through here.
     return { kind: "page_updated", page_id, revision_id, summary: diff.summary };
   }
   if (revision_id) {
-    return { kind: "page_created", page_id, revision_id, summary: "Page created" };
+    // create_page's `data.revision_id` is the newly-created page's OWN
+    // initial revision, not a prior state — its true inverse is delete, not
+    // restore (Critical 1). Deliberately drop `revision_id` here too so a
+    // card rebuilt from history doesn't offer a Revert that would just
+    // restore the page onto itself.
+    return { kind: "page_created", page_id, summary: "Page created" };
   }
   return null;
 }
