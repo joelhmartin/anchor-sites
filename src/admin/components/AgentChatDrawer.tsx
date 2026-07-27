@@ -223,16 +223,35 @@ export function AgentChatDrawer({
     const qs = afterId ? `?after=${afterId}` : "";
     streamAgentEvents(`/api/sites/${siteId}/agent/conversations/${id}/events${qs}`, {
       signal: controller.signal,
-      onEvent: (e) => handleTailEvent(e as AgentTailEvent),
+      // `afterId` is captured per-call: the server's `snapshot` payload
+      // shape depends on whether `after=` was sent (Task 10's tail route —
+      // `after` given → only messages newer than it; else the last 50), so
+      // the handler needs to know which one it's looking at.
+      onEvent: (e) => handleTailEvent(e as AgentTailEvent, afterId),
     }).catch(() => {
       // aborted (drawer closed / unmounted) or connection dropped — best-effort tail
     });
   }
 
-  function handleTailEvent(e: AgentTailEvent) {
+  function handleTailEvent(e: AgentTailEvent, cursor: string | null) {
     if (e.type === "snapshot") {
       setConversation(e.conversation);
-      hydrateFromMessages(e.messages);
+      if (cursor === null) {
+        // No cursor was sent → the server's snapshot is the full recent
+        // history (last 50), which may re-include everything already
+        // rendered live this turn (e.g. a mid-turn promotion on a
+        // never-hydrated conversation) — replace wholesale rather than
+        // dedup-merge (see `hydrateFromMessages`).
+        hydrateFromMessages(e.messages);
+      } else {
+        // A cursor was sent → the server already scoped the snapshot to
+        // messages newer than it. Merging (id-deduped, appended) instead
+        // of replacing avoids wiping transcript already hydrated before
+        // this tail started (e.g. reopening an existing conversation with
+        // `autoTail` — history was hydrated from the conversation-detail
+        // fetch, then the tail's own snapshot must ADD to it, not erase it).
+        for (const m of e.messages) appendPersistedMessage(m);
+      }
     } else if (e.type === "message") {
       appendPersistedMessage(e.message);
     } else if (e.type === "status") {

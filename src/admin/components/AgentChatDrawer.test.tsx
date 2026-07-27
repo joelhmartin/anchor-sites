@@ -285,4 +285,73 @@ describe("AgentChatDrawer (P-T11)", () => {
     expect(onSiteChanged).not.toHaveBeenCalled();
     expect(streamAgentEvents).not.toHaveBeenCalled();
   });
+
+  it("merges a tail snapshot into hydrated history on reopen+autoTail, without wiping it (fix round 2)", async () => {
+    // The tail is started with a cursor (the last hydrated message id), so
+    // per the server contract its snapshot contains ONLY messages newer
+    // than that cursor — here, one new tool-result change.
+    eventScripts["/api/sites/s1/agent/conversations/c9/events?after=m2"] = [
+      {
+        type: "snapshot",
+        conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+        messages: [
+          {
+            id: "m3",
+            conversation_id: "c9",
+            role: "tool",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "t2",
+                content: JSON.stringify({ page_id: "p9", revision_id: "r10", diff: { summary: "10 updated" } }),
+                is_error: false,
+              },
+            ],
+            created_at: "t4",
+          },
+        ],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({
+          conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} }],
+        });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9" && method === "GET") {
+        return json({
+          conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+          messages: [
+            { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
+            {
+              id: "m2",
+              conversation_id: "c9",
+              role: "assistant",
+              content: [{ type: "text", text: "Hi there" }],
+              created_at: "t2",
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { onSiteChanged } = renderDrawer({ autoTail: true });
+
+    // Hydrated history renders first.
+    await waitFor(() => expect(screen.getByText("Hi there")).toBeTruthy());
+    expect(screen.getByText("Hello")).toBeTruthy();
+
+    // The autoTail'd snapshot's newer message merges in — the hydrated
+    // history must still be there (no wipe) and must not be duplicated.
+    await waitFor(() => expect(screen.getByText("10 updated")).toBeTruthy());
+    expect(screen.getAllByText("Hello")).toHaveLength(1);
+    expect(screen.getAllByText("Hi there")).toHaveLength(1);
+
+    // Only the newly-tailed change should notify — hydration itself is silent.
+    expect(onSiteChanged).toHaveBeenCalledTimes(1);
+  });
 });
