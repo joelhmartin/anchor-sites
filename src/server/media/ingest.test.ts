@@ -203,4 +203,74 @@ d("ingestImageFromUrl SSRF guard (Important 4)", () => {
     expect(result.asset_id).toBeTruthy();
     expect(calls).toHaveLength(1);
   });
+
+  // Round 2 (Important 3b): IPv4-mapped IPv6 literals are the SAME address
+  // as their IPv4 form — Node's URL parser normalizes the bracketed literal
+  // to the hex-group shape (`new URL("https://[::ffff:127.0.0.1]/").hostname`
+  // is `"[::ffff:7f00:1]"`, not the dotted form), so these prove the guard
+  // unwraps that hex form back to IPv4 before applying the range checks.
+  it("rejects an IPv4-mapped IPv6 loopback literal", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://[::ffff:127.0.0.1]/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an IPv4-mapped IPv6 form of the GCP metadata address", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://[::ffff:169.254.169.254]/computeMetadata/v1/", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects the IPv6 unspecified address ::", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://[::]/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // Round 2 (Important 3a): even a URL that passes every host check can
+  // still 30x to an internal target once fetched — `redirect: "manual"`
+  // must stop that instead of silently following it.
+  it("rejects a redirect response instead of following it", async () => {
+    const { storage } = fakeStorage();
+    const redirectFetch = vi.fn(async () =>
+      ({
+        ok: false,
+        status: 302,
+        headers: new Headers({ location: "https://169.254.169.254/computeMetadata/v1/" }),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }) as unknown as Response,
+    );
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://images.example.com/redirects-somewhere", alt: "x" },
+        { fetchFn: redirectFetch, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/redirect not allowed/i);
+    expect(redirectFetch).toHaveBeenCalledWith(
+      "https://images.example.com/redirects-somewhere",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
 });

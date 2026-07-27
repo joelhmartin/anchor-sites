@@ -22,8 +22,46 @@ import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
  * of `ingestImageFromUrl` is safe-by-default, not just the one agent tool.
  */
 
+/** Strips a bracketed IPv6 literal's `[` / `]` (URL#hostname keeps them). */
+function stripBrackets(hostname: string): string {
+  return hostname.replace(/^\[/, "").replace(/\]$/, "");
+}
+
+function isDisallowedIpv4(h: string): boolean {
+  const [a, b] = h.split(".").map(Number);
+  if (a === 127) return true; // loopback
+  if (a === 10) return true; // RFC1918
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
+  if (a === 192 && b === 168) return true; // RFC1918
+  if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata IP)
+  if (a === 0) return true; // "this network"
+  return false;
+}
+
+/**
+ * Round 2 fix (Important 3b): an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`,
+ * or the hex-group form `::ffff:XXXX:XXXX` — Node's URL parser normalizes
+ * `new URL("https://[::ffff:127.0.0.1]/").hostname` to
+ * `"[::ffff:7f00:1]"`, the hex form, so BOTH shapes need handling) is just
+ * an IPv4 address wearing a v6 costume — without unwrapping it first, e.g.
+ * `https://[::ffff:169.254.169.254]/` sails past the v6 branch's checks
+ * (none of which know about v4 ranges) even though it resolves to the exact
+ * same cloud-metadata address `169.254.169.254` would.
+ */
+function ipv4MappedToDotted(h: string): string | null {
+  const dotted = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+  if (dotted) return dotted[1];
+  const hex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (hex) {
+    const hi = parseInt(hex[1], 16);
+    const lo = parseInt(hex[2], 16);
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  return null;
+}
+
 function isDisallowedIngestHost(hostname: string): boolean {
-  const h = hostname.replace(/^\[|\]$/, "").replace(/\]$/, "").toLowerCase();
+  const h = stripBrackets(hostname).toLowerCase();
 
   if (h === "localhost" || h.endsWith(".localhost")) return true;
   if (h.endsWith(".local")) return true;
@@ -31,19 +69,17 @@ function isDisallowedIngestHost(hostname: string): boolean {
 
   const ipVersion = net.isIP(h);
   if (ipVersion === 4) {
-    const [a, b] = h.split(".").map(Number);
-    if (a === 127) return true; // loopback
-    if (a === 10) return true; // RFC1918
-    if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-    if (a === 192 && b === 168) return true; // RFC1918
-    if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata IP)
-    if (a === 0) return true; // "this network"
-    return false;
+    return isDisallowedIpv4(h);
   }
   if (ipVersion === 6) {
     if (h === "::1") return true; // loopback
+    if (h === "::") return true; // unspecified address
     if (h.startsWith("fe80:")) return true; // link-local
     if (h.startsWith("fc") || h.startsWith("fd")) return true; // unique local (fc00::/7)
+
+    const mapped = ipv4MappedToDotted(h);
+    if (mapped) return isDisallowedIpv4(mapped);
+
     return false;
   }
   // Not a literal IP at all — an ordinary DNS hostname, allowed.
@@ -80,7 +116,19 @@ export async function ingestImageFromUrl(
   assertSafeImageUrl(input.url);
 
   const fetchFn = deps.fetchFn ?? fetch;
-  const res = await fetchFn(input.url);
+  // Round 2 fix (Important 3a): `assertSafeImageUrl` above only validates
+  // the URL the caller supplied — a plain `fetch` follows redirects
+  // automatically, so a URL that passes the guard (a normal public https
+  // host) could still 30x the request somewhere internal (e.g. its own
+  // `169.254.169.254`) and this function would happily hand back THAT
+  // response as the "downloaded image", with no further guard in the way.
+  // `redirect: "manual"` stops fetch from following it; any 3xx then comes
+  // back as an ordinary (non-ok) response we reject explicitly below,
+  // rather than silently chasing it.
+  const res = await fetchFn(input.url, { redirect: "manual" });
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error(`image download failed: redirect not allowed for ${input.url}`);
+  }
   if (!res.ok) {
     throw new Error(`image download failed: ${res.status} for ${input.url}`);
   }
