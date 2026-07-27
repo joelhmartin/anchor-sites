@@ -200,7 +200,9 @@ d("agent settings tools", () => {
       );
       expect(revRow.rowCount).toBe(1);
       expect(revRow.rows[0].page_id).toBe(pageId);
-      expect(revRow.rows[0].source).toBe("ai");
+      // Round 2 fix (Important 2b): a synthesized snapshot is tagged
+      // 'ai-snapshot', distinct from a real write's 'ai'.
+      expect(revRow.rows[0].source).toBe("ai-snapshot");
       expect(revRow.rows[0].blocks).toEqual([{ id: "b1", type: "hero", props: {} }]);
       expect(revRow.rows[0].seo).toEqual({});
 

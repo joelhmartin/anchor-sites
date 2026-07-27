@@ -210,11 +210,64 @@ d("agent page write tools", () => {
         `SELECT blocks, source FROM page_revisions WHERE id = $1`,
         [data.revision_id],
       );
-      expect(snapshot.rows[0].source).toBe("ai");
+      // Round 2 fix (Important 2b): a synthesized snapshot is tagged
+      // 'ai-snapshot', distinct from a real write's 'ai', so it reads
+      // clearly in the revisions panel.
+      expect(snapshot.rows[0].source).toBe("ai-snapshot");
       expect(snapshot.rows[0].blocks).toEqual([
         { id: "seed-1", type: "rich-text", props: { html: "<p>Seeded</p>" } },
       ]);
       expect(result.change?.revision_id).toBe(data.revision_id);
+    });
+
+    it("Round 2 regression — a SECOND update_page on the same cold page finds the FIRST call's after-revision as prior, not its own snapshot; Revert of change #2 restores change #1's state", async () => {
+      // Same cold-page shape as the test above: seeded directly, no
+      // page_revisions row yet, so the FIRST update_page call synthesizes a
+      // snapshot of the seeded ("Seeded") state. This regression guards
+      // against the tie the round-2 review found: both revision inserts in
+      // one transaction used to default `created_at` to `now()` (the
+      // transaction's constant start time) — with `clock_timestamp()` +
+      // `id DESC` tiebreak now in place, the SECOND call's prior-revision
+      // lookup must land on the FIRST call's after-state revision ("Change
+      // 1"), not accidentally tie back to the synthesized snapshot and let
+      // Revert roll past change #1 entirely.
+      const page_id = (
+        await db.seedPage(siteId, `cold-page-two-edits-${runId}`, [
+          { id: "seed-1", type: "rich-text", props: { html: "<p>Seeded</p>" } },
+        ])
+      ).id;
+
+      const first = await executeAgentTool(ctx, "update_page", {
+        page_id,
+        ops: [{ op: "update_block", id: "seed-1", props: { html: "<p>Change 1</p>" } }],
+      });
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error("unreachable");
+      const firstData = first.data as { revision_id: string; after_revision_id: string };
+
+      const second = await executeAgentTool(ctx, "update_page", {
+        page_id,
+        ops: [{ op: "update_block", id: "seed-1", props: { html: "<p>Change 2</p>" } }],
+      });
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error("unreachable");
+      const secondData = second.data as { revision_id: string; after_revision_id: string };
+
+      // The second call's "prior" revision must be the FIRST call's
+      // after-state revision — NOT the synthesized snapshot from the first
+      // call, and not its own after-state either.
+      expect(secondData.revision_id).toBe(firstData.after_revision_id);
+      expect(secondData.revision_id).not.toBe(firstData.revision_id);
+      expect(secondData.revision_id).not.toBe(secondData.after_revision_id);
+
+      // Prove it in blocks, not just ids: restoring change #2's
+      // `revision_id` (what the drawer's Revert button does) brings back
+      // "Change 1", not the original "Seeded" content.
+      const restored = await db.getPool().query<{ blocks: { props: { html: string } }[] }>(
+        `SELECT blocks FROM page_revisions WHERE id = $1`,
+        [secondData.revision_id],
+      );
+      expect(restored.rows[0].blocks[0].props.html).toBe("<p>Change 1</p>");
     });
 
     it("returns ok:false for a page belonging to another site", async () => {

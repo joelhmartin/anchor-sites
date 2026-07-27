@@ -206,8 +206,12 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   // GET /api/sites/:siteId/pages/:pageId/preview — render a page's CURRENT
   // blocks (any status — this is the point: it's how the operator/AI-agent
   // preview a draft before publishing). `tokenFromQuery` first so an iframe
-  // (which can't set custom headers) can authenticate via `?token=`, same
-  // shim the agent SSE tail uses (Task 10 — src/server/routes/admin-ai-agent.ts).
+  // (which can't set custom headers) can authenticate via `?token=`. This IS
+  // the one route that still needs the query-token shim — the SSE tail
+  // (admin-ai-agent.ts's /events route) dropped it (Important 3, round 1
+  // review): the drawer's tail is a `fetch()` call with an X-Admin-Token
+  // header, never a native EventSource, so it never needed `?token=` in the
+  // first place.
   // Mirrors the tenant page route's (`src/server/routes/page.ts`) media
   // hydration so images/hero-slider resolve identically in preview.
   // -------------------------------------------------------------------------
@@ -273,20 +277,42 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
 
         // Critical 2 (defense in depth alongside the iframe's `sandbox`
         // attribute): this response is served same-origin at /api/... and
-        // renders operator/AI-authored blocks that may include inline
-        // scripts (SiteDetailPage.tsx's DraftPreview embeds it in an
-        // iframe). `res.setHeader` REPLACES app.ts's global helmet CSP
-        // (buildCsp) for this one response rather than fighting it — that
-        // global policy is tuned for the admin SPA shell, not for
-        // rendered-page HTML, so a minimal, self-contained policy is
-        // clearer than trying to merge with it. The `sandbox` directive
-        // does the real work (browsers that honor CSP-level sandbox
-        // enforce the same opaque-origin restriction as the iframe's HTML
-        // attribute, as a second layer); the rest just keeps the page's own
-        // assets loading.
+        // renders operator/AI-authored blocks. `res.setHeader` REPLACES
+        // app.ts's global helmet CSP (buildCsp) for this one response
+        // rather than fighting it — that global policy is tuned for the
+        // admin SPA shell, not for rendered-page HTML, so a minimal,
+        // self-contained policy is clearer than trying to merge with it.
+        //
+        // Round 2 fix: the FIRST version of this header
+        // (`default-src 'self' https: data:`) was broken two ways —
+        // (a) render-page.tsx's `shell()` ALWAYS emits an inline
+        // `<style>${styles}</style>` tag (block CSS is inlined at
+        // module-load, there's no client-side hydration to pick up a
+        // linked stylesheet — see that file's own header comment), which
+        // `default-src` alone does not permit; a missing `style-src`
+        // falls back to `default-src`, which has no `'unsafe-inline'`, so
+        // the browser drops every rule in that tag. (b) `'self'` is
+        // meaningless once `sandbox` (no `allow-same-origin`) forces the
+        // frame onto an opaque origin — nothing can ever count as
+        // '`self`' there.
+        //
+        // `script-src 'none'`: verified render-page.tsx/BlockRenderer emit
+        // no client bundle required for basic blocks to render correctly
+        // (no hydration step at all, per render-page.tsx:26-29) — the only
+        // `<script>` tags `shell()` can add are the CTM call-tracking
+        // loader, the analytics snippet, and the web-vitals reporter, none
+        // of which affect how a block LOOKS in preview, and all of which
+        // we'd rather not fire from a draft preview anyway (no reason to
+        // swap phone numbers or emit analytics/vitals events for a page
+        // that isn't published). `style-src`/`img-src` allow `https:`/
+        // `data:` so the package block CSS + any real image URLs still
+        // render; `frame-ancestors 'self'` (not `*`) since only this app
+        // embeds its own preview.
         res.setHeader(
           "Content-Security-Policy",
-          "sandbox allow-scripts; default-src 'self' https: data:; frame-ancestors *",
+          "sandbox allow-scripts; default-src 'self' https: data:; " +
+            "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+            "script-src 'none'; frame-ancestors 'self'",
         );
         const { html } = renderPage(site, page, { assets, path: previewPath });
         res.status(200).type("html").send(html);

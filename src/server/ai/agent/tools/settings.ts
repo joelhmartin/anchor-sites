@@ -79,42 +79,56 @@ const setPageSeo: AgentTool = {
   description: "Set a single page's SEO fields (title, description, canonical, robots, Open Graph, Twitter).",
   paramsSchema: setPageSeoParams,
   async execute(ctx: AgentToolCtx, input: z.infer<typeof setPageSeoParams>): Promise<AgentToolResult> {
-    const pageRes = await ctx.pool.query<{ blocks: unknown }>(
-      `SELECT blocks FROM pages WHERE id = $1 AND site_id = $2`,
-      [input.page_id, ctx.siteId],
-    );
-    if (pageRes.rowCount === 0) {
-      return { ok: false, error: "page not found in this site" };
-    }
-    const blocks = pageRes.rows[0].blocks;
-
     const client = await ctx.pool.connect();
     try {
       await client.query("BEGIN");
 
-      // Critical 1 (mirrors update_page in tools/pages.ts): the drawer's
-      // Revert restores `change.revision_id`, so it must be the revision
-      // that existed BEFORE this write, not the after-state revision this
-      // call is about to create. Reuse the latest existing revision, or
-      // synthesize a pre-write snapshot (current blocks + current seo) if
-      // the page has none yet.
-      const currentRes = await client.query<{ seo: Record<string, unknown> }>(
-        `SELECT seo FROM pages WHERE id = $1`,
-        [input.page_id],
+      // Round 2 fix (Important 2d, mirrors update_page in tools/pages.ts):
+      // read+lock the page row (blocks AND seo, in one query) INSIDE the
+      // transaction with FOR UPDATE, instead of two separate unlocked
+      // `ctx.pool`/`client` reads before and during the transaction. This
+      // serializes concurrent set_page_seo calls on the same never-saved
+      // page so a second call's "prior revision" lookup below always sees
+      // the first call's already-committed snapshot rather than racing to
+      // also synthesize one.
+      const pageRes = await client.query<{ blocks: unknown; seo: Record<string, unknown> }>(
+        `SELECT blocks, seo FROM pages WHERE id = $1 AND site_id = $2 FOR UPDATE`,
+        [input.page_id, ctx.siteId],
       );
-      const currentSeo = currentRes.rows[0]?.seo ?? {};
+      if (pageRes.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "page not found in this site" };
+      }
+      const blocks = pageRes.rows[0].blocks;
+      const currentSeo = pageRes.rows[0].seo ?? {};
 
+      // Critical 1: the drawer's Revert restores `change.revision_id`, so it
+      // must be the revision that existed BEFORE this write, not the
+      // after-state revision this call is about to create. Reuse the latest
+      // existing revision, or synthesize a pre-write snapshot (current
+      // blocks + current seo) if the page has none yet.
+      //
+      // Round 2 fix (Important 2c): `, id DESC` tiebreak — see the matching
+      // comment in tools/pages.ts's update_page for the full rationale
+      // (shared with `clock_timestamp()` below: makes revision ordering
+      // unambiguous even under an exact `created_at` tie).
       const priorRevRes = await client.query<{ id: string }>(
-        `SELECT id FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        `SELECT id FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
         [input.page_id],
       );
       let priorRevisionId: string;
       if ((priorRevRes.rowCount ?? 0) > 0) {
         priorRevisionId = priorRevRes.rows[0].id;
       } else {
+        // Round 2 fix (Important 2a/2b): `clock_timestamp()` (not the
+        // transaction-constant `now()`) on BOTH inserts below keeps
+        // revision timestamps strictly increasing within this transaction;
+        // `source: 'ai-snapshot'` marks this row as a synthesized "before"
+        // state, not a real write, in the revisions panel. See
+        // tools/pages.ts's update_page for the full rationale.
         const snapshotRes = await client.query<{ id: string }>(
-          `INSERT INTO page_revisions (page_id, blocks, seo, source)
-           VALUES ($1, $2::jsonb, $3::jsonb, 'ai')
+          `INSERT INTO page_revisions (page_id, blocks, seo, source, created_at)
+           VALUES ($1, $2::jsonb, $3::jsonb, 'ai-snapshot', clock_timestamp())
            RETURNING id`,
           [input.page_id, JSON.stringify(blocks), JSON.stringify(currentSeo)],
         );
@@ -126,8 +140,8 @@ const setPageSeo: AgentTool = {
         [JSON.stringify(input.seo), input.page_id, ctx.siteId],
       );
       const revRes = await client.query<{ id: string }>(
-        `INSERT INTO page_revisions (page_id, blocks, seo, source)
-         VALUES ($1, $2::jsonb, $3::jsonb, 'ai')
+        `INSERT INTO page_revisions (page_id, blocks, seo, source, created_at)
+         VALUES ($1, $2::jsonb, $3::jsonb, 'ai', clock_timestamp())
          RETURNING id`,
         [input.page_id, JSON.stringify(blocks), JSON.stringify(input.seo)],
       );

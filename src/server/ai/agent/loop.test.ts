@@ -106,7 +106,11 @@ d("runAgentTurn", () => {
 
     const revRows = await db.getPool().query(`SELECT source FROM page_revisions WHERE page_id = $1`, [page.id]);
     expect(revRows.rowCount).toBeGreaterThan(0);
-    expect(revRows.rows.every((r) => r.source === "ai")).toBe(true);
+    // Round 2 fix (Important 2b): this page (seeded directly, no prior
+    // revision) gets a synthesized 'ai-snapshot' pre-write row in addition
+    // to the real 'ai' after-write row (Critical 1's snapshot branch) — both
+    // are AI-sourced, just distinguished for the revisions panel.
+    expect(revRows.rows.every((r) => r.source === "ai" || r.source === "ai-snapshot")).toBe(true);
 
     expect(events.map((e) => e.type)).toEqual([
       "tool_call", "tool_result", "tool_call", "tool_result", "assistant_text", "turn_done",
@@ -195,6 +199,12 @@ d("runAgentTurn", () => {
     // snapshot of the page's original blocks before writing the after-state
     // revision — so `change.revision_id` is a genuine "before" to restore
     // to, not the after-state update_page just created.
+    //
+    // Round 2 fix (Important 2a): `ORDER BY created_at ASC` is now
+    // genuinely deterministic — both inserts use `clock_timestamp()`
+    // (strictly increasing per statement) instead of the transaction-constant
+    // `now()`, so the snapshot row is guaranteed to sort before the
+    // after-write row.
     const revRows = await db.getPool().query<{ blocks: { props: { html: string } }[] }>(
       `SELECT blocks FROM page_revisions WHERE page_id = $1 ORDER BY created_at ASC`,
       [page.id],
