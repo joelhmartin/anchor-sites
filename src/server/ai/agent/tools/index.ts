@@ -4,10 +4,10 @@ import type { z } from "zod";
 import type { AgentTool, AgentToolCtx, AgentToolResult } from "./types.js";
 import { readTools } from "./read.js";
 import { pageTools } from "./pages.js";
-// Task 6 adds: import { settingsTools } from "./settings.js";
+import { settingsTools } from "./settings.js";
 // Task 7 adds: import { assetTools } from "./assets.js";
 
-export const agentTools: AgentTool[] = [...readTools, ...pageTools];
+export const agentTools: AgentTool[] = [...readTools, ...pageTools, ...settingsTools];
 
 function toToolSchema(schema: z.ZodTypeAny): Anthropic.Tool.InputSchema {
   const js = zodToJsonSchema(schema, { $refStrategy: "none" }) as Record<string, unknown>;
