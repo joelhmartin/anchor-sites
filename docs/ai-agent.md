@@ -217,11 +217,19 @@ from the next revision):
   `--set-secrets`, so prod ran the AI layer in stub mode with a real key
   sitting unused. This work added both names to the list.
 - `PLUGIN_CONFIG_ENC_KEY` did not exist and was created as part of this
-  work: a 32-byte hex key generated with `openssl rand -hex 32` and stored
-  via `gcloud secrets create PLUGIN_CONFIG_ENC_KEY --data-file=-`, with
-  `roles/secretmanager.secretAccessor` granted to the Cloud Run runtime
-  service account (mirroring how `GODADDY_API_KEY` is bound — see
-  `docs/security.md`). See the Task 14 report for the exact commands run.
+  work, with `roles/secretmanager.secretAccessor` granted to the Cloud Run
+  runtime service account (mirroring how `GODADDY_API_KEY` is bound — see
+  `docs/security.md`). **The key MUST be base64**, not hex: generate it with
+  `openssl rand -base64 32` and sanity-check it decodes to exactly 32 bytes
+  (`node -e 'console.log(Buffer.from(process.argv[1],"base64").length)' "$KEY"`
+  → `32`) before uploading — `src/server/plugins/crypto.ts`'s `resolveKey()`
+  does `Buffer.from(raw, "base64")` and requires exactly 32 decoded bytes
+  (also documented at `docs/plugins.md:76-77`); a hex-encoded 32-byte string
+  base64-decodes to 48 bytes and throws the first time a key-bearing plugin
+  secret is touched. The secret's first version was created with the wrong
+  (hex) encoding and was superseded: version 2 (base64, verified 32 bytes) is
+  the enabled version `:latest` resolves to; version 1 was disabled, not
+  deleted. See the Task 14 report for the exact commands run.
 - To rotate any of the three: create a new secret **version** (`gcloud
   secrets versions add <NAME> --data-file=-`); `:latest` in the
   `--set-secrets` list picks it up on the next deploy without a
