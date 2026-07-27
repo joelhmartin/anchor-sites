@@ -209,6 +209,15 @@ d("agent page write tools", () => {
       void p1;
     });
 
+    it("returns ok:false for a page belonging to another site, and leaves it intact", async () => {
+      const otherPage = await db.seedPage(otherSiteId, `del-cross-${runId}`, []);
+      const result = await executeAgentTool(ctx, "delete_page", { page_id: otherPage.id });
+      expect(result).toEqual({ ok: false, error: "page not found in this site" });
+
+      const row = await db.getPool().query(`SELECT 1 FROM pages WHERE id = $1`, [otherPage.id]);
+      expect(row.rowCount).toBe(1);
+    });
+
     it("refuses to delete the only page in a site", async () => {
       const lonelySiteId = (await db.seedSite(`t5-lonely-${runId}`)).id;
       const lonelyPage = await db.seedPage(lonelySiteId, "home", []);

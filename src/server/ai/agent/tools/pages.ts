@@ -165,33 +165,49 @@ const deletePage: AgentTool = {
   description: "Delete a page from the current site. Refuses to delete the site's only remaining page.",
   paramsSchema: deletePageParams,
   async execute(ctx: AgentToolCtx, input: z.infer<typeof deletePageParams>): Promise<AgentToolResult> {
-    const ownerRes = await ctx.pool.query(
-      `SELECT 1 FROM pages WHERE id = $1 AND site_id = $2`,
-      [input.page_id, ctx.siteId],
-    );
-    if (ownerRes.rowCount === 0) {
-      return { ok: false, error: "page not found in this site" };
+    const client = await ctx.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Lock every page row for this site up front. This closes the TOCTOU
+      // on the "only page" guard: a naive ownership-check + count + DELETE
+      // done as three unsequenced queries lets two concurrent delete_page
+      // calls against the last two pages of a site both pass the count
+      // check and both delete, leaving zero pages. A concurrent transaction
+      // running this same SELECT ... FOR UPDATE for the same site_id blocks
+      // until this one commits or rolls back, so the count it sees is
+      // always post-commit-accurate.
+      const siteRows = await client.query<{ id: string }>(
+        `SELECT id FROM pages WHERE site_id = $1 FOR UPDATE`,
+        [ctx.siteId],
+      );
+      const exists = siteRows.rows.some((r) => r.id === input.page_id);
+      if (!exists) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "page not found in this site" };
+      }
+      if ((siteRows.rowCount ?? 0) <= 1) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "cannot delete the only page" };
+      }
+
+      await client.query(`DELETE FROM pages WHERE id = $1 AND site_id = $2`, [
+        input.page_id,
+        ctx.siteId,
+      ]);
+      await client.query("COMMIT");
+
+      return {
+        ok: true,
+        data: { page_id: input.page_id },
+        summary: "Deleted page.",
+        change: { kind: "page_deleted", page_id: input.page_id, summary: "Deleted page." },
+      };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
     }
-
-    const countRes = await ctx.pool.query<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM pages WHERE site_id = $1`,
-      [ctx.siteId],
-    );
-    if (countRes.rows[0].count <= 1) {
-      return { ok: false, error: "cannot delete the only page" };
-    }
-
-    await ctx.pool.query(`DELETE FROM pages WHERE id = $1 AND site_id = $2`, [
-      input.page_id,
-      ctx.siteId,
-    ]);
-
-    return {
-      ok: true,
-      data: { page_id: input.page_id },
-      summary: "Deleted page.",
-      change: { kind: "page_deleted", page_id: input.page_id, summary: "Deleted page." },
-    };
   },
 };
 
