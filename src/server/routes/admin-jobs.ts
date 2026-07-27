@@ -14,9 +14,9 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
-import { getBoss, MEDIA_PROCESS_UPLOAD, TEMPLATE_MATERIALIZE, CRM_SYNC_JOB } from "../jobs/index.js";
+import { getBoss, MEDIA_PROCESS_UPLOAD, TEMPLATE_MATERIALIZE, CRM_SYNC_JOB, AGENT_TURN } from "../jobs/index.js";
 
-const QUEUES = [MEDIA_PROCESS_UPLOAD, TEMPLATE_MATERIALIZE, CRM_SYNC_JOB];
+const QUEUES = [MEDIA_PROCESS_UPLOAD, TEMPLATE_MATERIALIZE, CRM_SYNC_JOB, AGENT_TURN];
 
 export type AdminJobsOptions = {
   pool?: Pool;

@@ -14,9 +14,14 @@ import {
   CRM_SYNC_JOB,
   type CrmSyncInput,
 } from "../crm/sync-job.js";
+import {
+  handleAgentTurn,
+  type AgentTurnInput,
+} from "./agent-turn.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
+export const AGENT_TURN = "ai.agent-turn";
 export { CRM_SYNC_JOB };
 
 /**
@@ -159,6 +164,12 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(CRM_SYNC_JOB);
   await boss.work<CrmSyncInput>(CRM_SYNC_JOB, async ([job]) => {
     await handleCrmSync(job.data, { pool: defaultPool });
+  });
+
+  // Task 9 (AI site agent): build-turn worker.
+  await boss.createQueue(AGENT_TURN);
+  await boss.work<AgentTurnInput>(AGENT_TURN, async ([job]) => {
+    await handleAgentTurn(job.data, { pool: defaultPool });
   });
 }
 
