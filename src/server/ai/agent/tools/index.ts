@@ -5,9 +5,9 @@ import type { AgentTool, AgentToolCtx, AgentToolResult } from "./types.js";
 import { readTools } from "./read.js";
 import { pageTools } from "./pages.js";
 import { settingsTools } from "./settings.js";
-// Task 7 adds: import { assetTools } from "./assets.js";
+import { assetTools } from "./assets.js";
 
-export const agentTools: AgentTool[] = [...readTools, ...pageTools, ...settingsTools];
+export const agentTools: AgentTool[] = [...readTools, ...pageTools, ...settingsTools, ...assetTools];
 
 function toToolSchema(schema: z.ZodTypeAny): Anthropic.Tool.InputSchema {
   const js = zodToJsonSchema(schema, { $refStrategy: "none" }) as Record<string, unknown>;
