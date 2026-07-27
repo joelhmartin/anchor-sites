@@ -28,14 +28,17 @@ function fakeStorage() {
 
 d("agent asset tools", () => {
   let siteId: string;
+  let emptySiteId: string;
   let ctx: AgentToolCtx;
   let siteTemplateId: string;
   let pageTemplateId: string;
   let archivedTemplateId: string;
+  let emptySiteTemplateId: string;
 
   beforeAll(async () => {
     await db.runMigrations();
     ({ id: siteId } = await db.seedSite(`t7-assets-${runId}`));
+    ({ id: emptySiteId } = await db.seedSite(`t7-assets-empty-${runId}`));
     ctx = {
       pool: db.getPool(),
       siteId,
@@ -72,8 +75,26 @@ d("agent asset tools", () => {
     );
     archivedTemplateId = archivedTpl.template.id;
     await archiveTemplate(archivedTemplateId, { pool: db.getPool() });
+
+    // Active kind:'site' template with zero pages — the schema permits this
+    // (templatePageInputSchema's `pages` array has no min-length), so
+    // pages_created:0 alone can't distinguish "already has pages" from
+    // "materialized a template that legitimately adds nothing" (review
+    // finding, round 1).
+    const emptySiteTpl = await createTemplate(
+      { slug: `t7-empty-site-tpl-${runId}`, name: "Empty Site Template", kind: "site", pages: [] },
+      { pool: db.getPool() },
+    );
+    emptySiteTemplateId = emptySiteTpl.template.id;
   });
-  afterAll(() => db.teardown());
+  afterAll(async () => {
+    // Clean up only what this file created (slug-prefixed, matching the
+    // convention in tests/integration/templates-repo.test.ts:46); CASCADE
+    // drops template_pages. db.teardown() only deletes seeded *sites*, not
+    // templates, so without this templates orphan in the shared test DB.
+    await db.getPool().query(`DELETE FROM templates WHERE slug LIKE 't7-%'`).catch(() => undefined);
+    await db.teardown();
+  });
   afterEach(() => __setIngestDepsForTests(null));
 
   describe("apply_site_template", () => {
@@ -119,6 +140,17 @@ d("agent asset tools", () => {
         template_id: siteTemplateId,
       });
       expect(result).toEqual({ ok: false, error: "site already has pages; edit them instead" });
+    });
+
+    it("returns ok:true with pages_created:0 for a zero-page active site template on an empty site (not a misleading 'already has pages' error)", async () => {
+      const emptyCtx: AgentToolCtx = { ...ctx, siteId: emptySiteId };
+      const result = await executeAgentTool(emptyCtx, "apply_site_template", {
+        template_id: emptySiteTemplateId,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.data).toMatchObject({ pages_created: 0, pages_skipped: 0 });
+      expect(result.change).toEqual({ kind: "template_applied", summary: expect.any(String) });
     });
   });
 

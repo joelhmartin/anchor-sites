@@ -73,13 +73,24 @@ const applySiteTemplate: AgentTool = {
       return { ok: false, error: "template is archived" };
     }
 
+    // Check for existing pages BEFORE materializing rather than trusting
+    // `pages_created === 0` afterward: a valid `kind:'site'` template may
+    // itself have zero pages (the schema allows an empty `pages` array), so
+    // applying one to a genuinely empty site would also yield
+    // `pages_created: 0` and would otherwise be misreported as "already has
+    // pages" (review finding, round 1).
+    const existing = await ctx.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages WHERE site_id = $1`,
+      [ctx.siteId],
+    );
+    if (existing.rows[0].n > 0) {
+      return { ok: false, error: "site already has pages; edit them instead" };
+    }
+
     const result = await handleMaterializeTemplate(
       { siteId: ctx.siteId, templateId: input.template_id },
       { pool: ctx.pool },
     );
-    if (result.pages_created === 0) {
-      return { ok: false, error: "site already has pages; edit them instead" };
-    }
 
     const summary = `Applied template, creating ${result.pages_created} page(s).`;
     return {
