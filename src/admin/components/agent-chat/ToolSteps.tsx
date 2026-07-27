@@ -33,7 +33,7 @@ export function ToolStepRow({ step }: { step: ToolStep }) {
 
 export function TypingPulse() {
   return (
-    <div className="flex items-center gap-1.5 py-1.5 pl-0.5" aria-label="assistant is typing">
+    <div className="flex items-center gap-1.5 py-1.5 pl-0.5" role="status" aria-label="assistant is typing">
       {[0, 1, 2].map((i) => (
         <span
           key={i}

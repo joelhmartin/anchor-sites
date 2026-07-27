@@ -340,11 +340,13 @@ export function AgentChatDrawer({
         onEvent: (e) => handleTurnEvent(e as AgentTurnEvent, cid as string),
       });
 
-      // Best-effort per-turn token-usage delta (worklist item 10). Skipped
-      // for a promoted turn — the tail's own `snapshot` already refreshes
-      // `conversation` (see `handleTailEvent`), and racing a second fetch
-      // here could clobber that with stale data.
-      if (cid && lastTurnReasonRef.current && lastTurnReasonRef.current !== "promoted") {
+      // Best-effort per-turn token-usage delta (worklist item 10). Scoped to
+      // a clean `end_turn` only: a promoted turn's `conversation` is already
+      // refreshed by the tail's own `snapshot` (see `handleTailEvent`) and
+      // racing a second fetch here could clobber that with stale data;
+      // budget/max_tools/error turns aren't a meaningful "this turn cost X"
+      // moment worth an extra round-trip for.
+      if (cid && lastTurnReasonRef.current === "end_turn") {
         try {
           const detail = await apiFetch<{ conversation: AiConversation }>(
             `/api/sites/${siteId}/agent/conversations/${cid}`,

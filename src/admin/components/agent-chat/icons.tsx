@@ -2,8 +2,9 @@
 //
 // A single inline sparkle SVG for the assistant's text gutter (worklist item
 // 10). `lucide-react` is a repo dependency, but this admin bundle otherwise
-// avoids icon-library imports for small one-off marks (see `ui/spinner.tsx`'s
-// "CSS-only... no icon dep" precedent) — an inline SVG keeps that pattern.
+// avoids icon-library imports for small one-off marks (`ui/spinner.tsx`'s
+// precedent is CSS-over-SVG, not this exact case — but the underlying
+// rationale is the same: not worth pulling in a dep for one glyph).
 export function SparkleIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" className={className} aria-hidden="true">
