@@ -1,9 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SiteDetailPage } from "./SiteDetailPage.js";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
+import type { AgentChatDrawerProps } from "../components/AgentChatDrawer.js";
+
+// Stub the Studio chat drawer (Task 11) so this suite can assert the props
+// Task 12 threads into it (open/autoTail/onChangeEvent) without dealing with
+// its own conversation-loading fetches.
+const { drawerCalls } = vi.hoisted(() => ({ drawerCalls: [] as AgentChatDrawerProps[] }));
+vi.mock("../components/AgentChatDrawer.js", () => ({
+  AgentChatDrawer: (props: AgentChatDrawerProps) => {
+    drawerCalls.push(props);
+    return props.open ? <div data-testid="agent-drawer-stub">Studio chat stub (open)</div> : null;
+  },
+}));
 
 const SITE = {
   id: "s1",
@@ -20,21 +32,23 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+type PageRow = { id: string; slug: string; title: string; status: string; updated_at: string };
+
 /** Routes /api/sites -> list, /api/sites/:id -> detail, /api/sites/:id/pages -> pages. */
-function mockApi(list: unknown[], detail: typeof SITE | null) {
+function mockApi(list: unknown[], detail: typeof SITE | null, pages: PageRow[] = []) {
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/sites") return json({ sites: list });
-    if (detail && url === `/api/sites/${detail.id}/pages`) return json({ pages: [] });
+    if (detail && url === `/api/sites/${detail.id}/pages`) return json({ pages });
     if (detail && url === `/api/sites/${detail.id}/media`) return json({ media: [] });
     if (detail && url === `/api/sites/${detail.id}`) return json({ site: detail });
     return json({ error: "not found" }, 404);
   }) as unknown as typeof fetch;
 }
 
-function renderAt(slug: string) {
+function renderAt(slug: string, search = "") {
   return render(
-    <MemoryRouter initialEntries={[`/sites/${slug}`]}>
+    <MemoryRouter initialEntries={[`/sites/${slug}${search}`]}>
       <Routes>
         <Route path="/" element={<div>sites list</div>} />
         <Route path="/sites/:slug" element={<SiteDetailPage />} />
@@ -45,7 +59,10 @@ function renderAt(slug: string) {
 
 describe("SiteDetailPage (P4-T4.12)", () => {
   const realFetch = global.fetch;
-  beforeEach(() => setAdminToken("tok"));
+  beforeEach(() => {
+    setAdminToken("tok");
+    drawerCalls.length = 0;
+  });
   afterEach(() => {
     cleanup();
     clearAdminToken();
@@ -94,5 +111,81 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     mockApi([SITE], SITE);
     renderAt("ghost");
     await waitFor(() => expect(screen.getByText(/No site found for/)).toBeTruthy());
+  });
+
+  it("opens the Studio drawer on ?ai=1 (wizard hand-off) with autoTail on", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme", "?ai=1");
+    await waitFor(() => expect(drawerCalls.length).toBeGreaterThan(0));
+    const last = drawerCalls[drawerCalls.length - 1];
+    expect(last.open).toBe(true);
+    expect(last.autoTail).toBe(true);
+    expect(last.siteId).toBe("s1");
+    expect(last.slug).toBe("acme");
+  });
+
+  it("toggles the Studio drawer via the AI header button (aria-pressed)", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+
+    const aiButton = screen.getByRole("button", { name: "AI" });
+    expect(aiButton.getAttribute("aria-pressed")).toBe("false");
+    expect(drawerCalls[drawerCalls.length - 1]?.open).toBe(false);
+
+    fireEvent.click(aiButton);
+    expect(aiButton.getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(drawerCalls[drawerCalls.length - 1]?.open).toBe(true));
+  });
+
+  it("shows a draft preview iframe for the first page, with the admin token as a query param", async () => {
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+    const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
+    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?token=tok`);
+  });
+
+  it("omits the token query param when Studio runs on session auth (no token stored)", async () => {
+    clearAdminToken();
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+    const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
+    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview`);
+  });
+
+  it("bubbles a drawer change event into the preview: swaps the page id and forces a reload", async () => {
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+
+    const beforeSrc = (screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src");
+    expect(beforeSrc).toContain("/pages/pg1/preview");
+
+    const last = drawerCalls[drawerCalls.length - 1];
+    act(() => {
+      last.onChangeEvent?.({ kind: "page_updated", page_id: "pg2", revision_id: "rev1", summary: "Updated hero" });
+    });
+
+    await waitFor(() =>
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+        "/pages/pg2/preview",
+      ),
+    );
   });
 });

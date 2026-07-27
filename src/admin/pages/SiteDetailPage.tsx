@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
+import { getAdminToken } from "../lib/adminToken.js";
+import type { AgentChangeEvent } from "../lib/agent-api.js";
 import type { SiteDetail, SiteListRow, SiteStatus } from "../lib/siteTypes.js";
 import { Badge } from "../ui/badge.js";
 import { Card, CardContent } from "../ui/card.js";
@@ -18,6 +20,7 @@ import { SeoSettingsTab } from "./site-tabs/SeoSettingsTab.js";
 import { DomainsTab } from "./site-tabs/DomainsTab.js";
 import { CrmTab } from "./site-tabs/CrmTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
+import { AgentChatDrawer } from "../components/AgentChatDrawer.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
   active: "success",
@@ -84,8 +87,33 @@ export function SiteDetailPage() {
 
 function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   const [tab, setTab] = useState<TabKey>("pages");
-  const { data, loading, error } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
+  const { data, loading, error, reload } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = data?.site;
+
+  // P12-T12 "Start with AI": the wizard's AI path lands here with `?ai=1` to
+  // pop the Studio drawer open and start tailing the job-run conversation it
+  // just kicked off. Fetched independently of the Pages tab (which loads
+  // lazily on mount) so the preview iframe has a fallback page even before
+  // that tab has been visited.
+  const [searchParams] = useSearchParams();
+  const [aiOpen, setAiOpen] = useState(searchParams.get("ai") === "1");
+  const [previewPageId, setPreviewPageId] = useState<string | null>(null);
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const { data: pagesData } = useApi<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`);
+  const firstPageId = pagesData?.pages[0]?.id ?? null;
+  const effectivePreviewPageId = previewPageId ?? firstPageId;
+
+  function handleChangeEvent(c: AgentChangeEvent) {
+    if (c.page_id) setPreviewPageId(c.page_id);
+    setPreviewNonce((n) => n + 1);
+  }
+
+  const adminToken = getAdminToken();
+  const previewSrc = effectivePreviewPageId
+    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview${
+        adminToken ? `?token=${encodeURIComponent(adminToken)}` : ""
+      }`
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -100,6 +128,16 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
           <div className="flex items-center gap-3">
             {site && <SaveAsTemplateDialog siteId={site.id} siteName={site.display_name} />}
+            {site && (
+              <button
+                type="button"
+                onClick={() => setAiOpen((v) => !v)}
+                aria-pressed={aiOpen}
+                className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+              >
+                AI
+              </button>
+            )}
             <a
               href={liveSiteUrl(slug)}
               target="_blank"
@@ -145,18 +183,42 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             ))}
           </div>
 
-          <div role="tabpanel">
-            {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
-            {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
-            {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
-            {tab === "members" && <MembersTab siteId={site.id} />}
-            {tab === "media" && <MediaTab siteId={site.id} />}
-            {tab === "plugins" && <PluginsTab siteId={site.id} />}
-            {tab === "domains" && <DomainsTab siteId={site.id} />}
-            {tab === "integrations" && <CrmTab site={site} />}
-            {tab === "seo" && <SeoSettingsTab site={site} />}
-            {tab === "settings" && <SettingsTab site={site} />}
+          <div className="flex gap-4">
+            <div role="tabpanel" className="min-w-0 flex-1">
+              {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
+              {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
+              {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
+              {tab === "members" && <MembersTab siteId={site.id} />}
+              {tab === "media" && <MediaTab siteId={site.id} />}
+              {tab === "plugins" && <PluginsTab siteId={site.id} />}
+              {tab === "domains" && <DomainsTab siteId={site.id} />}
+              {tab === "integrations" && <CrmTab site={site} />}
+              {tab === "seo" && <SeoSettingsTab site={site} />}
+              {tab === "settings" && <SettingsTab site={site} />}
+            </div>
+
+            {aiOpen && previewSrc && (
+              <div className="flex w-full max-w-md flex-col gap-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
+                <iframe
+                  title="Draft preview"
+                  src={previewSrc}
+                  key={previewNonce}
+                  className="h-96 w-full rounded border border-zinc-200"
+                />
+              </div>
+            )}
           </div>
+
+          <AgentChatDrawer
+            siteId={site.id}
+            slug={slug}
+            open={aiOpen}
+            onClose={() => setAiOpen(false)}
+            onSiteChanged={reload}
+            autoTail={searchParams.get("ai") === "1"}
+            onChangeEvent={handleChangeEvent}
+          />
         </>
       )}
     </div>
