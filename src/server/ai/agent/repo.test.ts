@@ -3,6 +3,7 @@ import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
   createConversation, getConversation, listConversations, appendMessage,
   listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
+  claimConversationTurn, releaseConversationTurn,
 } from "./repo.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -54,5 +55,50 @@ d("ai agent repo", () => {
     const list = await listConversations(db.getPool(), siteId);
     expect(list.findIndex((c) => c.id === c2.id)).toBeLessThan(list.findIndex((c) => c.id === c1.id));
     expect(list.find((c) => c.id === c1.id)!.status).toBe("error");
+  });
+
+  describe("claimConversationTurn / releaseConversationTurn (bot-review fix wave, item 1)", () => {
+    it("claims from 'active', a second claim while running fails, and release returns it to 'active'", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
+
+      // A second claim attempt while genuinely running (fresh updated_at) fails.
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(false);
+
+      await releaseConversationTurn(db.getPool(), conv.id, "active");
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("active");
+    });
+
+    it("claims from 'error' too (resume semantics)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await setConversationStatus(db.getPool(), conv.id, "error");
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
+    });
+
+    it("releasing to 'active' is a no-op once something else already set 'error' (error wins)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      await setConversationStatus(db.getPool(), conv.id, "error");
+      await releaseConversationTurn(db.getPool(), conv.id, "active");
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("error");
+    });
+
+    it("a stale 'running' row (updated_at > 10 minutes old) is claimable again — crashed-turn takeover", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '11 minutes' WHERE id = $1`,
+        [conv.id],
+      );
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+    });
+
+    it("a fresh 'running' row (updated_at < 10 minutes old) is NOT claimable", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(false);
+    });
   });
 });

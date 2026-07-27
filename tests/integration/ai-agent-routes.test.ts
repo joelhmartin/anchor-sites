@@ -7,7 +7,7 @@ import type { Server } from "node:http";
 import { setupAgentDb } from "../helpers/agent-db.js";
 import { adminAiAgentRouter, sseSend } from "../../src/server/routes/admin-ai-agent.js";
 import { adminPagesRouter } from "../../src/server/routes/admin-pages.js";
-import { appendMessage } from "../../src/server/ai/agent/repo.js";
+import { appendMessage, setConversationStatus, getConversation } from "../../src/server/ai/agent/repo.js";
 import type { AgentTurnEvent } from "../../src/server/ai/agent/loop.js";
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
@@ -494,6 +494,95 @@ d("agent HTTP API (integration, Task 10)", () => {
       );
       expect(res.status).toBe(200);
       expect(res.text).toContain("Token Marker");
+    });
+  });
+
+  describe("turn serialization (bot-review fix wave, item 1)", () => {
+    it("409s a message POST while the conversation is already 'running'", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-msg");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      await setConversationStatus(db.getPool(), conversationId, "running");
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "hi" });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe("turn already running");
+
+      // No user message was appended — the claim guard runs BEFORE appendMessage.
+      const detail = await auth(
+        request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+      );
+      expect(detail.body.messages).toEqual([]);
+    });
+
+    it("409s a run:\"job\" message POST while the conversation is already 'running'", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-msg-job");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      await setConversationStatus(db.getPool(), conversationId, "running");
+
+      enqueueSpy.mockClear();
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "hi", run: "job" });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe("turn already running");
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("a stale-running conversation (>10 min, crashed turn) is claimable again instead of 409ing forever", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-stale");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      await setConversationStatus(db.getPool(), conversationId, "running");
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '11 minutes' WHERE id = $1`,
+        [conversationId],
+      );
+
+      const res = await auth(
+        request(app)
+          .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
+          .buffer(true)
+          .parse(sseParser),
+      ).send({ message: "hello again" });
+      expect(res.headers["content-type"]).toContain("text/event-stream");
+      expect(res.body).toContain("turn_done");
+
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("active");
+    });
+
+    it("an inline turn releases the lock back to 'active' when it finishes normally", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-release");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      await auth(
+        request(app)
+          .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
+          .buffer(true)
+          .parse(sseParser),
+      ).send({ message: "hello agent" });
+
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("active");
+    });
+
+    it("a run:\"job\" message POST releases the route's claim so the conversation isn't stuck 'running' before the job even starts", async () => {
+      const site = await db.seedSite("agent-routes-turn-lock-job-release");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+      ).send({ message: "keep going", run: "job" });
+      expect(res.status).toBe(202);
+
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("active");
     });
   });
 });

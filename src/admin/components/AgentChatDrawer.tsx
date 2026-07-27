@@ -296,7 +296,13 @@ export function AgentChatDrawer({
           `/api/sites/${siteId}/agent/conversations`,
         );
         if (cancelled) return;
-        const existing = res.conversations.find((c) => c.status === "active" || c.status === "error");
+        // "running" (bot-review fix wave item 1) means a job-run turn is
+        // actively in flight for this conversation — reopening the drawer
+        // must still reconnect to it (hydrate + autoTail), not silently
+        // ignore it because neither "active" nor "error" matched.
+        const existing = res.conversations.find(
+          (c) => c.status === "active" || c.status === "error" || c.status === "running",
+        );
         if (existing) {
           setConversationId(existing.id);
           setConversation(existing);

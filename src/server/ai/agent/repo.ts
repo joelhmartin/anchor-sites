@@ -11,7 +11,7 @@ export type AiConversation = {
   id: string;
   site_id: string;
   title: string;
-  status: "active" | "error" | "archived";
+  status: "active" | "error" | "archived" | "running";
   token_usage: Record<string, { input: number; output: number }>;
   created_at: string;
   updated_at: string;
@@ -127,6 +127,50 @@ export async function setConversationStatus(
   pool: Pool, id: string, status: AiConversation["status"],
 ): Promise<void> {
   await pool.query(`UPDATE ai_conversations SET status = $2 WHERE id = $1`, [id, status]);
+}
+
+/**
+ * Turn-serialization lock (bot-review fix wave, item 1 — Codex P1). Atomically
+ * flips a conversation to `status='running'` so only one turn can be
+ * in-flight at a time: a second concurrent claim attempt sees a row already
+ * `running` (and not stale) and gets zero rows back. `status IN ('active',
+ * 'error')` covers the normal "nothing running" states; the `running AND
+ * updated_at < now() - 10m` branch is a takeover for a turn that crashed
+ * without releasing (the job path has no request timeout to guarantee a
+ * release, and appendMessage bumps `updated_at` on every persisted message,
+ * so a genuinely active turn keeps re-arming this window well under 10
+ * minutes). Returns true iff THIS call won the claim.
+ */
+export async function claimConversationTurn(pool: Pool, id: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE ai_conversations SET status = 'running'
+     WHERE id = $1
+       AND (status IN ('active','error') OR (status = 'running' AND updated_at < now() - interval '10 minutes'))
+     RETURNING id`,
+    [id],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Releases the turn-serialization lock. `status:"active"` is a CONDITIONAL
+ * update (only while still `running`) so it never clobbers an `error` status
+ * some other code path already set for this same turn (the loop's failure-
+ * streak/budget-exhaustion branches, or the route's own catch block) — those
+ * already-set statuses win over this best-effort "done" flip. `status:"error"`
+ * is unconditional (mirrors the existing `setConversationStatus` error paths).
+ */
+export async function releaseConversationTurn(
+  pool: Pool, id: string, status: "active" | "error",
+): Promise<void> {
+  if (status === "active") {
+    await pool.query(
+      `UPDATE ai_conversations SET status = 'active' WHERE id = $1 AND status = 'running'`,
+      [id],
+    );
+  } else {
+    await setConversationStatus(pool, id, "error");
+  }
 }
 
 export async function addTokenUsage(

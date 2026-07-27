@@ -32,7 +32,7 @@ export type AiConversation = {
   id: string;
   site_id: string;
   title: string;
-  status: "active" | "error" | "archived";
+  status: "active" | "error" | "archived" | "running";
   token_usage: Record<string, { input: number; output: number }>;
   created_at?: string;
   updated_at?: string;

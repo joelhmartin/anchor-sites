@@ -12,6 +12,8 @@ import {
   appendMessage,
   listMessages,
   setConversationStatus,
+  claimConversationTurn,
+  releaseConversationTurn,
 } from "../ai/agent/repo.js";
 import { getBoss, AGENT_TURN } from "../jobs/index.js";
 import type { AgentTurnInput } from "../jobs/agent-turn.js";
@@ -107,7 +109,17 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
     opts.enqueue ??
     (async (input) => {
       try {
-        return await getBoss().send(AGENT_TURN, input);
+        // Item 2 (CodeRabbit — job duplication): `singletonKey` stops
+        // pg-boss from ever having two AGENT_TURN jobs for the same
+        // conversation queued/active at once (defense in depth alongside
+        // the DB-level `running` claim below); `retryLimit: 0` because a
+        // turn's tool calls commit real side effects (page writes, image
+        // imports) as they go — an automatic pg-boss retry would replay
+        // already-committed work, which is unsafe, not idempotent.
+        return await getBoss().send(AGENT_TURN, input, {
+          singletonKey: input.conversationId,
+          retryLimit: 0,
+        });
       } catch (err) {
         // Fix round 1 (reviewer Important #1): getBoss() throws whenever
         // pg-boss hasn't booted (JOBS_ENABLED=false, or booting failed at
@@ -153,12 +165,27 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         if (message) {
           await appendMessage(pool, conversation.id, "user", [{ type: "text", text: message }]);
           if (run === "job") {
+            // Item 1 (Codex P1 — serialize turns per conversation): claim
+            // the turn lock before enqueueing. This is a brand-new
+            // conversation (status:'active' from createConversation above),
+            // so the claim itself can't realistically lose a race — its
+            // purpose here is symmetry with the message-POST job path below
+            // plus an immediate 409 for the pathological case of a second
+            // request racing this same still-in-flight creation somehow.
+            const claimed = await claimConversationTurn(pool, conversation.id);
+            if (!claimed) {
+              res.status(409).json({ error: "turn already running" });
+              return;
+            }
             const jobId = await enqueue({ conversationId: conversation.id, siteId });
             if (!jobId) {
               // Fix round 1: don't lie about queued:true when enqueue
               // silently failed. The conversation + message are already
               // persisted, so a retry (POST .../messages, run:"job") picks
-              // up right where this left off.
+              // up right where this left off. Release the claim so that
+              // retry (or the stale-takeover window) isn't stuck waiting on
+              // a lock nothing is actually holding.
+              await releaseConversationTurn(pool, conversation.id, "active");
               console.error("[agent] job enqueue returned no id — reporting 503", {
                 conversationId: conversation.id,
                 siteId,
@@ -166,6 +193,18 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
               res.status(503).json({ error: "job queue unavailable" });
               return;
             }
+            // The job handler (src/server/jobs/agent-turn.ts) claims
+            // 'running' again for itself at entry and HOLDS it for the
+            // turn's full (potentially long) execution — that's what
+            // actually closes the race this fix targets (a later inline
+            // message POST arriving while the job build is still tailing).
+            // This route-level claim only needed to cover the instant
+            // around enqueue itself, so release it now rather than leave
+            // the conversation stuck at 'running' until the job is
+            // dequeued (pg-boss's own `singletonKey` on the send above is
+            // the backstop against a second job for this same conversation
+            // in that brief window).
+            await releaseConversationTurn(pool, conversation.id, "active");
             res.status(202).json({ conversation, queued: true, job_id: jobId });
             return;
           }
@@ -248,11 +287,31 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
           return;
         }
 
+        // Item 1 (Codex P1 — serialize turns per conversation): a second
+        // message POST while a turn is already running for this
+        // conversation would otherwise interleave invalid Anthropic history
+        // + conflicting mutations (e.g. the composer being enabled while
+        // the drawer is tailing a job-run build). Claim the turn lock
+        // atomically BEFORE appending the message or doing anything else —
+        // a conversation in status:'error' is claimable (matches the
+        // existing "resume on error" semantics documented on this route),
+        // and a `running` conversation whose `updated_at` is stale (>10min,
+        // appendMessage keeps re-arming it for a genuinely active turn)
+        // is claimable too, covering a turn that crashed without releasing.
+        const claimed = await claimConversationTurn(pool, conversationId);
+        if (!claimed) {
+          res.status(409).json({ error: "turn already running" });
+          return;
+        }
+
         await appendMessage(pool, conversationId, "user", [{ type: "text", text: message }]);
 
         if (run === "job") {
           const jobId = await enqueue({ conversationId, siteId });
           if (!jobId) {
+            // Release the claim on a failed enqueue — see the matching
+            // comment on the conversation-create-with-job path above.
+            await releaseConversationTurn(pool, conversationId, "active");
             console.error("[agent] job enqueue returned no id — reporting 503", {
               conversationId,
               siteId,
@@ -260,6 +319,11 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
             res.status(503).json({ error: "job queue unavailable" });
             return;
           }
+          // Ownership of the 'running' claim passes to the job handler
+          // (agent-turn.ts), which claims it again at entry and holds it
+          // for the turn's full execution — see the matching comment on
+          // the conversation-create-with-job path above.
+          await releaseConversationTurn(pool, conversationId, "active");
           res.status(202).json({ queued: true, job_id: jobId });
           return;
         }
@@ -318,6 +382,14 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
           await setConversationStatus(pool, conversationId, "error").catch(() => undefined);
           if (!clientGone) sseSend(res, { type: "turn_done", reason: "error", message: "internal" });
         } finally {
+          // Item 1: release the turn lock this route claimed above.
+          // CONDITIONAL on still being 'running' — the promoted-enqueue-
+          // failure branch and the catch block above already flipped status
+          // to 'error' for this same turn, and that already-set status must
+          // win over this generic "done" flip (releaseConversationTurn's
+          // `WHERE status = 'running'` guard is what makes this a no-op in
+          // those cases instead of clobbering 'error' back to 'active').
+          await releaseConversationTurn(pool, conversationId, "active").catch(() => undefined);
           if (!clientGone) res.end();
         }
       } catch (err) {
