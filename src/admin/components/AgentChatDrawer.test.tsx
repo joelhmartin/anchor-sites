@@ -354,4 +354,132 @@ describe("AgentChatDrawer (P-T11)", () => {
     // Only the newly-tailed change should notify — hydration itself is silent.
     expect(onSiteChanged).toHaveBeenCalledTimes(1);
   });
+
+  it("does not duplicate on a promoted send after hydration, despite a stale non-null cursor (fix round 3)", async () => {
+    // Reopen: an existing conversation with history — hydration sets
+    // lastMessageIdRef to "m2" (non-null). This is the exact precondition
+    // the round-3 regression needs: a promotion happening AFTER a prior
+    // hydration, so a naive `startTail(cid, lastMessageIdRef.current)`
+    // would use a non-null cursor and hit the MERGE path instead of REPLACE.
+    eventScripts["/api/sites/s1/agent/conversations/c9/messages"] = [
+      { type: "assistant_text", text: "On it…" },
+      {
+        type: "tool_result",
+        name: "update_page",
+        ok: true,
+        change: { kind: "page_updated", page_id: "p9", revision_id: "r11", summary: "5 updated" },
+      },
+      { type: "turn_done", reason: "promoted" },
+    ];
+    // The tail must be restarted with a NULL cursor (no `?after=`) — so its
+    // snapshot is the full last-50 set, including the pre-existing history
+    // AND this turn's own persisted messages (which are also already on
+    // screen as transient live items). Only registering this event script
+    // under the no-query path (not `.../events?after=m2`) also proves the
+    // fix: if the code regressed to a non-null cursor, this snapshot would
+    // never fire and the assertions below would see only the live items.
+    eventScripts["/api/sites/s1/agent/conversations/c9/events"] = [
+      {
+        type: "snapshot",
+        conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+        messages: [
+          { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
+          {
+            id: "m2",
+            conversation_id: "c9",
+            role: "assistant",
+            content: [{ type: "text", text: "Hi there" }],
+            created_at: "t2",
+          },
+          {
+            id: "m3",
+            conversation_id: "c9",
+            role: "user",
+            content: [{ type: "text", text: "Build a homepage" }],
+            created_at: "t3",
+          },
+          {
+            id: "m4",
+            conversation_id: "c9",
+            role: "assistant",
+            content: [{ type: "text", text: "On it…" }],
+            created_at: "t4",
+          },
+          {
+            id: "m5",
+            conversation_id: "c9",
+            role: "tool",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "t3",
+                content: JSON.stringify({ page_id: "p9", revision_id: "r11", diff: { summary: "5 updated" } }),
+                is_error: false,
+              },
+            ],
+            created_at: "t5",
+          },
+        ],
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({
+          conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} }],
+        });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9" && method === "GET") {
+        return json({
+          conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+          messages: [
+            { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
+            {
+              id: "m2",
+              conversation_id: "c9",
+              role: "assistant",
+              content: [{ type: "text", text: "Hi there" }],
+              created_at: "t2",
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { onSiteChanged } = renderDrawer();
+
+    // History hydrates first (lastMessageIdRef becomes "m2").
+    await waitFor(() => expect(screen.getByText("Hi there")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // Live turn events render first ("On it…" + the change card).
+    await waitFor(() => expect(screen.getByText("On it…")).toBeTruthy());
+
+    // Promotion restarts the tail — assert it used a NULL cursor.
+    await waitFor(() =>
+      expect(
+        streamAgentEvents.mock.calls.some((c) => c[0] === "/api/sites/s1/agent/conversations/c9/events"),
+      ).toBe(true),
+    );
+    expect(
+      streamAgentEvents.mock.calls.some((c) => c[0] === "/api/sites/s1/agent/conversations/c9/events?after=m2"),
+    ).toBe(false);
+
+    // The null-cursor snapshot's full set (history + this turn) replaces
+    // the transcript — every bubble/card renders exactly once, not twice.
+    await waitFor(() => expect(screen.getAllByText("5 updated")).toHaveLength(1));
+    expect(screen.getAllByText("Hello")).toHaveLength(1);
+    expect(screen.getAllByText("Hi there")).toHaveLength(1);
+    expect(screen.getAllByText("Build a homepage")).toHaveLength(1);
+    expect(screen.getAllByText("On it…")).toHaveLength(1);
+
+    // The live tool_result already fired onSiteChanged once; the replayed
+    // snapshot (a replace, not a merge) must not fire it again.
+    expect(onSiteChanged).toHaveBeenCalledTimes(1);
+  });
 });

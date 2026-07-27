@@ -270,7 +270,19 @@ export function AgentChatDrawer({
       }
     } else if (e.type === "turn_done") {
       if (e.reason === "promoted") {
-        startTail(cid, lastMessageIdRef.current);
+        // ALWAYS restart the tail with a null cursor here, even if
+        // `lastMessageIdRef` already holds a (now-stale, pre-this-turn)
+        // value from an earlier hydration. A non-null cursor would hit the
+        // cursored MERGE path in `handleTailEvent`, and the cursored
+        // snapshot would contain THIS turn's own persisted messages —
+        // which are already on screen as transient live items (carrying
+        // local- ids, so `seenMessageIdsRef` can't recognize them as
+        // duplicates) — rendering everything twice. A null cursor instead
+        // takes the full-REPLACE path (`hydrateFromMessages`), which
+        // discards those transient live items and rebuilds the transcript
+        // from the persisted, authoritative last-50 — no duplicates
+        // possible regardless of prior hydration state.
+        startTail(cid, null);
       } else if (e.reason === "error") {
         setConversation((prev) => (prev ? { ...prev, status: "error" } : prev));
       }
@@ -327,6 +339,12 @@ export function AgentChatDrawer({
   async function send(overrideText?: string) {
     const text = (overrideText ?? draft).trim();
     if (!text || sending) return;
+    // Stop any running tail (e.g. idle autoTail on a reopened conversation)
+    // so live turn events are the only update source while this inline
+    // turn is in flight — otherwise a tailed `message` could interleave
+    // with (or race) what the turn itself is about to render. A promoted
+    // turn or a later job run restarts tailing as needed.
+    tailAbortRef.current?.abort();
     setSending(true);
     setError(null);
     setDraft("");
