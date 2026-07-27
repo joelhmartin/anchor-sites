@@ -4,7 +4,7 @@ import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
   createConversation, appendMessage, listMessages, addTokenUsage, getConversation, getTodayUsage,
 } from "./repo.js";
-import { runAgentTurn, type AgentTurnEvent } from "./loop.js";
+import { runAgentTurn, parsePositiveIntEnv, type AgentTurnEvent } from "./loop.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 const db = setupAgentDb();
@@ -51,6 +51,33 @@ function makeFakeClient(messages: Anthropic.Message[]) {
   for (const m of messages) create.mockResolvedValueOnce(m);
   return { client: { messages: { create } } as unknown as Anthropic, create };
 }
+
+// Bot-review fix wave, item 4 (CodeRabbit ×2 — env parsing). Ungated (no DB
+// needed) — pure-function coverage, mirrors ai-agent-routes.test.ts's
+// ungated sseSend describe block.
+describe("parsePositiveIntEnv (item 4)", () => {
+  it("falls back on undefined and on an empty/whitespace string", () => {
+    expect(parsePositiveIntEnv(undefined, 30)).toBe(30);
+    expect(parsePositiveIntEnv("", 30)).toBe(30);
+    expect(parsePositiveIntEnv("   ", 30)).toBe(30);
+  });
+
+  it("falls back on a non-numeric string instead of NaN", () => {
+    expect(parsePositiveIntEnv("thirty", 30)).toBe(30);
+  });
+
+  it("falls back on zero, negative, and non-integer values", () => {
+    expect(parsePositiveIntEnv("0", 30)).toBe(30);
+    expect(parsePositiveIntEnv("-5", 30)).toBe(30);
+    expect(parsePositiveIntEnv("3.5", 30)).toBe(30);
+    expect(parsePositiveIntEnv("Infinity", 30)).toBe(30);
+  });
+
+  it("accepts a valid positive integer string", () => {
+    expect(parsePositiveIntEnv("15", 30)).toBe(15);
+    expect(parsePositiveIntEnv("1000000", 30)).toBe(1_000_000);
+  });
+});
 
 d("runAgentTurn", () => {
   beforeAll(() => db.runMigrations());
@@ -250,6 +277,64 @@ d("runAgentTurn", () => {
     ]);
   });
 
+  it("batched tool cap (item 5): 3 tool_use blocks in one message against a remaining allowance of 1 — only the first runs, the rest are skipped with is_error tool_results, turn ends max_tools", async () => {
+    const { site, page, conv } = await seedConvo(`loop-batchcap-${runId}`);
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({
+        content: [
+          toolUseBlock("b1", "update_page", {
+            page_id: page.id,
+            ops: [{ op: "update_block", id: "b1", props: { html: "<p>After</p>" } }],
+          }),
+          toolUseBlock("b2", "get_site_overview", {}),
+          toolUseBlock("b3", "get_site_overview", {}),
+        ],
+        stop_reason: "tool_use",
+        usage: usage(50, 20),
+      }),
+    ]);
+
+    const events: AgentTurnEvent[] = [];
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      limits: { maxToolCalls: 1 }, onEvent: (e) => events.push(e),
+    });
+
+    // Only ONE tool actually ran — the model was only called once (no
+    // follow-up round-trip needed to discover the cap; it's enforced
+    // within this single batch), and only b1's write landed.
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ reason: "max_tools", toolCalls: 1 });
+
+    const pageRow = await db.getPool().query(`SELECT blocks FROM pages WHERE id = $1`, [page.id]);
+    const blocks = pageRow.rows[0].blocks as { props: { html: string } }[];
+    expect(blocks[0].props.html).toBe("<p>After</p>");
+
+    // All three tool_use blocks got a matching tool_result in the SAME
+    // persisted tool message (API requires one per tool_use), but only the
+    // first is a real result — b2/b3 are is_error:true "limit reached".
+    const msgs = await listMessages(db.getPool(), conv.id);
+    const toolMsg = msgs.find((m) => m.role === "tool")!;
+    const results = toolMsg.content as { tool_use_id: string; is_error?: boolean; content: string }[];
+    expect(results.map((r) => r.tool_use_id)).toEqual(["b1", "b2", "b3"]);
+    expect(results[0].is_error).toBeFalsy();
+    expect(results[1]).toMatchObject({ is_error: true });
+    expect(results[2]).toMatchObject({ is_error: true });
+    expect(JSON.parse(results[1].content)).toEqual({ error: "tool call limit reached" });
+
+    expect(events.map((e) => e.type)).toEqual([
+      "tool_call", "tool_result", "tool_call", "tool_result", "tool_call", "tool_result",
+      "assistant_text", "turn_done",
+    ]);
+    const skippedResultEvents = events.filter(
+      (e): e is Extract<AgentTurnEvent, { type: "tool_result" }> => e.type === "tool_result",
+    );
+    expect(skippedResultEvents[1]).toMatchObject({ ok: false, summary: "tool call limit reached" });
+    expect(skippedResultEvents[2]).toMatchObject({ ok: false, summary: "tool call limit reached" });
+    expect(events[events.length - 1]).toMatchObject({ type: "turn_done", reason: "max_tools" });
+  });
+
   it("promotion: an already-expired deadline stops mid-turn without persisting anything extra", async () => {
     const { site, page, conv } = await seedConvo(`loop-promote-${runId}`);
 
@@ -297,6 +382,52 @@ d("runAgentTurn", () => {
 
     const msgs = await listMessages(db.getPool(), conv.id);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("budget: a malformed AI_AGENT_TOKEN_BUDGET falls back to the real default instead of NaN (never trips) or 0 (always trips)", async () => {
+    const { site, conv } = await seedConvo(`loop-budget-badenv-${runId}`);
+    // Usage sits exactly at the DEFAULT budget (1_000_000) — a NaN budget
+    // (from `Number("not-a-number")`) would never compare `>=` true here and
+    // the turn would proceed to call the model; a 0 budget (from
+    // `Number("")`) would already have tripped on any usage at all. Only
+    // the correct 1_000_000 fallback makes this exact boundary trip.
+    await addTokenUsage(db.getPool(), conv.id, { input: 900_000, output: 100_000 });
+
+    const { client, create } = makeFakeClient([]);
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ANTHROPIC_API_KEY: "test-key", AI_AGENT_TOKEN_BUDGET: "not-a-number" } as NodeJS.ProcessEnv,
+      client,
+    });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(result).toEqual({ reason: "budget", toolCalls: 0 });
+  });
+
+  it("max tool calls: an empty AI_AGENT_MAX_TOOL_CALLS falls back to the real default (30), not 0", async () => {
+    const { site, page, conv } = await seedConvo(`loop-maxtools-badenv-${runId}`);
+    // A 0 cap (from `Number("")`) would trip on the FIRST tool call — assert
+    // the turn instead runs through to end_turn on a single tool call,
+    // proving the effective cap is >= 1 (i.e. the real default, 30).
+    const { client, create } = makeFakeClient([
+      cannedMessage({
+        content: [toolUseBlock("e1", "update_page", {
+          page_id: page.id,
+          ops: [{ op: "update_block", id: "b1", props: { html: "<p>After</p>" } }],
+        })],
+        stop_reason: "tool_use", usage: usage(10, 5),
+      }),
+      cannedMessage({ content: [textBlock("done")], stop_reason: "end_turn", usage: usage(10, 5) }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ANTHROPIC_API_KEY: "test-key", AI_AGENT_MAX_TOOL_CALLS: "" } as NodeJS.ProcessEnv,
+      client,
+    });
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ reason: "end_turn", toolCalls: 1 });
   });
 
   it("stub: with no ANTHROPIC_API_KEY, an empty site gets a real starter home page", async () => {

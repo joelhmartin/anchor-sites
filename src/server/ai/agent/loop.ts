@@ -50,6 +50,23 @@ Rules:
 /** Number of consecutive failures of the SAME tool that stops the turn. */
 const FAILURE_STREAK_LIMIT = 3;
 
+/**
+ * Bot-review fix wave, item 4 (CodeRabbit ×2 — env parsing). `Number(env.X)`
+ * on a raw env var turns `""` into `0` (not `NaN` — `Number("")` is `0`) and
+ * turns `"thirty"` into `NaN`; both then flowed straight into the turn's
+ * caps unchecked, silently making `maxToolCalls`/`tokenBudget` either 0
+ * (the turn couldn't do anything) or `NaN` (every `>=`/`<=` comparison
+ * against it is false, so the cap never trips). Exported for direct
+ * unit-testing. Falls back to `fallback` unless the raw string parses to a
+ * finite, whole, strictly-positive number.
+ */
+export function parsePositiveIntEnv(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
 type ToolResultContent = {
   type: "tool_result";
   tool_use_id: string;
@@ -219,12 +236,13 @@ export async function runAgentTurn(input: {
   const { pool, conversationId, siteId } = input;
   const env = input.env ?? process.env;
   const onEvent = input.onEvent ?? (() => undefined);
-  const maxToolCalls = input.limits?.maxToolCalls ?? Number(env.AI_AGENT_MAX_TOOL_CALLS ?? 30);
+  const maxToolCalls =
+    input.limits?.maxToolCalls ?? parsePositiveIntEnv(env.AI_AGENT_MAX_TOOL_CALLS, 30);
   // `deadlineMs` may legitimately be 0 (route/tests forcing immediate
   // promotion) — a truthy check would treat 0 the same as "no deadline",
   // which is wrong, so this checks presence, not truthiness.
   const deadline = input.limits?.deadlineMs != null ? Date.now() + input.limits.deadlineMs : null;
-  const tokenBudget = Number(env.AI_AGENT_TOKEN_BUDGET ?? 1_000_000);
+  const tokenBudget = parsePositiveIntEnv(env.AI_AGENT_TOKEN_BUDGET, 1_000_000);
 
   const toolCtx: AgentToolCtx = { pool, siteId, conversationId, env, genId: input.genId };
 
@@ -310,6 +328,32 @@ export async function runAgentTurn(input: {
 
     const resultBlocks: ToolResultContent[] = [];
     for (const block of toolUseBlocks) {
+      // Item 5 (Codex P2 — batched tool cap): the model can request several
+      // tool_use blocks in ONE assistant message, so the cap has to be
+      // checked BEFORE each block, not just once at the bottom of the outer
+      // loop after the whole batch already ran — otherwise a single big
+      // batch blows straight past maxToolCalls before that check ever
+      // fires. Once the cap is reached mid-batch, every remaining block in
+      // THIS batch is skipped rather than executed, but still needs a
+      // matching tool_result (the API requires exactly one per tool_use
+      // in the same follow-up message) — persisted as `is_error:true` so
+      // the model sees it didn't run. These skips deliberately do NOT touch
+      // `failureStreak`: hitting the cap isn't the same failure mode as a
+      // tool genuinely erroring, and the bottom-of-loop `toolCalls >=
+      // maxToolCalls` check below already ends the turn with reason
+      // "max_tools" once this batch is persisted.
+      if (toolCalls >= maxToolCalls) {
+        onEvent({ type: "tool_call", name: block.name, input: block.input });
+        resultBlocks.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify({ error: "tool call limit reached" }),
+          is_error: true,
+        });
+        onEvent({ type: "tool_result", name: block.name, ok: false, summary: "tool call limit reached" });
+        continue;
+      }
+
       onEvent({ type: "tool_call", name: block.name, input: block.input });
       const result = await executeAgentTool(toolCtx, block.name, block.input);
       toolCalls += 1;
