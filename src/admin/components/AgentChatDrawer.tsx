@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
 import {
   streamAgentEvents,
@@ -9,8 +8,19 @@ import {
   type AiConversation,
   type AiMessage,
 } from "../lib/agent-api.js";
+import {
+  applyTurnEvent,
+  finalizeTurn,
+  initialTurnState,
+  turnDoneMessage,
+  type TurnState,
+} from "./agent-chat/chatReducer.js";
+import { deriveItemsFromMessage } from "./agent-chat/history.js";
+import type { DisplayItem } from "./agent-chat/types.js";
+import { ChatTranscript } from "./agent-chat/ChatTranscript.js";
+import { Composer } from "./agent-chat/Composer.js";
+import { EmptyState } from "./agent-chat/EmptyState.js";
 import { Button } from "../ui/button.js";
-import { Card, CardContent } from "../ui/card.js";
 
 export type AgentChatDrawerProps = {
   siteId: string;
@@ -24,139 +34,26 @@ export type AgentChatDrawerProps = {
   onChangeEvent?: (c: AgentChangeEvent) => void;
 };
 
-type DisplayItem =
-  | { id: string; kind: "user"; text: string }
-  | { id: string; kind: "assistant"; text: string }
-  | { id: string; kind: "change"; change: AgentChangeEvent };
-
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 /**
- * Best-effort reconstruction of an `AgentChangeEvent` from a persisted
- * `tool_result` block's parsed `content`. The live SSE `tool_result` event
- * carries the full `change` object (kind + summary); the DB only stores
- * `result.data` (e.g. `{ page_id, revision_id, diff }`), so a card rebuilt
- * from history after a job-run tail can only infer `kind`/`summary`, not
- * read them verbatim. Good enough to render a card and enable Open page /
- * Revert; not a faithful replay of the original event.
- */
-function deriveChangeFromToolData(data: unknown): AgentChangeEvent | null {
-  if (!data || typeof data !== "object") return null;
-  const d = data as Record<string, unknown>;
-  if (typeof d.page_id !== "string") return null;
-  const page_id = d.page_id;
-  const revision_id = typeof d.revision_id === "string" ? d.revision_id : undefined;
-  const diff = d.diff as { summary?: string } | undefined;
-  if (diff && typeof diff.summary === "string") {
-    // update_page's `data.revision_id` is now the PRIOR (pre-change)
-    // revision (Critical 1 fix, tools/pages.ts) — restoring it is a genuine
-    // undo of this change, so it's safe to carry through here.
-    return { kind: "page_updated", page_id, revision_id, summary: diff.summary };
-  }
-  if (revision_id) {
-    // create_page's `data.revision_id` is the newly-created page's OWN
-    // initial revision, not a prior state — its true inverse is delete, not
-    // restore (Critical 1). Deliberately drop `revision_id` here too so a
-    // card rebuilt from history doesn't offer a Revert that would just
-    // restore the page onto itself.
-    return { kind: "page_created", page_id, summary: "Page created" };
-  }
-  return null;
-}
-
-function deriveItemsFromMessage(m: AiMessage): DisplayItem[] {
-  const blocks = Array.isArray(m.content) ? (m.content as Record<string, unknown>[]) : [];
-  if (m.role === "user" || m.role === "assistant") {
-    const kind = m.role;
-    return blocks
-      .map((b, i) => ({ b, i }))
-      .filter(({ b }) => b?.type === "text" && typeof b.text === "string")
-      .map(({ b, i }) => ({ id: `${m.id}-${i}`, kind, text: b.text as string }));
-  }
-  if (m.role === "tool") {
-    const items: DisplayItem[] = [];
-    blocks.forEach((b, i) => {
-      if (b?.type !== "tool_result" || typeof b.content !== "string") return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(b.content);
-      } catch {
-        return; // only render cards where the matching tool result parses
-      }
-      const change = deriveChangeFromToolData(parsed);
-      if (change) items.push({ id: `${m.id}-${i}`, kind: "change", change });
-    });
-    return items;
-  }
-  return [];
-}
-
-function ChangeCard({
-  siteId,
-  slug,
-  change,
-  onSiteChanged,
-}: {
-  siteId: string;
-  slug: string;
-  change: AgentChangeEvent;
-  onSiteChanged: () => void;
-}) {
-  const [reverting, setReverting] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function revert() {
-    if (!change.page_id || !change.revision_id) return;
-    setReverting(true);
-    setErr(null);
-    try {
-      await apiFetch(
-        `/api/sites/${siteId}/pages/${change.page_id}/revisions/${change.revision_id}/restore`,
-        { method: "POST" },
-      );
-      onSiteChanged();
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Revert failed.");
-    } finally {
-      setReverting(false);
-    }
-  }
-
-  return (
-    <Card className="border-indigo-200 bg-indigo-50/40">
-      <CardContent className="flex flex-col gap-2 p-3 pt-3 text-sm">
-        <p className="text-zinc-700">{change.summary}</p>
-        <div className="flex items-center gap-3">
-          {change.page_id && (
-            <Link
-              to={`/sites/${slug}/pages/${change.page_id}`}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-            >
-              Open page
-            </Link>
-          )}
-          {change.revision_id && (
-            <Button type="button" variant="outline" size="sm" onClick={revert} disabled={reverting}>
-              {reverting ? "Reverting…" : "Revert"}
-            </Button>
-          )}
-        </div>
-        {err && <p className="text-xs text-red-600">{err}</p>}
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Studio chat drawer (P-T11 / design doc §Studio chat). Talks to Task 10's
- * agent HTTP API: lists/creates the site's conversation, streams an inline
- * turn's SSE events into the transcript, and — when a turn is `promoted` to
- * a background job — switches to tailing `/events` so the transcript keeps
- * filling in from persisted messages. Every `change` (live or tailed) pings
- * `onSiteChanged` (and `onChangeEvent`, for Task 12's preview iframe) so the
- * caller can refresh whatever it's showing.
+ * Studio chat drawer (P-T11 / design doc §Studio chat; upgraded per the
+ * comparative-review worklist against anchor-operations' copilot). Talks to
+ * Task 10's agent HTTP API: lists/creates the site's conversation, streams
+ * an inline turn's SSE events into the transcript, and — when a turn is
+ * `promoted` to a background job — switches to tailing `/events` so the
+ * transcript keeps filling in from persisted messages. Every `change` (live
+ * or tailed) pings `onSiteChanged` (and `onChangeEvent`, for the preview
+ * iframe) so the caller can refresh whatever it's showing.
+ *
+ * While a turn streams, tool_call/tool_result events accumulate into a
+ * transient `liveTurn` (see `agent-chat/chatReducer.ts`) rendered as
+ * spinner→check step rows + a typing pulse; on `turn_done` that folds into
+ * ONE finalized assistant bubble with a collapsed "Worked through N steps"
+ * disclosure. Change cards (from `tool_result.change`) still render
+ * immediately as their own items, unaffected by that folding.
  */
 export function AgentChatDrawer({
   siteId,
@@ -170,6 +67,7 @@ export function AgentChatDrawer({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<AiConversation | null>(null);
   const [items, setItems] = useState<DisplayItem[]>([]);
+  const [liveTurn, setLiveTurn] = useState<TurnState | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +80,15 @@ export function AgentChatDrawer({
   const lastMessageIdRef = useRef<string | null>(null);
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const tailAbortRef = useRef<AbortController | null>(null);
+  const sendAbortRef = useRef<AbortController | null>(null);
+  const liveTurnRef = useRef<TurnState | null>(null);
+  const lastTurnReasonRef = useRef<string | null>(null);
+
+  // Autoscroll pin: only auto-scroll-to-bottom on new content when the user
+  // was already near the bottom — don't yank someone reading history
+  // (worklist item 2).
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
 
   function nextId(): string {
     idCounter.current += 1;
@@ -192,6 +99,24 @@ export function AgentChatDrawer({
     onSiteChanged();
     onChangeEvent?.(change);
   }
+
+  function setLiveTurnState(t: TurnState | null) {
+    liveTurnRef.current = t;
+    setLiveTurn(t);
+  }
+
+  function handleTranscriptScroll() {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 80;
+  }
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el || !isNearBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [items, liveTurn]);
 
   /**
    * Replace the transcript with the authoritative persisted history. Used
@@ -267,17 +192,39 @@ export function AgentChatDrawer({
     }
   }
 
+  /** Live tool_call/assistant_text/tool_result deltas fold into the transient `liveTurn`. */
+  function applyLiveEvent(e: AgentTurnEvent) {
+    setLiveTurnState(applyTurnEvent(liveTurnRef.current ?? initialTurnState(), e));
+  }
+
   function handleTurnEvent(e: AgentTurnEvent, cid: string) {
-    if (e.type === "assistant_text") {
-      setItems((prev) => [...prev, { id: nextId(), kind: "assistant", text: e.text }]);
-    } else if (e.type === "tool_result") {
-      if (e.change) {
-        const change = e.change;
-        setItems((prev) => [...prev, { id: nextId(), kind: "change", change }]);
-        noteChange(change);
+    if (e.type === "turn_done") {
+      lastTurnReasonRef.current = e.reason;
+      const finalState = liveTurnRef.current ?? initialTurnState();
+      const final = finalizeTurn(finalState);
+      setLiveTurnState(null);
+
+      const newItems: DisplayItem[] = [];
+      // Only promote a real answer/trace — a promoted turn with no text yet
+      // and no tools run would just add an empty bubble.
+      if (final.text || final.stepCount > 0) {
+        newItems.push({
+          id: nextId(),
+          kind: "assistant",
+          text: final.text,
+          reasoning:
+            final.stepCount > 0
+              ? { stepCount: final.stepCount, seconds: final.seconds, toolSteps: final.toolSteps }
+              : undefined,
+        });
       }
-    } else if (e.type === "turn_done") {
-      if (e.reason === "promoted") {
+      const sysText = turnDoneMessage(e.reason, e.message);
+      if (sysText) newItems.push({ id: nextId(), kind: "system", text: sysText });
+      if (newItems.length > 0) setItems((prev) => [...prev, ...newItems]);
+
+      if (e.reason === "error") {
+        setConversation((prev) => (prev ? { ...prev, status: "error" } : prev));
+      } else if (e.reason === "promoted") {
         // ALWAYS restart the tail with a null cursor here, even if
         // `lastMessageIdRef` already holds a (now-stale, pre-this-turn)
         // value from an earlier hydration. A non-null cursor would hit the
@@ -291,10 +238,16 @@ export function AgentChatDrawer({
         // from the persisted, authoritative last-50 — no duplicates
         // possible regardless of prior hydration state.
         startTail(cid, null);
-      } else if (e.reason === "error") {
-        setConversation((prev) => (prev ? { ...prev, status: "error" } : prev));
       }
+      return;
     }
+
+    if (e.type === "tool_result" && e.change) {
+      const change = e.change;
+      setItems((prev) => [...prev, { id: nextId(), kind: "change", change }]);
+      noteChange(change);
+    }
+    applyLiveEvent(e);
   }
 
   // Load (or note) the site's conversation on open. If one already exists,
@@ -337,10 +290,17 @@ export function AgentChatDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, siteId]);
 
-  // Abort any in-flight tail when the drawer closes or unmounts.
+  // Abort any in-flight tail AND any in-flight turn when the drawer closes
+  // or unmounts (worklist item 4).
   useEffect(() => {
-    if (!open) tailAbortRef.current?.abort();
-    return () => tailAbortRef.current?.abort();
+    if (!open) {
+      tailAbortRef.current?.abort();
+      sendAbortRef.current?.abort();
+    }
+    return () => {
+      tailAbortRef.current?.abort();
+      sendAbortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -357,6 +317,10 @@ export function AgentChatDrawer({
     setError(null);
     setDraft("");
     setItems((prev) => [...prev, { id: nextId(), kind: "user", text }]);
+    setLiveTurnState(initialTurnState());
+    lastTurnReasonRef.current = null;
+    const controller = new AbortController();
+    sendAbortRef.current = controller;
     try {
       let cid = conversationId;
       if (!cid) {
@@ -370,18 +334,32 @@ export function AgentChatDrawer({
       }
       await streamAgentEvents(`/api/sites/${siteId}/agent/conversations/${cid}/messages`, {
         body: { message: text },
+        signal: controller.signal,
         onEvent: (e) => handleTurnEvent(e as AgentTurnEvent, cid as string),
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Message failed to send.");
+      const aborted = (err as { name?: string } | null)?.name === "AbortError";
+      if (aborted) {
+        setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Stopped." }]);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Message failed to send.");
+      }
     } finally {
       setSending(false);
+      setLiveTurnState(null);
+      sendAbortRef.current = null;
     }
+  }
+
+  function stop() {
+    sendAbortRef.current?.abort();
   }
 
   if (!open) return null;
 
   const usage = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+  const usageText = `${usage.input + usage.output} tokens today`;
+  const showEmptyState = items.length === 0 && !liveTurn;
 
   return (
     <div
@@ -395,64 +373,30 @@ export function AgentChatDrawer({
         </Button>
       </div>
 
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-        {items.map((item) => {
-          if (item.kind === "user") {
-            return (
-              <div
-                key={item.id}
-                className="ml-auto max-w-[85%] rounded-lg bg-zinc-900 px-3 py-2 text-sm text-white"
-              >
-                {item.text}
-              </div>
-            );
-          }
-          if (item.kind === "assistant") {
-            return (
-              <div
-                key={item.id}
-                className="max-w-[85%] rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-800"
-              >
-                {item.text}
-              </div>
-            );
-          }
-          return (
-            <ChangeCard key={item.id} siteId={siteId} slug={slug} change={item.change} onSiteChanged={onSiteChanged} />
-          );
-        })}
-      </div>
+      {showEmptyState && <EmptyState onPreset={(preset) => send(preset)} />}
+
+      <ChatTranscript
+        items={items}
+        liveTurn={liveTurn}
+        siteId={siteId}
+        slug={slug}
+        onSiteChanged={onSiteChanged}
+        scrollRef={scrollContainerRef}
+        onScroll={handleTranscriptScroll}
+      />
 
       {error && <p className="px-4 pb-2 text-xs text-red-600">{error}</p>}
 
-      <div className="border-t border-zinc-200 p-4">
-        {conversation?.status === "error" && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="mb-2"
-            onClick={() => send("continue")}
-            disabled={sending}
-          >
-            Resume
-          </Button>
-        )}
-        <textarea
-          aria-label="Message"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={2}
-          placeholder="Tell the agent what to build or change…"
-          className="w-full rounded border border-zinc-300 p-2 text-sm"
-        />
-        <div className="mt-2 flex items-center justify-between">
-          <Button type="button" onClick={() => send()} disabled={sending || !draft.trim()}>
-            {sending ? "Sending…" : "Send"}
-          </Button>
-          <span className="text-xs text-zinc-400">{usage.input + usage.output} tokens today</span>
-        </div>
-      </div>
+      <Composer
+        draft={draft}
+        onDraftChange={setDraft}
+        onSend={() => send()}
+        onStop={stop}
+        sending={sending}
+        resumeVisible={conversation?.status === "error"}
+        onResume={() => send("continue")}
+        usageText={usageText}
+      />
     </div>
   );
 }
