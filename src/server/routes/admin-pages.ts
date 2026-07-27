@@ -238,8 +238,8 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         }
         const siteRow = siteRes.rows[0];
 
-        const pageRes = await pool.query<PageRecord>(
-          `SELECT title, blocks, seo, brand_tokens_override
+        const pageRes = await pool.query<PageRecord & { slug: string }>(
+          `SELECT title, blocks, seo, brand_tokens_override, slug
              FROM pages WHERE id = $1 AND site_id = $2`,
           [pageId, siteId],
         );
@@ -263,7 +263,15 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           plugins: [],
         };
 
-        const { html } = renderPage(site, page, { assets });
+        // Fix round 1 (reviewer extra #4): the tenant page route (page.ts)
+        // maps the URL path "/" <-> slug "home" (its `normalizeSlug`) — a
+        // literal `/${slug}` would give the home page the wrong canonical
+        // path ("/home" instead of "/"). Mirror that same mapping here so
+        // preview's canonical/og:url tags match what the page would get once
+        // published, instead of only matching every NON-home slug.
+        const previewPath = page.slug === "home" ? "/" : `/${page.slug}`;
+
+        const { html } = renderPage(site, page, { assets, path: previewPath });
         res.status(200).type("html").send(html);
       } catch (err) {
         next(err);

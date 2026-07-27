@@ -1,9 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
 import { setupAgentDb } from "../helpers/agent-db.js";
-import { adminAiAgentRouter } from "../../src/server/routes/admin-ai-agent.js";
+import { adminAiAgentRouter, sseSend } from "../../src/server/routes/admin-ai-agent.js";
 import { adminPagesRouter } from "../../src/server/routes/admin-pages.js";
+import { appendMessage } from "../../src/server/ai/agent/repo.js";
 import type { AgentTurnEvent } from "../../src/server/ai/agent/loop.js";
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
@@ -20,9 +24,75 @@ const sseParser = (res: request.Response, cb: (err: Error | null, body: string) 
   res.on("end", () => cb(null, data));
 };
 
+/**
+ * Fix round 1 (reviewer extra #2): grabs just the FIRST SSE frame off a raw
+ * socket, then destroys the client request — the tail route's poll/heartbeat
+ * timers never end the response on their own, so a normal buffered request
+ * would hang forever. supertest has no "read one chunk then abort" mode, so
+ * this uses `node:http` directly, per the reviewer's recipe.
+ */
+async function fetchFirstSseEvent(
+  appToServe: express.Express,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<unknown> {
+  const server: Server = appToServe.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const raw = await new Promise<string>((resolve, reject) => {
+      const req = http.get({ host: "127.0.0.1", port, path, headers }, (res) => {
+        let buffer = "";
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString("utf8");
+          if (buffer.includes("\n\n")) {
+            // Swallow the ECONNRESET/aborted-socket noise this destroy causes
+            // on the client side — we already have what we came for.
+            req.on("error", () => undefined);
+            req.destroy();
+            resolve(buffer);
+          }
+        });
+        res.on("error", reject);
+      });
+      req.on("error", (err) => {
+        reject(err);
+      });
+    });
+    const frame = raw.split("\n\n")[0];
+    const line = frame.startsWith("data:") ? frame.slice("data:".length).trim() : frame.trim();
+    return JSON.parse(line);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+// Ungated (no DB needed) — pure-function coverage of the fix-round-1
+// dead-socket guard, so it runs even where TEST_DATABASE_URL is unset.
+describe("sseSend dead-socket guard (fix round 1, reviewer extra #3)", () => {
+  it("no-ops instead of writing once the response has already ended", () => {
+    const write = vi.fn();
+    const fakeRes = { writableEnded: true, write } as unknown as Parameters<typeof sseSend>[0];
+    sseSend(fakeRes, { type: "x" });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("writes normally while the response is still open", () => {
+    const write = vi.fn();
+    const fakeRes = { writableEnded: false, write } as unknown as Parameters<typeof sseSend>[0];
+    sseSend(fakeRes, { type: "x" });
+    expect(write).toHaveBeenCalledWith('data: {"type":"x"}\n\n');
+  });
+});
+
 d("agent HTTP API (integration, Task 10)", () => {
   const db = setupAgentDb();
   let app: express.Express;
+  // Fix round 1: a SEPARATE app with no injected `enqueue`, so it exercises
+  // the router's real default (`getBoss().send(...)`) — jobs are never
+  // booted in this test process, so `getBoss()` throws and the default
+  // enqueue's catch path is what's under test.
+  let noEnqueueApp: express.Express;
   let enqueueSpy: ReturnType<typeof vi.fn>;
   let runTurnSpy: ReturnType<typeof vi.fn>;
 
@@ -50,6 +120,18 @@ d("agent HTTP API (integration, Task 10)", () => {
     );
     a.use("/api", adminPagesRouter({ pool: db.getPool() }));
     app = a;
+
+    const b = express();
+    b.use(express.json());
+    b.use(
+      "/api",
+      adminAiAgentRouter({
+        pool: db.getPool(),
+        runTurn: runTurnSpy,
+        messageRateLimit: { max: 200, windowMs: 60_000 },
+      }),
+    );
+    noEnqueueApp = b;
   }, 60_000);
 
   afterAll(async () => {
@@ -134,7 +216,7 @@ d("agent HTTP API (integration, Task 10)", () => {
     expect(res.body.details[0]).toHaveProperty("message");
   });
 
-  it("run:\"job\" on conversation create enqueues and returns 202", async () => {
+  it("run:\"job\" on conversation create enqueues and returns 202 with job_id", async () => {
     const site = await db.seedSite("agent-routes-create-job");
     enqueueSpy.mockClear();
     const res = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({
@@ -143,13 +225,14 @@ d("agent HTTP API (integration, Task 10)", () => {
     });
     expect(res.status).toBe(202);
     expect(res.body.queued).toBe(true);
+    expect(res.body.job_id).toBe("job-id-1");
     expect(enqueueSpy).toHaveBeenCalledWith({
       conversationId: res.body.conversation.id,
       siteId: site.id,
     });
   });
 
-  it("run:\"job\" on a message POST enqueues and returns 202", async () => {
+  it("run:\"job\" on a message POST enqueues and returns 202 with job_id", async () => {
     const site = await db.seedSite("agent-routes-msg-job");
     const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
     const conversationId = created.body.conversation.id;
@@ -160,8 +243,42 @@ d("agent HTTP API (integration, Task 10)", () => {
     ).send({ message: "keep going", run: "job" });
     expect(res.status).toBe(202);
     expect(res.body.queued).toBe(true);
+    expect(res.body.job_id).toBe("job-id-1");
     expect(enqueueSpy).toHaveBeenCalledTimes(1);
     expect(enqueueSpy).toHaveBeenCalledWith({ conversationId, siteId: site.id });
+  });
+
+  it("Fix round 1 — run:\"job\" with the DEFAULT enqueue (pg-boss unbooted) 503s instead of lying queued:true", async () => {
+    const site = await db.seedSite("agent-routes-default-enqueue-conv");
+    const res = await auth(
+      request(noEnqueueApp).post(`/api/sites/${site.id}/agent/conversations`),
+    ).send({ message: "build me a site", run: "job" });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("job queue unavailable");
+
+    // The conversation + seed message are still persisted — a retry works.
+    const listed = await auth(request(noEnqueueApp).get(`/api/sites/${site.id}/agent/conversations`));
+    expect(listed.body.conversations).toHaveLength(1);
+  });
+
+  it("Fix round 1 — run:\"job\" message POST with the DEFAULT enqueue (pg-boss unbooted) 503s", async () => {
+    const site = await db.seedSite("agent-routes-default-enqueue-msg");
+    const created = await auth(
+      request(noEnqueueApp).post(`/api/sites/${site.id}/agent/conversations`),
+    ).send({});
+    const conversationId = created.body.conversation.id;
+
+    const res = await auth(
+      request(noEnqueueApp).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+    ).send({ message: "keep going", run: "job" });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("job queue unavailable");
+
+    // The user message is still persisted despite the queue failure.
+    const detail = await auth(
+      request(noEnqueueApp).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    expect(detail.body.messages.some((m: { role: string }) => m.role === "user")).toBe(true);
   });
 
   it("404s a message POST for a conversation under the wrong site", async () => {
@@ -245,6 +362,61 @@ d("agent HTTP API (integration, Task 10)", () => {
 
     expect(res.body).toContain("turn_done");
     expect(res.body).toContain("\"reason\":\"error\"");
+  });
+
+  describe("GET .../events snapshot semantics (fix round 1, reviewer extra #2)", () => {
+    it("no cursor: snapshot carries the full (last-50) message backlog", async () => {
+      const site = await db.seedSite("agent-routes-events-nocursor");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const m1 = await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "one" }]);
+      const m2 = await appendMessage(db.getPool(), conversationId, "assistant", [{ type: "text", text: "two" }]);
+      const m3 = await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "three" }]);
+
+      const event = (await fetchFirstSseEvent(
+        app,
+        `/api/sites/${site.id}/agent/conversations/${conversationId}/events`,
+        { "X-Admin-Token": ADMIN_TOKEN },
+      )) as { type: string; conversation: { id: string }; messages: { id: string }[] };
+
+      expect(event.type).toBe("snapshot");
+      expect(event.conversation.id).toBe(conversationId);
+      expect(event.messages.map((m) => m.id)).toEqual([m1.id, m2.id, m3.id]);
+    });
+
+    it("with ?after=<id>: snapshot carries ONLY messages newer than the cursor", async () => {
+      const site = await db.seedSite("agent-routes-events-cursor");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const m1 = await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "one" }]);
+      const m2 = await appendMessage(db.getPool(), conversationId, "assistant", [{ type: "text", text: "two" }]);
+      const m3 = await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "three" }]);
+
+      const event = (await fetchFirstSseEvent(
+        app,
+        `/api/sites/${site.id}/agent/conversations/${conversationId}/events?after=${m1.id}`,
+        { "X-Admin-Token": ADMIN_TOKEN },
+      )) as { type: string; messages: { id: string }[] };
+
+      expect(event.type).toBe("snapshot");
+      const ids = event.messages.map((m) => m.id);
+      expect(ids).toEqual([m2.id, m3.id]);
+      expect(ids).not.toContain(m1.id);
+    });
+
+    it("authenticates via ?token= with no header (tokenFromQuery shim, same as preview)", async () => {
+      const site = await db.seedSite("agent-routes-events-token");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const event = (await fetchFirstSseEvent(
+        app,
+        `/api/sites/${site.id}/agent/conversations/${conversationId}/events?token=${ADMIN_TOKEN}`,
+      )) as { type: string };
+      expect(event.type).toBe("snapshot");
+    });
   });
 
   describe("draft preview (admin-pages.ts)", () => {

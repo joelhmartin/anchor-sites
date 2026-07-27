@@ -44,7 +44,17 @@ export function sseInit(res: Response): void {
   res.flushHeaders();
 }
 
+/**
+ * Fix round 1 (reviewer extra #3): guard against writing to a socket the
+ * client already tore down. `writableEnded` is set once `res.end()` has run
+ * (our own inline-route close handler + the tail route's cleanup both leave
+ * it unset on a client-initiated disconnect, so the inline route ALSO tracks
+ * its own `clientGone` flag — this guard is the second, cheaper line of
+ * defense that protects every caller, including the tail route's poll/heartbeat
+ * writes, for free).
+ */
 export function sseSend(res: Response, data: unknown): void {
+  if (res.writableEnded) return;
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
@@ -97,7 +107,15 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
     (async (input) => {
       try {
         return await getBoss().send(AGENT_TURN, input);
-      } catch {
+      } catch (err) {
+        // Fix round 1 (reviewer Important #1): getBoss() throws whenever
+        // pg-boss hasn't booted (JOBS_ENABLED=false, or booting failed at
+        // startup) — that's a real operational failure, not a quiet no-op.
+        // Log it here (codebase idiom: tagged console.error, matching
+        // src/server/jobs/index.ts:102 and admin-sites.ts's CRM best-effort
+        // logs — no route in this codebase uses req.log for this).
+        // eslint-disable-next-line no-console
+        console.error("[agent] pg-boss enqueue failed", err);
         return null;
       }
     });
@@ -134,8 +152,20 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         if (message) {
           await appendMessage(pool, conversation.id, "user", [{ type: "text", text: message }]);
           if (run === "job") {
-            await enqueue({ conversationId: conversation.id, siteId });
-            res.status(202).json({ conversation, queued: true });
+            const jobId = await enqueue({ conversationId: conversation.id, siteId });
+            if (!jobId) {
+              // Fix round 1: don't lie about queued:true when enqueue
+              // silently failed. The conversation + message are already
+              // persisted, so a retry (POST .../messages, run:"job") picks
+              // up right where this left off.
+              console.error("[agent] job enqueue returned no id — reporting 503", {
+                conversationId: conversation.id,
+                siteId,
+              });
+              res.status(503).json({ error: "job queue unavailable" });
+              return;
+            }
+            res.status(202).json({ conversation, queued: true, job_id: jobId });
             return;
           }
         }
@@ -220,10 +250,30 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         await appendMessage(pool, conversationId, "user", [{ type: "text", text: message }]);
 
         if (run === "job") {
-          await enqueue({ conversationId, siteId });
-          res.status(202).json({ queued: true });
+          const jobId = await enqueue({ conversationId, siteId });
+          if (!jobId) {
+            console.error("[agent] job enqueue returned no id — reporting 503", {
+              conversationId,
+              siteId,
+            });
+            res.status(503).json({ error: "job queue unavailable" });
+            return;
+          }
+          res.status(202).json({ queued: true, job_id: jobId });
           return;
         }
+
+        // Fix round 1 (reviewer extra #3): if the client disconnects mid-turn,
+        // `sseSend` already no-ops on a torn-down `res` (see its comment), but
+        // the turn ITSELF must keep running — it's doing real, persisted work
+        // (page writes, revisions) that shouldn't die just because a tab
+        // closed, and a `promoted` turn's continuation job still needs to be
+        // enqueued regardless. `clientGone` only gates the (now-pointless)
+        // SSE writes; it never short-circuits `runTurn` or the enqueue below.
+        let clientGone = false;
+        req.on("close", () => {
+          clientGone = true;
+        });
 
         sseInit(res);
         try {
@@ -231,16 +281,18 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
             pool,
             conversationId,
             siteId,
-            onEvent: (e) => sseSend(res, e),
+            onEvent: (e) => {
+              if (!clientGone) sseSend(res, e);
+            },
             limits: { maxToolCalls: 15, deadlineMs: 45_000 },
           });
           if (result.reason === "promoted") {
             await enqueue({ conversationId, siteId });
           }
         } catch {
-          sseSend(res, { type: "turn_done", reason: "error", message: "internal" });
+          if (!clientGone) sseSend(res, { type: "turn_done", reason: "error", message: "internal" });
         } finally {
-          res.end();
+          if (!clientGone) res.end();
         }
       } catch (err) {
         next(err);
