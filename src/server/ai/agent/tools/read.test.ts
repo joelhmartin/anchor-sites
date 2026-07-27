@@ -14,6 +14,7 @@ const runId = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 d("agent read tools", () => {
   let siteId: string;
+  let siteSlug: string;
   let otherSiteId: string;
   let pageId: string;
   let otherPageId: string;
@@ -21,7 +22,7 @@ d("agent read tools", () => {
 
   beforeAll(async () => {
     await db.runMigrations();
-    siteId = (await db.seedSite(`t4-read-a-${runId}`)).id;
+    ({ id: siteId, slug: siteSlug } = await db.seedSite(`t4-read-a-${runId}`));
     otherSiteId = (await db.seedSite(`t4-read-b-${runId}`)).id;
     pageId = (await db.seedPage(siteId, "home", [{ id: "b1", type: "hero", props: {} }])).id;
     otherPageId = (await db.seedPage(otherSiteId, "home", [])).id;
@@ -46,7 +47,7 @@ d("agent read tools", () => {
         templates: unknown[];
       };
       expect(data.site.id).toBe(siteId);
-      expect(data.site.slug).toBe(`t4-read-a-${runId}`);
+      expect(data.site.slug).toBe(siteSlug);
       expect(data.pages.map((p) => p.id)).toContain(pageId);
       expect(data.pages.map((p) => p.id)).not.toContain(otherPageId);
       expect(typeof data.media_count).toBe("number");
