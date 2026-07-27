@@ -91,6 +91,37 @@ export function AgentChatDrawer({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
 
+  // Dialog semantics (bot-review fix wave, item B): the drawer is a modal
+  // overlay but was a bare div with no role/keyboard/focus handling. Minimal
+  // fix, no Radix rework — role="dialog"/aria-modal below, plus this effect:
+  // Escape closes it, the composer textarea gets focus on open, and focus
+  // returns to whatever had it before the drawer opened once it closes.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const textarea = containerRef.current?.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Message"]',
+    );
+    textarea?.focus();
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [open]);
+
   function nextId(): string {
     idCounter.current += 1;
     return `local-${idCounter.current}`;
@@ -279,6 +310,11 @@ export function AgentChatDrawer({
           } catch {
             // history hydration is best-effort — the drawer still works for new sends
           }
+          // Bot-review fix wave (CodeRabbit, hydration-catch unmount hole):
+          // this catch previously fell through to `startTail` unconditionally
+          // — mirror the other awaits in this effect and bail if the drawer
+          // closed/unmounted while the hydration fetch was in flight.
+          if (cancelled) return;
           if (autoTail) startTail(existing.id, lastMessageIdRef.current);
         }
       } catch (err) {
@@ -363,6 +399,15 @@ export function AgentChatDrawer({
       const aborted = (err as { name?: string } | null)?.name === "AbortError";
       if (aborted) {
         setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Stopped." }]);
+      } else if (err instanceof ApiError && err.status === 409) {
+        // Serialized-turn guard (bot-review fix wave item 1): the route
+        // rejects a second concurrent turn with 409 rather than interleaving
+        // it into the running one. The composer re-enables itself via this
+        // catch returning normally into `finally` below.
+        setItems((prev) => [
+          ...prev,
+          { id: nextId(), kind: "system", text: "A build is already running — wait for it to finish." },
+        ]);
       } else {
         setError(err instanceof ApiError ? err.message : "Message failed to send.");
       }
@@ -387,6 +432,9 @@ export function AgentChatDrawer({
 
   return (
     <div
+      ref={containerRef}
+      role="dialog"
+      aria-modal="true"
       aria-label="Studio chat"
       className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-zinc-200 bg-white shadow-xl max-md:inset-0 max-md:h-[100dvh] max-md:max-w-none max-md:border-l-0"
     >

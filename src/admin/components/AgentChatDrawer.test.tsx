@@ -655,4 +655,69 @@ describe("AgentChatDrawer (P-T11)", () => {
     // Send is available again — the turn is no longer "in flight".
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
+
+  // ── Bot-review fix wave ──
+
+  it("has dialog semantics, focuses the composer on open, closes on Escape, and restores focus on close (item B)", async () => {
+    mockFreshConversationFetch();
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    const { onClose, rerender } = renderDrawer();
+
+    const dialog = screen.getByRole("dialog", { name: "Studio chat" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+
+    const textarea = await screen.findByLabelText("Message");
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // Simulate the parent actually closing the drawer in response.
+    rerender(
+      <MemoryRouter>
+        <AgentChatDrawer
+          siteId="s1"
+          slug="acme"
+          open={false}
+          onClose={onClose}
+          onSiteChanged={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
+  it("renders a system line and re-enables the composer on a 409 (turn already running) (item 1)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({ conversations: [] });
+      }
+      if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
+        return json(NEW_CONVERSATION, 201);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    streamAgentEvents.mockImplementationOnce(async () => {
+      const { ApiError } = await import("../lib/apiFetch.js");
+      throw new ApiError("agent stream request failed (409)", 409, { error: "turn already running" });
+    });
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("A build is already running — wait for it to finish.")).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+  });
 });
