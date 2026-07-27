@@ -71,6 +71,7 @@ export function AgentChatDrawer({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastTurnDelta, setLastTurnDelta] = useState<{ input: number; output: number } | null>(null);
 
   const idCounter = useRef(0);
   // Id of the newest PERSISTED message we've already displayed (from a
@@ -321,6 +322,7 @@ export function AgentChatDrawer({
     lastTurnReasonRef.current = null;
     const controller = new AbortController();
     sendAbortRef.current = controller;
+    const usageBefore = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
     try {
       let cid = conversationId;
       if (!cid) {
@@ -337,6 +339,24 @@ export function AgentChatDrawer({
         signal: controller.signal,
         onEvent: (e) => handleTurnEvent(e as AgentTurnEvent, cid as string),
       });
+
+      // Best-effort per-turn token-usage delta (worklist item 10). Skipped
+      // for a promoted turn — the tail's own `snapshot` already refreshes
+      // `conversation` (see `handleTailEvent`), and racing a second fetch
+      // here could clobber that with stale data.
+      if (cid && lastTurnReasonRef.current && lastTurnReasonRef.current !== "promoted") {
+        try {
+          const detail = await apiFetch<{ conversation: AiConversation }>(
+            `/api/sites/${siteId}/agent/conversations/${cid}`,
+          );
+          setConversation(detail.conversation);
+          const usageAfter = detail.conversation.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+          const delta = { input: usageAfter.input - usageBefore.input, output: usageAfter.output - usageBefore.output };
+          if (delta.input + delta.output > 0) setLastTurnDelta(delta);
+        } catch {
+          // best-effort — the footer just won't show a delta this turn
+        }
+      }
     } catch (err) {
       const aborted = (err as { name?: string } | null)?.name === "AbortError";
       if (aborted) {
@@ -358,13 +378,15 @@ export function AgentChatDrawer({
   if (!open) return null;
 
   const usage = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
-  const usageText = `${usage.input + usage.output} tokens today`;
+  const totalToday = usage.input + usage.output;
+  const deltaTotal = lastTurnDelta ? lastTurnDelta.input + lastTurnDelta.output : null;
+  const usageText = deltaTotal ? `${totalToday} tokens today · +${deltaTotal} this turn` : `${totalToday} tokens today`;
   const showEmptyState = items.length === 0 && !liveTurn;
 
   return (
     <div
       aria-label="Studio chat"
-      className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-zinc-200 bg-white shadow-xl"
+      className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-zinc-200 bg-white shadow-xl max-md:inset-0 max-md:h-[100dvh] max-md:max-w-none max-md:border-l-0"
     >
       <div className="flex items-center justify-between border-b border-zinc-200 p-4">
         <h2 className="text-sm font-semibold text-zinc-900">Studio chat</h2>
