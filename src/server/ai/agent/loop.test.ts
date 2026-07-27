@@ -358,4 +358,64 @@ d("runAgentTurn", () => {
       { role: "user", content: [{ type: "text", text: "real request" }] },
     ]);
   });
+
+  it("widens past the 40-row window to the last user row when a long (job-path-shaped) turn pushes it out", async () => {
+    const site = await db.seedSite(`loop-widen-${runId}`);
+    await db.seedPage(site.id, "home", [{ id: "b1", type: "rich-text", props: { html: "<p>Hi</p>" } }]);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    // Shaped like the job path mid-turn: one user row, then 25 assistant/tool
+    // pairs (50 rows) already accumulated by earlier iterations of THIS turn
+    // (maxToolCalls=30 can persist up to 1 + 2*30 = 61 rows in one turn). The
+    // trailing 40-row window (rows 11-60 here) contains zero DB `user` rows,
+    // so the naive/round-1-fixed trim would return `[]` -> an empty/invalid
+    // `messages` array -> the API 400s. This asserts the widen path instead
+    // finds the sole user row and sends the full history starting there.
+    await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "build the whole site" }]);
+    for (let i = 0; i < 25; i++) {
+      await appendMessage(db.getPool(), conv.id, "assistant", [
+        { type: "tool_use", id: `w${i}`, name: "get_site_overview", input: {} },
+      ]);
+      await appendMessage(db.getPool(), conv.id, "tool", [
+        { type: "tool_result", tool_use_id: `w${i}`, content: "ok" },
+      ]);
+    }
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({ content: [textBlock("done")], stop_reason: "end_turn", usage: usage(10, 5) }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ reason: "end_turn", toolCalls: 0 });
+    expect(create).toHaveBeenCalledTimes(1);
+    const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
+    expect(payload.messages.length).toBeGreaterThan(0);
+    expect(payload.messages[0]).toEqual({
+      role: "user", content: [{ type: "text", text: "build the whole site" }],
+    });
+    expect(payload.messages).toHaveLength(51); // 1 user + 25*(assistant, tool)
+  });
+
+  it("reports a turn error instead of calling the API when a conversation has no user row at all", async () => {
+    const site = await db.seedSite(`loop-nouser-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+    // Deliberately malformed: no user row has ever been persisted.
+    await appendMessage(db.getPool(), conv.id, "assistant", [{ type: "text", text: "orphaned" }]);
+
+    const { client, create } = makeFakeClient([]);
+    const events: AgentTurnEvent[] = [];
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      onEvent: (e) => events.push(e),
+    });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(result).toEqual({ reason: "error", toolCalls: 0 });
+    expect(events).toEqual([
+      { type: "turn_done", reason: "error", message: "conversation has no user message" },
+    ]);
+  });
 });

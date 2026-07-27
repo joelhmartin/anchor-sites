@@ -5,6 +5,7 @@ import { resolveAiMode } from "../config.js";
 import { buildBlockCatalog } from "../catalog.js";
 import {
   getConversation, appendMessage, listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
+  type AiMessage,
 } from "./repo.js";
 import { buildAgentToolDefs, executeAgentTool } from "./tools/index.js";
 import type { AgentChangeEvent, AgentToolCtx } from "./tools/types.js";
@@ -56,6 +57,14 @@ type ToolResultContent = {
   is_error?: boolean;
 };
 
+function mapRowsToApiMessages(rows: AiMessage[]): Anthropic.MessageParam[] {
+  const mapped = rows.map((m) => ({
+    role: m.role === "tool" ? "user" : m.role,
+    content: m.content,
+  }));
+  return mapped as unknown as Anthropic.MessageParam[];
+}
+
 /**
  * Rebuild the model-facing message list from persisted DB rows. DB roles map
  * 1:1 onto API roles except `tool`, whose `tool_result` blocks ride inside an
@@ -63,21 +72,43 @@ type ToolResultContent = {
  * `tool` role). Content is the raw stored content-block array, unmodified.
  * If the trailing `limit` window starts mid-conversation, the API requires
  * the first message to be `user`-role — drop whatever leads until it is.
+ *
+ * Trim on the DB role, BEFORE mapping tool -> user: a window that starts on a
+ * `tool` row would otherwise map to "user" and survive the trim, handing the
+ * API a user turn of bare tool_result blocks whose tool_use_id has no
+ * matching tool_use in this truncated window (the assistant message that
+ * issued it fell off the front) — a guaranteed 400 from the API.
+ *
+ * A single turn can persist up to `1 + 2*maxToolCalls` rows (one user row,
+ * then an assistant+tool pair per tool call — up to 61 rows at the job path's
+ * default maxToolCalls of 30), which can push the triggering user row out of
+ * a fixed 40-row tail entirely. When that trailing window has no DB `user`
+ * row at all, widen to the full (turn-bounded, not unbounded — conversations
+ * don't run forever) history and slice from the LAST user row onward: that
+ * row is what started the current turn, and only its own assistant/tool
+ * exchange has accumulated since. Returns `null` if the conversation
+ * genuinely has no user row anywhere (caller reports this as a turn error
+ * instead of sending the API an empty/invalid `messages` array).
  */
-async function buildApiMessages(pool: Pool, conversationId: string): Promise<Anthropic.MessageParam[]> {
+async function buildApiMessages(
+  pool: Pool, conversationId: string,
+): Promise<Anthropic.MessageParam[] | null> {
   const rows = await listMessages(pool, conversationId, { limit: 40 });
-  // Trim on the DB role, BEFORE mapping tool -> user: a window that starts on
-  // a `tool` row would otherwise map to "user" and survive the trim, handing
-  // the API a user turn of bare tool_result blocks whose tool_use_id has no
-  // matching tool_use in this truncated window (the assistant message that
-  // issued it fell off the front) — a guaranteed 400 from the API.
-  const firstUserIdx = rows.findIndex((m) => m.role === "user");
-  const trimmedRows = firstUserIdx === -1 ? [] : rows.slice(firstUserIdx);
-  const mapped = trimmedRows.map((m) => ({
-    role: m.role === "tool" ? "user" : m.role,
-    content: m.content,
-  }));
-  return mapped as unknown as Anthropic.MessageParam[];
+  const windowUserIdx = rows.findIndex((m) => m.role === "user");
+  if (windowUserIdx !== -1) {
+    return mapRowsToApiMessages(rows.slice(windowUserIdx));
+  }
+
+  const allRows = await listMessages(pool, conversationId);
+  let lastUserIdx = -1;
+  for (let i = allRows.length - 1; i >= 0; i--) {
+    if (allRows[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  if (lastUserIdx === -1) return null;
+  return mapRowsToApiMessages(allRows.slice(lastUserIdx));
 }
 
 async function persistAssistantText(
@@ -158,6 +189,7 @@ async function runStubTurn(params: {
       // does, the turn should report the failure, not a cheerful lie.
       const text = `Stub mode: failed to create the starter Home page (${result.error}).`;
       await persistAssistantText(pool, conversationId, text, onEvent);
+      await setConversationStatus(pool, conversationId, "error");
       onEvent({ type: "turn_done", reason: "error", message: text });
       return { reason: "error", toolCalls: 1 };
     }
@@ -235,6 +267,14 @@ export async function runAgentTurn(input: {
     }
 
     const messages = await buildApiMessages(pool, conversationId);
+    if (messages === null) {
+      // Shouldn't happen in practice — the caller always persists a
+      // triggering user message before calling runAgentTurn — but a
+      // conversation with no user row anywhere has nothing valid to send.
+      const text = "conversation has no user message";
+      onEvent({ type: "turn_done", reason: "error", message: text });
+      return { reason: "error", toolCalls };
+    }
     const { message } = await runMessage(
       { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
       { client: input.client, env },
