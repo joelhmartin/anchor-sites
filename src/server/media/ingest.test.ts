@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Storage } from "@google-cloud/storage";
 import { setupAgentDb } from "../../../tests/helpers/agent-db.js";
 import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
@@ -112,5 +112,95 @@ d("ingestImageFromUrl", () => {
         { fetchFn: fakeFetch(200, "text/html", Buffer.from("<html>")), storage, enqueue: async () => null },
       ),
     ).rejects.toThrow(/unsupported.*content-type/i);
+  });
+});
+
+// Important 4 (SSRF guard): `import_image` fetches an operator/AI-supplied
+// URL server-side — these prove the guard blocks the classic SSRF targets
+// BEFORE any network call happens (the fetch spy asserts that), while a
+// normal https host still goes through untouched.
+d("ingestImageFromUrl SSRF guard (Important 4)", () => {
+  let siteId: string;
+
+  beforeAll(async () => {
+    await db.runMigrations();
+    siteId = (await db.seedSite("agent-ingest-ssrf")).id;
+  });
+  afterAll(() => db.teardown());
+
+  it("rejects a plain http:// url", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "http://example.com/photo.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/https/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an RFC-1918 private IP literal", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://10.0.0.5/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a link-local IP literal (covers the GCP metadata address)", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://169.254.169.254/computeMetadata/v1/", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects the GCP metadata hostname", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://metadata.google.internal/computeMetadata/v1/", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects localhost", async () => {
+    const { storage } = fakeStorage();
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url: "https://localhost/x.png", alt: "x" },
+        { fetchFn: fetchSpy, storage, enqueue: async () => null },
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("allows a normal https host through to the fetch", async () => {
+    const { storage, calls } = fakeStorage();
+    const result = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url: "https://images.example.com/photo.png", alt: "a photo" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+    expect(result.asset_id).toBeTruthy();
+    expect(calls).toHaveLength(1);
   });
 });

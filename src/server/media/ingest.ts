@@ -1,3 +1,4 @@
+import net from "node:net";
 import type { Pool } from "pg";
 import { getStorage, MEDIA_BUCKET, extForContentType } from "./storage.js";
 import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
@@ -9,7 +10,61 @@ import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
  * :106-123), so hydration Just Works.
  *
  * Download happens BEFORE the insert so a failed fetch leaves no orphan row.
+ *
+ * Important 4 (SSRF guard): `input.url` is operator/AI-supplied (the agent
+ * can pass ANY url to `import_image`, not just one it got back from
+ * `search_stock_images`) and this function fetches it server-side — without
+ * a guard, an instruction like "import the image at
+ * https://metadata.google.internal/..." would have the server itself make a
+ * request to internal/cloud-metadata infrastructure and hand the response
+ * back as a "downloaded image". `assertSafeImageUrl` below is checked before
+ * any network call. It lives here (not in tools/assets.ts) so every caller
+ * of `ingestImageFromUrl` is safe-by-default, not just the one agent tool.
  */
+
+function isDisallowedIngestHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/, "").replace(/\]$/, "").toLowerCase();
+
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h.endsWith(".local")) return true;
+  if (h.endsWith(".internal")) return true; // e.g. metadata.google.internal
+
+  const ipVersion = net.isIP(h);
+  if (ipVersion === 4) {
+    const [a, b] = h.split(".").map(Number);
+    if (a === 127) return true; // loopback
+    if (a === 10) return true; // RFC1918
+    if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
+    if (a === 192 && b === 168) return true; // RFC1918
+    if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata IP)
+    if (a === 0) return true; // "this network"
+    return false;
+  }
+  if (ipVersion === 6) {
+    if (h === "::1") return true; // loopback
+    if (h.startsWith("fe80:")) return true; // link-local
+    if (h.startsWith("fc") || h.startsWith("fd")) return true; // unique local (fc00::/7)
+    return false;
+  }
+  // Not a literal IP at all — an ordinary DNS hostname, allowed.
+  return false;
+}
+
+/** Throws if `rawUrl` isn't a safe target for a server-side image fetch. */
+export function assertSafeImageUrl(rawUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("invalid image url");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("image url must use https");
+  }
+  if (isDisallowedIngestHost(parsed.hostname)) {
+    throw new Error("image url host is not allowed");
+  }
+}
 
 export type IngestDeps = {
   fetchFn?: typeof fetch;
@@ -22,6 +77,8 @@ export async function ingestImageFromUrl(
   input: { siteId: string; url: string; alt: string; contentType?: string },
   deps: IngestDeps = {},
 ): Promise<{ asset_id: string; gcs_key: string }> {
+  assertSafeImageUrl(input.url);
+
   const fetchFn = deps.fetchFn ?? fetch;
   const res = await fetchFn(input.url);
   if (!res.ok) {
