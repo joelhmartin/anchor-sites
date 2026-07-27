@@ -167,7 +167,12 @@ export function AgentChatDrawer({
   const [error, setError] = useState<string | null>(null);
 
   const idCounter = useRef(0);
+  // Id of the newest PERSISTED message we've already displayed (from a
+  // history hydration or a tailed `message` event) — used both as the
+  // `after=` cursor for starting a tail and, via `seenMessageIdsRef`, to
+  // dedupe messages a tail might re-deliver.
   const lastMessageIdRef = useRef<string | null>(null);
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const tailAbortRef = useRef<AbortController | null>(null);
 
   function nextId(): string {
@@ -178,6 +183,37 @@ export function AgentChatDrawer({
   function noteChange(change: AgentChangeEvent) {
     onSiteChanged();
     onChangeEvent?.(change);
+  }
+
+  /**
+   * Replace the transcript with the authoritative persisted history. Used
+   * for (a) hydrating an existing conversation's history on open/reopen,
+   * and (b) a tail's initial `snapshot` — which, on a mid-turn promotion,
+   * necessarily re-includes everything already shown live via
+   * `handleTurnEvent` (the client has no message ids to scope `after=` to
+   * until it has hydrated at least once). Replacing rather than appending
+   * means that replay can never render alongside the transient local items
+   * it supersedes, so no duplicate bubbles/cards. Does NOT fire
+   * `onSiteChanged`/`onChangeEvent` — those already fired live for
+   * anything genuinely new; a replay of history a user is (re)opening to
+   * read shouldn't re-trigger site-changed side effects.
+   */
+  function hydrateFromMessages(messages: AiMessage[]) {
+    setItems(messages.flatMap(deriveItemsFromMessage));
+    seenMessageIdsRef.current = new Set(messages.map((m) => m.id));
+    const last = messages[messages.length - 1];
+    if (last) lastMessageIdRef.current = last.id;
+  }
+
+  /** Append one newly-tailed persisted message, deduped by id. */
+  function appendPersistedMessage(message: AiMessage) {
+    if (seenMessageIdsRef.current.has(message.id)) return;
+    seenMessageIdsRef.current.add(message.id);
+    lastMessageIdRef.current = message.id;
+    const derived = deriveItemsFromMessage(message);
+    if (derived.length === 0) return;
+    setItems((prev) => [...prev, ...derived]);
+    for (const item of derived) if (item.kind === "change") noteChange(item.change);
   }
 
   function startTail(id: string, afterId: string | null) {
@@ -196,16 +232,9 @@ export function AgentChatDrawer({
   function handleTailEvent(e: AgentTailEvent) {
     if (e.type === "snapshot") {
       setConversation(e.conversation);
-      const derived = e.messages.flatMap(deriveItemsFromMessage);
-      setItems((prev) => [...prev, ...derived]);
-      const last = e.messages[e.messages.length - 1];
-      if (last) lastMessageIdRef.current = last.id;
-      for (const item of derived) if (item.kind === "change") noteChange(item.change);
+      hydrateFromMessages(e.messages);
     } else if (e.type === "message") {
-      const derived = deriveItemsFromMessage(e.message);
-      setItems((prev) => [...prev, ...derived]);
-      lastMessageIdRef.current = e.message.id;
-      for (const item of derived) if (item.kind === "change") noteChange(item.change);
+      appendPersistedMessage(e.message);
     } else if (e.type === "status") {
       setConversation((prev) => (prev ? { ...prev, status: e.status } : prev));
     }
@@ -229,8 +258,11 @@ export function AgentChatDrawer({
     }
   }
 
-  // Load (or note) the site's conversation on open; optionally start
-  // tailing it immediately (autoTail — the wizard's job-run build path).
+  // Load (or note) the site's conversation on open. If one already exists,
+  // hydrate the transcript from its persisted history (GET .../:id →
+  // { conversation, messages }) BEFORE wiring up any live sends, so
+  // reopening the drawer doesn't show a blank transcript. autoTail then
+  // additionally starts a live tail from that hydrated point on.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -244,7 +276,17 @@ export function AgentChatDrawer({
         if (existing) {
           setConversationId(existing.id);
           setConversation(existing);
-          if (autoTail) startTail(existing.id, null);
+          try {
+            const detail = await apiFetch<{ conversation: AiConversation; messages: AiMessage[] }>(
+              `/api/sites/${siteId}/agent/conversations/${existing.id}`,
+            );
+            if (cancelled) return;
+            setConversation(detail.conversation);
+            hydrateFromMessages(detail.messages);
+          } catch {
+            // history hydration is best-effort — the drawer still works for new sends
+          }
+          if (autoTail) startTail(existing.id, lastMessageIdRef.current);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError ? err.message : "Couldn't load the conversation.");

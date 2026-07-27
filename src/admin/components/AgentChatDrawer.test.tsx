@@ -21,9 +21,55 @@ const SCRIPTED_EVENTS: AgentTurnEvent[] = [
   { type: "turn_done", reason: "end_turn" },
 ];
 
+// Same turn, but promoted to a background job mid-turn (deadline hit after
+// the first tool call) — the client must then tail `/events` to keep
+// filling in, WITHOUT re-rendering what it already showed live.
+const PROMOTED_EVENTS: AgentTurnEvent[] = [
+  { type: "assistant_text", text: "Working…" },
+  {
+    type: "tool_result",
+    name: "update_page",
+    ok: true,
+    change: { kind: "page_updated", page_id: "p1", revision_id: "r1", summary: "1 updated" },
+  },
+  { type: "turn_done", reason: "promoted" },
+];
+
+// The tail's initial `snapshot` on a fresh (never-hydrated) conversation
+// necessarily replays the WHOLE persisted history, including everything
+// this turn already rendered live above — this is exactly what the
+// "hydrate = replace" fix must dedupe against.
+const PROMOTED_SNAPSHOT = {
+  type: "snapshot",
+  conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} },
+  messages: [
+    { id: "m1", conversation_id: "c1", role: "user", content: [{ type: "text", text: "Build a homepage" }], created_at: "t1" },
+    { id: "m2", conversation_id: "c1", role: "assistant", content: [{ type: "text", text: "Working…" }], created_at: "t2" },
+    {
+      id: "m3",
+      conversation_id: "c1",
+      role: "tool",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "toolu_1",
+          content: JSON.stringify({ page_id: "p1", revision_id: "r1", diff: { summary: "1 updated" } }),
+          is_error: false,
+        },
+      ],
+      created_at: "t3",
+    },
+  ],
+};
+
+// `eventScripts` maps a `streamAgentEvents` path to the events it should
+// synchronously replay — lets each test drive both the inline "messages"
+// stream and, when relevant, the tailed "events" stream distinctly.
+let eventScripts: Record<string, unknown[]>;
+
 const streamAgentEvents = vi.fn(
-  async (_path: string, opts: { onEvent: (e: Record<string, unknown>) => void }) => {
-    for (const e of SCRIPTED_EVENTS) opts.onEvent(e as unknown as Record<string, unknown>);
+  async (path: string, opts: { onEvent: (e: Record<string, unknown>) => void }) => {
+    for (const e of eventScripts[path] ?? []) opts.onEvent(e as Record<string, unknown>);
   },
 );
 
@@ -56,11 +102,16 @@ function renderDrawer(props: Partial<ComponentProps<typeof AgentChatDrawer>> = {
   return { ...utils, onClose, onSiteChanged };
 }
 
+const NEW_CONVERSATION = {
+  conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} },
+};
+
 describe("AgentChatDrawer (P-T11)", () => {
   const realFetch = global.fetch;
 
   beforeEach(() => {
     setAdminToken("tok");
+    eventScripts = {};
     streamAgentEvents.mockClear();
   });
 
@@ -72,6 +123,7 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("sends a message, renders the assistant bubble + change card, and clears the textarea", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = SCRIPTED_EVENTS;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -79,10 +131,7 @@ describe("AgentChatDrawer (P-T11)", () => {
         return json({ conversations: [] });
       }
       if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
-        return json(
-          { conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} } },
-          201,
-        );
+        return json(NEW_CONVERSATION, 201);
       }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
@@ -108,6 +157,7 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("Revert calls the restore route and fires onSiteChanged", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = SCRIPTED_EVENTS;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -115,10 +165,7 @@ describe("AgentChatDrawer (P-T11)", () => {
         return json({ conversations: [] });
       }
       if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
-        return json(
-          { conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} } },
-          201,
-        );
+        return json(NEW_CONVERSATION, 201);
       }
       if (url === "/api/sites/s1/pages/p1/revisions/r1/restore" && method === "POST") {
         return json({ restored_from: "r1", revision: { id: "r2", created_at: "2026-07-27T00:00:00Z" } });
@@ -145,5 +192,97 @@ describe("AgentChatDrawer (P-T11)", () => {
       ),
     );
     await waitFor(() => expect(onSiteChanged).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not duplicate bubbles/cards when a turn is promoted mid-turn and the tail replays history (fix round 1, finding 1)", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = PROMOTED_EVENTS;
+    eventScripts["/api/sites/s1/agent/conversations/c1/events"] = [PROMOTED_SNAPSHOT];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({ conversations: [] });
+      }
+      if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
+        return json(NEW_CONVERSATION, 201);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { onSiteChanged } = renderDrawer();
+
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // The promotion triggers a second streamAgentEvents call (the tail).
+    await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(2));
+    expect(streamAgentEvents.mock.calls[1][0]).toBe("/api/sites/s1/agent/conversations/c1/events");
+
+    // The tail's snapshot replays the SAME turn already shown live — must
+    // render exactly once, not twice.
+    await waitFor(() => expect(screen.getAllByText("Working…")).toHaveLength(1));
+    expect(screen.getAllByText("1 updated")).toHaveLength(1);
+    expect(screen.getAllByText("Build a homepage")).toHaveLength(1);
+
+    // The live tool_result already fired onSiteChanged once; the replayed
+    // history must not fire it again.
+    expect(onSiteChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("hydrates the transcript from persisted history when reopening on an existing conversation (fix round 1, finding 2)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({
+          conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} }],
+        });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9" && method === "GET") {
+        return json({
+          conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+          messages: [
+            { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
+            {
+              id: "m2",
+              conversation_id: "c9",
+              role: "assistant",
+              content: [{ type: "text", text: "Hi there" }],
+              created_at: "t2",
+            },
+            {
+              id: "m3",
+              conversation_id: "c9",
+              role: "tool",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "t1",
+                  content: JSON.stringify({ page_id: "p9", revision_id: "r9", diff: { summary: "9 updated" } }),
+                  is_error: false,
+                },
+              ],
+              created_at: "t3",
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { onSiteChanged } = renderDrawer();
+
+    await waitFor(() => expect(screen.getByText("Hi there")).toBeTruthy());
+    expect(screen.getByText("Hello")).toBeTruthy();
+    expect(screen.getByText("9 updated")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Revert" })).toBeTruthy();
+
+    // History hydration must not itself trigger a site-changed refresh or
+    // start a live tail (no autoTail was requested).
+    expect(onSiteChanged).not.toHaveBeenCalled();
+    expect(streamAgentEvents).not.toHaveBeenCalled();
   });
 });
