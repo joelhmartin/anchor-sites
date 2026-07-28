@@ -23,7 +23,14 @@ import type { GithubClient, TreeEntry } from "../git/client.js";
 import { computeGitBlobSha } from "../git/client.js";
 import { handleGitExport } from "./git-export.js";
 
-/** Minimal fake client — enough for the exporter to run to completion. */
+/**
+ * Minimal fake client — enough for the exporter to run to completion.
+ * Passing the head COMMIT sha as `createTree`'s base tree (rather than a
+ * separate tree object sha) mirrors the real client/API — empirically
+ * verified against the live API (bot-review fix round 1) that GitHub
+ * resolves a commit sha to its tree for both reads and `base_tree` — so this
+ * fake keys its tree map by commit sha directly, same as the real thing.
+ */
 class FakeGithubClient implements GithubClient {
   repo = "acme/content";
   branch = "main";
@@ -47,8 +54,8 @@ class FakeGithubClient implements GithubClient {
   async createBlob(content: string) {
     return computeGitBlobSha(content);
   }
-  async createTree(baseTreeSha: string, entries: { path: string; sha: string | null }[]) {
-    const base = this.trees.get(baseTreeSha) ?? [];
+  async createTree(baseTreeSha: string | null, entries: { path: string; sha: string | null }[]) {
+    const base = baseTreeSha !== null ? this.trees.get(baseTreeSha) ?? [] : [];
     const merged = new Map(base.map((e) => [e.path, e] as const));
     for (const e of entries) {
       if (e.sha === null) merged.delete(e.path);
@@ -58,13 +65,16 @@ class FakeGithubClient implements GithubClient {
     this.trees.set(treeSha, [...merged.values()]);
     return treeSha;
   }
-  async createCommit(message: string, treeSha: string) {
+  async createCommit(message: string, treeSha: string, _parentSha: string | null) {
     this.createCommitCalls.push(message);
     const commitSha = `commit-${++this.counter}`;
     this.trees.set(commitSha, this.trees.get(treeSha) ?? []);
     return commitSha;
   }
   async updateRef(_branch: string, sha: string) {
+    this.headSha = sha;
+  }
+  async createRef(_branch: string, sha: string) {
     this.headSha = sha;
   }
   async createCommitComment() {

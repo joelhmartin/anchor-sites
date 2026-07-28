@@ -30,14 +30,41 @@ export type GithubClient = {
   getTree(sha: string): Promise<TreeEntry[]>;
   getFileAtRef(path: string, ref: string): Promise<string>;
   createBlob(content: string): Promise<string>;
-  createTree(baseTreeSha: string, entries: { path: string; sha: string | null }[]): Promise<string>;
-  createCommit(message: string, treeSha: string, parentSha: string): Promise<string>;
+  // `baseTreeSha: null` → no `base_tree` in the request (a brand-new root
+  // tree) — the empty-repo bootstrap path (export.ts) needs this: a repo
+  // with zero commits has no tree to base off of.
+  createTree(
+    baseTreeSha: string | null,
+    entries: { path: string; sha: string | null }[],
+  ): Promise<string>;
+  // `parentSha: null` → `parents: []` — the empty-repo bootstrap's root
+  // commit has no parent.
+  createCommit(message: string, treeSha: string, parentSha: string | null): Promise<string>;
   updateRef(branch: string, sha: string): Promise<void>;
+  // POST .../git/refs — creates a ref that doesn't exist yet. Needed for the
+  // empty-repo bootstrap path, where `updateRef`'s PATCH would 404/422 (there
+  // is no `refs/heads/<branch>` to update yet).
+  createRef(branch: string, sha: string): Promise<void>;
   createCommitComment(sha: string, body: string): Promise<void>;
 };
 
 const API_BASE = "https://api.github.com";
 const RETRY_WAIT_CAP_MS = 10_000;
+
+/**
+ * Thrown by every non-2xx GitHub response, carrying the HTTP status so
+ * callers can branch on specific codes (export.ts's empty-repo bootstrap
+ * detects 409 from `getRefSha` this way) instead of pattern-matching the
+ * error message.
+ */
+export class GithubApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GithubApiError";
+    this.status = status;
+  }
+}
 
 /** `sha1("blob " + byteLength + "\0" + content)` — same hash git uses for blob object ids. */
 export function computeGitBlobSha(content: string): string {
@@ -95,7 +122,10 @@ export function makeGithubClient(
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`github ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
+      throw new GithubApiError(
+        `github ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`,
+        res.status,
+      );
     }
     return res;
   }
@@ -150,11 +180,11 @@ export function makeGithubClient(
     },
 
     async createTree(
-      baseTreeSha: string,
+      baseTreeSha: string | null,
       entries: { path: string; sha: string | null }[],
     ): Promise<string> {
       const res = await request("POST", `/repos/${repo}/git/trees`, {
-        base_tree: baseTreeSha,
+        ...(baseTreeSha !== null ? { base_tree: baseTreeSha } : {}),
         tree: entries.map((entry) => ({
           path: entry.path,
           mode: "100644",
@@ -169,12 +199,12 @@ export function makeGithubClient(
     async createCommit(
       message: string,
       treeSha: string,
-      parentSha: string,
+      parentSha: string | null,
     ): Promise<string> {
       const res = await request("POST", `/repos/${repo}/git/commits`, {
         message,
         tree: treeSha,
-        parents: [parentSha],
+        parents: parentSha !== null ? [parentSha] : [],
       });
       const body = (await res.json()) as { sha: string };
       return body.sha;
@@ -184,6 +214,13 @@ export function makeGithubClient(
       await request("PATCH", `/repos/${repo}/git/refs/heads/${branch}`, {
         sha,
         force: false,
+      });
+    },
+
+    async createRef(branch: string, sha: string): Promise<void> {
+      await request("POST", `/repos/${repo}/git/refs`, {
+        ref: `refs/heads/${branch}`,
+        sha,
       });
     },
 

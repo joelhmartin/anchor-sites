@@ -18,12 +18,19 @@ function buildApp(
   pool: Pool,
   enqueueExport: (input: GitExportInput) => Promise<string | null>,
   env: NodeJS.ProcessEnv = {},
+  hasLiveExportJob?: (siteId: string) => Promise<boolean>,
 ) {
   const app = express();
   app.use(express.json());
   app.use(
     "/api",
-    adminGitRouter({ pool, enqueueExport, env, rateLimit: { max: 200, windowMs: 60_000 } }),
+    adminGitRouter({
+      pool,
+      enqueueExport,
+      env,
+      hasLiveExportJob,
+      rateLimit: { max: 200, windowMs: 60_000 },
+    }),
   );
   return app;
 }
@@ -124,13 +131,32 @@ d("admin git endpoints (integration, GitHub sync Task 7)", () => {
     });
 
     it("503s honestly when the initial-export enqueue fails, instead of a fake 200", async () => {
-      const failApp = buildApp(db.getPool(), vi.fn(async () => null), {});
+      // Explicit "no live job" arrangement (fix round 1) — GIT_EXPORT's
+      // `stately` policy means a bare `null` is ambiguous; this test pins
+      // down the genuinely-down case regardless of whether the pgboss
+      // schema happens to exist in the test DB.
+      const failApp = buildApp(db.getPool(), vi.fn(async () => null), {}, async () => false);
       const site = await db.seedSite("git-enable-fail");
       const res = await auth(
         request(failApp).post(`/api/sites/${site.id}/git/enable`).send({ enabled: true }),
       );
       expect(res.status).toBe(503);
       expect(res.body).toEqual({ error: "job queue unavailable" });
+    });
+
+    // Fix round 1 (Important): a `null` enqueue result under GIT_EXPORT's
+    // `stately` policy can mean "deduped" (a job for this site is already
+    // queued/active) rather than "queue is down" — this must NOT 503.
+    it("200s with queued:true, deduped:true when the initial-export enqueue is null but a live job already exists", async () => {
+      const dedupedApp = buildApp(db.getPool(), vi.fn(async () => null), {}, async () => true);
+      const site = await db.seedSite("git-enable-deduped");
+      const res = await auth(
+        request(dedupedApp).post(`/api/sites/${site.id}/git/enable`).send({ enabled: true }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.state.enabled).toBe(true);
+      expect(res.body.queued).toBe(true);
+      expect(res.body.deduped).toBe(true);
     });
   });
 
@@ -159,12 +185,24 @@ d("admin git endpoints (integration, GitHub sync Task 7)", () => {
     });
 
     it("503s honestly when the manual-export enqueue fails", async () => {
-      const failApp = buildApp(db.getPool(), vi.fn(async () => null), {});
+      // Explicit "no live job" arrangement — see the enable-handler test
+      // above for why this can no longer rely on an absent pgboss schema.
+      const failApp = buildApp(db.getPool(), vi.fn(async () => null), {}, async () => false);
       const site = await db.seedSite("git-export-fail");
       await setGitEnabled(db.getPool(), site.id, true);
       const res = await auth(request(failApp).post(`/api/sites/${site.id}/git/export`).send({}));
       expect(res.status).toBe(503);
       expect(res.body).toEqual({ error: "job queue unavailable" });
+    });
+
+    // Fix round 1 (Important): same disambiguation on the manual-export path.
+    it("202s with queued:true, deduped:true when the manual-export enqueue is null but a live job already exists", async () => {
+      const dedupedApp = buildApp(db.getPool(), vi.fn(async () => null), {}, async () => true);
+      const site = await db.seedSite("git-export-deduped");
+      await setGitEnabled(db.getPool(), site.id, true);
+      const res = await auth(request(dedupedApp).post(`/api/sites/${site.id}/git/export`).send({}));
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ queued: true, deduped: true });
     });
 
     it("cross-site 404: a site's git state never leaks into another site's export check", async () => {

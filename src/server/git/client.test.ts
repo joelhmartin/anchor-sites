@@ -3,6 +3,7 @@ import {
   resolveGitMode,
   makeGithubClient,
   computeGitBlobSha,
+  GithubApiError,
 } from "./client.js";
 
 function fetchOk(body: unknown, extra: Partial<Response> = {}) {
@@ -209,6 +210,22 @@ describe("makeGithubClient request methods", () => {
     ]);
   });
 
+  // Fix round 1 (Critical, empty-repo bootstrap): a repo with zero commits
+  // has no tree to base a new one off of — `baseTreeSha: null` must omit
+  // `base_tree` entirely so GitHub creates a brand-new root tree.
+  it("createTree: baseTreeSha null omits base_tree from the request body", async () => {
+    const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => fetchOk({ sha: "rootTreeSha" }));
+    const client = makeGithubClient(ENV_ENABLED, fetchFn as unknown as typeof fetch);
+    const sha = await client.createTree(null, [{ path: "site.json", sha: "blobSha1" }]);
+    expect(sha).toBe("rootTreeSha");
+    const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).not.toHaveProperty("base_tree");
+    expect(body.tree).toEqual([
+      { path: "site.json", mode: "100644", type: "blob", sha: "blobSha1" },
+    ]);
+  });
+
   it("createCommit: POST .../git/commits with message/tree/parents, returns sha", async () => {
     const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => fetchOk({ sha: "commitSha1" }));
     const client = makeGithubClient(ENV_ENABLED, fetchFn as unknown as typeof fetch);
@@ -224,6 +241,23 @@ describe("makeGithubClient request methods", () => {
     });
   });
 
+  // Fix round 1 (Critical, empty-repo bootstrap): the root commit of a
+  // brand-new repo has no parent — `parentSha: null` must produce `parents:
+  // []`, not `[null]`.
+  it("createCommit: parentSha null produces parents: []", async () => {
+    const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => fetchOk({ sha: "rootCommitSha" }));
+    const client = makeGithubClient(ENV_ENABLED, fetchFn as unknown as typeof fetch);
+    const sha = await client.createCommit("export(foo): initial\n\nAnchor-Sync: export", "treeSha1", null);
+    expect(sha).toBe("rootCommitSha");
+    const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      message: "export(foo): initial\n\nAnchor-Sync: export",
+      tree: "treeSha1",
+      parents: [],
+    });
+  });
+
   it("updateRef: PATCH .../git/refs/heads/{branch} with sha", async () => {
     const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => fetchOk({}));
     const client = makeGithubClient(ENV_ENABLED, fetchFn as unknown as typeof fetch);
@@ -233,6 +267,20 @@ describe("makeGithubClient request methods", () => {
     expect(init.method).toBe("PATCH");
     const body = JSON.parse(init.body as string);
     expect(body).toEqual({ sha: "commitSha1", force: false });
+  });
+
+  // Fix round 1 (Critical, empty-repo bootstrap): a repo with zero commits
+  // has no `refs/heads/<branch>` for `updateRef`'s PATCH to move — `createRef`
+  // (POST .../git/refs) creates it instead.
+  it("createRef: POST .../git/refs with ref+sha", async () => {
+    const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => fetchOk({}));
+    const client = makeGithubClient(ENV_ENABLED, fetchFn as unknown as typeof fetch);
+    await client.createRef("main", "rootCommitSha");
+    const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.github.com/repos/acme/content/git/refs");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ ref: "refs/heads/main", sha: "rootCommitSha" });
   });
 
   it("createCommitComment: POST .../commits/{sha}/comments with body", async () => {
@@ -252,6 +300,25 @@ describe("makeGithubClient request methods", () => {
     await expect(client.getDefaultBranch()).rejects.toThrow(
       /github GET \/repos\/acme\/content failed: 404 Not Found/,
     );
+  });
+
+  // Fix round 1 (Critical): export.ts's empty-repo bootstrap branches on the
+  // HTTP status specifically (409 = "Git Repository is empty"), not on
+  // pattern-matching the error message — this is what makes that possible.
+  it("throws a GithubApiError carrying the HTTP status", async () => {
+    const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) =>
+      fetchFail(409, "Git Repository is empty"),
+    );
+    const client = makeGithubClient(ENV_ENABLED, fetchFn as unknown as typeof fetch);
+    let caught: unknown;
+    try {
+      await client.getRefSha("main");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(GithubApiError);
+    expect((caught as GithubApiError).status).toBe(409);
+    expect((caught as GithubApiError).message).toMatch(/failed: 409/);
   });
 
   it("honors Retry-After once with a bounded wait, then retries and succeeds", async () => {

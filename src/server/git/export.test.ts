@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupAgentDb } from "../../../tests/helpers/agent-db.js";
-import { computeGitBlobSha, type GithubClient, type TreeEntry } from "./client.js";
+import { computeGitBlobSha, GithubApiError, type GithubClient, type TreeEntry } from "./client.js";
 import { getGitState } from "./state-repo.js";
 import { exportSite } from "./export.js";
 
@@ -14,27 +14,55 @@ const db = setupAgentDb();
  * onto the base tree's entries (same "unlisted paths untouched" semantic
  * GitHub's real Git Data API has), and `createCommit` publishes that merged
  * tree under the new commit sha so a subsequent `getTree(headSha)` sees it —
- * which is what makes the no-op-skip re-export test meaningful.
+ * which is what makes the no-op-skip re-export test meaningful. Passing the
+ * head COMMIT sha as `createTree`'s base tree (rather than a separate tree
+ * object sha) mirrors the real client/API — empirically verified against
+ * the live API (bot-review fix round 1) that GitHub resolves a commit sha to
+ * its tree for both reads and `base_tree` — so this fake keys its tree map
+ * by both commit and tree shas interchangeably, same as the real thing.
+ *
+ * `{ empty: true }` constructs a client simulating a brand-new repo with
+ * zero commits: `getRefSha` 409s until `createRef` (or `updateRef`) gives it
+ * a head sha, exercising the exporter's empty-repo bootstrap path.
  */
 class FakeGithubClient implements GithubClient {
   repo = "acme/content";
   branch = "main";
-  headSha = "commit-0";
-  private treesByCommitOrTreeSha = new Map<string, TreeEntry[]>([["commit-0", []]]);
+  headSha: string | null;
+  private treesByCommitOrTreeSha = new Map<string, TreeEntry[]>();
   private commitCounter = 0;
   private treeCounter = 0;
 
   createBlobCalls: string[] = [];
-  createTreeCalls: { baseTreeSha: string; entries: { path: string; sha: string | null }[] }[] = [];
-  createCommitCalls: { message: string; treeSha: string; parentSha: string }[] = [];
+  createTreeCalls: { baseTreeSha: string | null; entries: { path: string; sha: string | null }[] }[] = [];
+  createCommitCalls: { message: string; treeSha: string; parentSha: string | null }[] = [];
   updateRefCalls: { branch: string; sha: string }[] = [];
+  createRefCalls: { branch: string; sha: string }[] = [];
   commitComments: { sha: string; body: string }[] = [];
 
+  constructor(opts: { empty?: boolean } = {}) {
+    if (opts.empty) {
+      this.headSha = null;
+    } else {
+      this.headSha = "commit-0";
+      this.treesByCommitOrTreeSha.set("commit-0", []);
+    }
+  }
+
   async getDefaultBranch(): Promise<string> {
+    // Real behavior (fix round 1): default_branch is a repo setting fixed at
+    // creation, independent of commit history — it resolves fine even for a
+    // brand-new/empty repo, so the fake needs no special-casing here either.
     return this.branch;
   }
 
   async getRefSha(_branch: string): Promise<string> {
+    if (this.headSha === null) {
+      throw new GithubApiError(
+        `github GET /repos/${this.repo}/git/ref/heads/${this.branch} failed: 409 Git Repository is empty`,
+        409,
+      );
+    }
     return this.headSha;
   }
 
@@ -52,11 +80,11 @@ class FakeGithubClient implements GithubClient {
   }
 
   async createTree(
-    baseTreeSha: string,
+    baseTreeSha: string | null,
     entries: { path: string; sha: string | null }[],
   ): Promise<string> {
     this.createTreeCalls.push({ baseTreeSha, entries });
-    const base = this.treesByCommitOrTreeSha.get(baseTreeSha) ?? [];
+    const base = baseTreeSha !== null ? this.treesByCommitOrTreeSha.get(baseTreeSha) ?? [] : [];
     const merged = new Map(base.map((entry) => [entry.path, entry] as const));
     for (const entry of entries) {
       if (entry.sha === null) {
@@ -70,7 +98,7 @@ class FakeGithubClient implements GithubClient {
     return treeSha;
   }
 
-  async createCommit(message: string, treeSha: string, parentSha: string): Promise<string> {
+  async createCommit(message: string, treeSha: string, parentSha: string | null): Promise<string> {
     this.createCommitCalls.push({ message, treeSha, parentSha });
     const commitSha = `commit-${++this.commitCounter}`;
     this.treesByCommitOrTreeSha.set(commitSha, this.treesByCommitOrTreeSha.get(treeSha) ?? []);
@@ -79,6 +107,11 @@ class FakeGithubClient implements GithubClient {
 
   async updateRef(branch: string, sha: string): Promise<void> {
     this.updateRefCalls.push({ branch, sha });
+    this.headSha = sha;
+  }
+
+  async createRef(branch: string, sha: string): Promise<void> {
+    this.createRefCalls.push({ branch, sha });
     this.headSha = sha;
   }
 
@@ -174,5 +207,41 @@ d("exportSite", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_error).toContain("simulated github outage");
+  });
+
+  // Fix round 1 (Critical): a repo with zero commits 409s on getRefSha
+  // ("Git Repository is empty", empirically verified against the live API).
+  // Without this bootstrap path, the very first export of a freshly-created
+  // content repo (the operator runbook's own starting state) would be
+  // permanently stuck.
+  it("bootstraps an empty repo: root commit with no parent, createTree with no base tree, createRef (not updateRef)", async () => {
+    const client = new FakeGithubClient({ empty: true });
+    const result = await exportSite(db.getPool(), siteId, "initial", client);
+
+    expect(result.skipped).toBe(false);
+    expect(result.sha).toBeDefined();
+
+    expect(client.createTreeCalls).toHaveLength(1);
+    expect(client.createTreeCalls[0].baseTreeSha).toBeNull();
+
+    expect(client.createCommitCalls).toHaveLength(1);
+    expect(client.createCommitCalls[0].parentSha).toBeNull();
+
+    expect(client.createRefCalls).toEqual([{ branch: "main", sha: result.sha }]);
+    expect(client.updateRefCalls).toHaveLength(0);
+
+    const state = await getGitState(db.getPool(), siteId);
+    expect(state?.last_export_sha).toBe(result.sha);
+    expect(state?.last_error).toBeNull();
+
+    // The now-bootstrapped repo takes the normal path on the next export:
+    // getRefSha succeeds, and since nothing changed, it's a no-op — no
+    // further blob/commit/ref calls at all.
+    const blobCallsAfterBootstrap = client.createBlobCalls.length;
+    const second = await exportSite(db.getPool(), siteId, "manual", client);
+    expect(second.skipped).toBe(true);
+    expect(client.createBlobCalls.length).toBe(blobCallsAfterBootstrap);
+    expect(client.createRefCalls).toHaveLength(1); // no additional createRef
+    expect(client.updateRefCalls).toHaveLength(0); // no-op skip never touches the ref
   });
 });
