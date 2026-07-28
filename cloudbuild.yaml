@@ -117,7 +117,12 @@ steps:
       # (not --set-secrets) since it's not sensitive, just config. Left empty
       # here on purpose: the operator sets a real value only once the content
       # repo + PAT + webhook secret from docs/github-sync.md's runbook exist.
-      - --set-env-vars=NODE_ENV=production,GITHUB_CONTENT_REPO=jmartin-anchorcorps/anchor-sites-content
+      # GCP_PROJECT_ID: required by the Phase-10 domain-provisioning client
+      # (src/server/gcloud/run-domains.ts). --set-env-vars REPLACES the whole
+      # env list per deploy (same gotcha as --set-secrets below), so it must
+      # live here — a manual `gcloud run services update` lapses on next CI
+      # deploy (this broke provisioning for tmj-new-england, 2026-07-28).
+      - --set-env-vars=NODE_ENV=production,GITHUB_CONTENT_REPO=jmartin-anchorcorps/anchor-sites-content,GCP_PROJECT_ID=anchor-hub-480305
       # NOTE: --set-secrets REPLACES the service's entire secret list on every
       # deploy. Any secret NOT listed here is dropped from the next revision —
       # so OAuth (Studio Google sign-in) and GoDaddy DNS MUST be listed here, or
