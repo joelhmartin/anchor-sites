@@ -20,6 +20,8 @@ import { vitalsRouter } from "./routes/vitals.js";
 import { adminJobsRouter } from "./routes/admin-jobs.js";
 import { adminAiAgentRouter } from "./routes/admin-ai-agent.js";
 import { meRouter } from "./routes/me.js";
+import { gitWebhookRouter, type RawBodyRequest } from "./routes/git-webhook.js";
+import { adminGitRouter } from "./routes/admin-git.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
@@ -53,7 +55,19 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // dev/disabled mode (requireAdmin covers those).
   mountStudioAuth(app, opts.studioAuth !== undefined ? { auth: opts.studioAuth } : {});
 
-  app.use(express.json({ limit: "1mb" }));
+  // GitHub sync Task 5: the push webhook needs the RAW request body to
+  // verify GitHub's HMAC signature (X-Hub-Signature-256) — JSON.stringify of
+  // the parsed body isn't guaranteed to byte-match what GitHub signed (key
+  // order, whitespace). Additive only: every other route keeps using the
+  // parsed `req.body` exactly as before.
+  app.use(
+    express.json({
+      limit: "1mb",
+      verify: (req, _res, buf) => {
+        (req as RawBodyRequest).rawBody = buf;
+      },
+    }),
+  );
   app.use(pinoHttp({ autoLogging: { ignore: (req) => req.url === "/healthz" } }));
 
   app.get("/healthz", async (_req: Request, res: Response) => {
@@ -109,6 +123,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Task 10 (AI site agent): conversation CRUD + SSE message/tail routes.
   app.use("/api", adminAiAgentRouter());
+
+  // GitHub sync Task 7: admin status/enable/export endpoints backing the
+  // Studio GitCard. Gated by requireAdmin like every other admin-sites route.
+  app.use("/api", adminGitRouter());
+
+  // GitHub sync Task 5: push webhook — HMAC-verified, no requireAdmin (GitHub
+  // can't send an admin token; the signature check IS the auth).
+  app.use("/api", gitWebhookRouter());
 
   // P7.5: plugin routers at /api/plugins/<name>. Mounted before the catch-all
   // page renderer so plugin API routes resolve. Each plugin's router enforces

@@ -20,6 +20,11 @@ import { loadAssetsForBlocks } from "../render-hydration.js";
 import { tokenFromQuery } from "./admin-ai-agent.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
 import { buildEditableFieldMap, buildUrlValues } from "../../blocks/editable-fields.js";
+// Publish trigger (T4, GitHub sync).
+import { resolveGitMode } from "../git/client.js";
+import { getGitState } from "../git/state-repo.js";
+import { GIT_EXPORT } from "../jobs/index.js";
+import type { GitExportInput } from "../jobs/git-export.js";
 
 // Inline Editing Task 4 — Studio mints this token (`crypto.randomUUID()`) and
 // passes it in as `?bridge=`; the server never generates or stores it (keeps
@@ -55,11 +60,27 @@ export type AdminPagesOptions = {
   saveRateLimit?: RateLimitOptions;
   /** Override the AI-edit rate limit for tests. Default 30/min — AI calls cost money. */
   aiEditRateLimit?: RateLimitOptions;
+  /**
+   * Publish trigger (T4, GitHub sync): called fire-and-forget after a save
+   * whose resulting page status is "published", when git sync is enabled
+   * for the site. Defaults to the lazy-`getBoss().send(GIT_EXPORT, input,
+   * { singletonKey: siteId })`-in-try/catch idiom (routes/media.ts
+   * precedent) so this router can be constructed before bootJobs()
+   * completes. Tests inject a spy.
+   */
+  enqueueGitExport?: (input: GitExportInput) => Promise<string | null>;
 };
 
 export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   const pool = opts.pool ?? defaultPool;
   const router = Router();
+
+  const enqueueGitExport =
+    opts.enqueueGitExport ??
+    (async (input: GitExportInput) => {
+      const { getBoss } = await import("../jobs/index.js");
+      return getBoss().send(GIT_EXPORT, input, { singletonKey: input.siteId });
+    });
 
   const saveLimiter = rateLimit(
     opts.saveRateLimit ?? { max: 10, windowMs: 60_000 },
@@ -180,6 +201,25 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         );
 
         await client.query("COMMIT");
+
+        // Publish trigger (T4, GitHub sync): fire-and-forget git.export
+        // enqueue when this save's resulting status is "published". Checks
+        // run cheapest-first so an unconfigured/disabled deployment never
+        // pays for the extra SELECT: the status check and resolveGitMode()
+        // are both free (no I/O); getGitState (one SELECT) only runs once
+        // both already say "maybe". A failure anywhere in this chain is
+        // swallowed — it must never affect the save response the operator
+        // is waiting on.
+        if (pageRes.rows[0].status === "published" && resolveGitMode() === "api") {
+          try {
+            const gitState = await getGitState(pool, siteId);
+            if (gitState?.enabled) {
+              enqueueGitExport({ siteId, trigger: "publish" }).catch(() => undefined);
+            }
+          } catch {
+            // best-effort — never affects the save response
+          }
+        }
 
         res.status(200).json({
           page: {

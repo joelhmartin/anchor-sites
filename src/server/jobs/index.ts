@@ -18,10 +18,18 @@ import {
   handleAgentTurn,
   type AgentTurnInput,
 } from "./agent-turn.js";
+import {
+  handleGitExport,
+  type GitExportInput,
+} from "./git-export.js";
+import { handleGitImport } from "./git-import.js";
+import type { GitImportInput } from "../routes/git-webhook.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
 export const AGENT_TURN = "ai.agent-turn";
+export const GIT_EXPORT = "git.export";
+export const GIT_IMPORT = "git.import";
 export { CRM_SYNC_JOB };
 
 /**
@@ -174,13 +182,61 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   // `send()` calls with the same `singletonKey` against a `standard` queue
   // both return distinct job ids). `stately` is the policy that actually
   // enforces "at most one job per state (queued/active) per singletonKey" —
-  // a second `send()` for a conversation that already has one queued or
-  // active returns `null`. The policy must be set at queue-creation time
-  // (pg-boss refuses to change it afterward), and this queue is new in this
-  // PR, so there's no migration concern.
+  // a second `send()` for a key that already has one queued or active
+  // returns `null`. The policy must be set at queue-creation time (pg-boss
+  // refuses to change it afterward).
+  //
+  // Shared explanation for all three `stately` queues below (AGENT_TURN,
+  // GIT_EXPORT, GIT_IMPORT — GitHub sync fix round 1, Important): every
+  // enqueue call site that relies on `singletonKey` dedup MUST treat a
+  // `null` `send()` result as ambiguous — "queue genuinely down" vs. "a job
+  // for this key is already queued/active" — and disambiguate before
+  // reporting failure. See `admin-ai-agent.ts`'s `hasLiveAgentTurnJob` (a
+  // direct `pgboss.job` existence check, since pg-boss's public API has no
+  // "is a job with this singletonKey already queued/active?" query) and
+  // `admin-git.ts`'s `hasLiveExportJob`, the same precedent applied to
+  // GIT_EXPORT.
   await boss.createQueue(AGENT_TURN, { policy: "stately" });
   await boss.work<AgentTurnInput>(AGENT_TURN, async ([job]) => {
     await handleAgentTurn(job.data, { pool: defaultPool });
+  });
+
+  // Task 4 (GitHub sync): export-on-publish/manual worker. The handler
+  // itself is the disabled-mode/enabled-state gate (mode disabled or the
+  // site's git state row missing/disabled → silent no-op), so registration
+  // here is unconditional — same shape as every other job above. `stately`
+  // policy (fix round 1, Important — same singletonKey-is-inert-under-
+  // `standard` bug as AGENT_TURN above, since AGENT_TURN's registration
+  // comment): a site's `enable` (initial export) and a manual "Export now"
+  // click both `send()` with `singletonKey: siteId`, so this is what
+  // actually stops two GIT_EXPORT jobs for the same site from ever being
+  // queued/active at once.
+  await boss.createQueue(GIT_EXPORT, { policy: "stately" });
+  await boss.work<GitExportInput>(GIT_EXPORT, async ([job]) => {
+    await handleGitExport(job.data, { pool: defaultPool });
+  });
+
+  // Task 6 (GitHub sync): validated import worker. routes/git-webhook.ts
+  // (Task 5) enqueues GitImportInput jobs here after HMAC verification +
+  // loop-prevention filtering; the handler itself is the
+  // disabled-mode/enabled-state/idempotency gate, so registration here is
+  // unconditional — same shape as GIT_EXPORT above. `stately` policy, PLUS
+  // (fix round 1, Important 3) a per-PUSH `singletonKey`:
+  // `${siteId}:${headSha}` (see git-webhook.ts's enqueueImport doc), not
+  // bare `siteId`. Bare `siteId` was wrong: under `stately`, a SECOND real
+  // push to the same site (different content, different headSha) while the
+  // first push's import job is still queued/active would `send()` with the
+  // same key and get `null` back — silently dropping that push's edits
+  // forever, since nothing retries a job that was never created (unlike
+  // GIT_EXPORT, where every send() carries the SAME siteId-only key by
+  // design — re-exporting the current DB state is idempotent regardless of
+  // which trigger asked for it, so collapsing bursts to one is exactly what
+  // GIT_EXPORT wants). Keying GIT_IMPORT on the pair instead keeps the
+  // intended dedupe (a redelivered webhook for the SAME push collapses to
+  // one job) while letting two DIFFERENT pushes to the same site both queue.
+  await boss.createQueue(GIT_IMPORT, { policy: "stately" });
+  await boss.work<GitImportInput>(GIT_IMPORT, async ([job]) => {
+    await handleGitImport(job.data, { pool: defaultPool });
   });
 }
 

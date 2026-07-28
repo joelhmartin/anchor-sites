@@ -31,7 +31,8 @@ catalog, and the edit-op applier/validator all come from Phase 6.
   revertible through the existing restore endpoint. Publishing stays a
   manual operator action and is deliberately **not** an agent tool.
   (The inline click-to-edit overlay writes through the same table with
-  `source: 'inline'` — see `docs/inline-editing.md`.)
+  `source: 'inline'` — see `docs/inline-editing.md`; a validated GitHub push
+  writes `source: 'git:<sha7>'` — see `docs/github-sync.md`.)
 - **Data model** — two tables (`db/migrations/1747601000000_ai_agent.cjs`,
   `status` extended with `'running'` by
   `db/migrations/1747602000000_ai_agent_running_status.cjs` — see "Turn
