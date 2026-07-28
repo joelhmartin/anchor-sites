@@ -14,6 +14,10 @@ import "../../blocks/index.js";
 import { proposeEdit } from "../ai/propose.js";
 import type { Block } from "../../blocks/types.js";
 import { seoFieldsSchema } from "../seo/schema.js";
+import { renderPage, type PageRecord } from "../render-page.js";
+import type { ResolvedSite } from "../../middleware/resolveSite.js";
+import { loadAssetsForBlocks } from "../render-hydration.js";
+import { tokenFromQuery } from "./admin-ai-agent.js";
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
@@ -192,6 +196,142 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           return;
         }
         res.json({ page: result.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // GET /api/sites/:siteId/pages/:pageId/preview — render a page's CURRENT
+  // blocks (any status — this is the point: it's how the operator/AI-agent
+  // preview a draft before publishing). `tokenFromQuery` first so an iframe
+  // (which can't set custom headers) can authenticate via `?token=`. This IS
+  // the one route that still needs the query-token shim — the SSE tail
+  // (admin-ai-agent.ts's /events route) dropped it (Important 3, round 1
+  // review): the drawer's tail is a `fetch()` call with an X-Admin-Token
+  // header, never a native EventSource, so it never needed `?token=` in the
+  // first place.
+  // Mirrors the tenant page route's (`src/server/routes/page.ts`) media
+  // hydration so images/hero-slider resolve identically in preview.
+  // -------------------------------------------------------------------------
+  router.get(
+    "/sites/:siteId/pages/:pageId/preview",
+    tokenFromQuery,
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, pageId } = req.params;
+      try {
+        const siteRes = await pool.query<{
+          id: string;
+          slug: string;
+          display_name: string;
+          default_brand_tokens: Record<string, unknown> | null;
+          seo_defaults: Record<string, unknown> | null;
+          ctm_account_id: string | null;
+          analytics_disabled: boolean;
+        }>(
+          `SELECT id, slug, display_name, default_brand_tokens, seo_defaults,
+                  ctm_account_id, analytics_disabled
+             FROM sites WHERE id = $1`,
+          [siteId],
+        );
+        if (siteRes.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const siteRow = siteRes.rows[0];
+
+        const pageRes = await pool.query<PageRecord & { slug: string }>(
+          `SELECT title, blocks, seo, brand_tokens_override, slug
+             FROM pages WHERE id = $1 AND site_id = $2`,
+          [pageId, siteId],
+        );
+        if (pageRes.rowCount === 0) {
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+        const page = pageRes.rows[0];
+
+        const assets = await loadAssetsForBlocks(pool, siteId, page.blocks);
+
+        const site: ResolvedSite = {
+          id: siteRow.id,
+          slug: siteRow.slug,
+          display_name: siteRow.display_name,
+          default_brand_tokens: siteRow.default_brand_tokens ?? {},
+          seo_defaults: siteRow.seo_defaults ?? {},
+          ctm_account_id: siteRow.ctm_account_id ?? null,
+          analytics_disabled: siteRow.analytics_disabled ?? false,
+          matched_via: "domain",
+          plugins: [],
+        };
+
+        // Fix round 1 (reviewer extra #4): the tenant page route (page.ts)
+        // maps the URL path "/" <-> slug "home" (its `normalizeSlug`) — a
+        // literal `/${slug}` would give the home page the wrong canonical
+        // path ("/home" instead of "/"). Mirror that same mapping here so
+        // preview's canonical/og:url tags match what the page would get once
+        // published, instead of only matching every NON-home slug.
+        const previewPath = page.slug === "home" ? "/" : `/${page.slug}`;
+
+        // Critical 2 (defense in depth alongside the iframe's `sandbox`
+        // attribute): this response is served same-origin at /api/... and
+        // renders operator/AI-authored blocks. `res.setHeader` REPLACES
+        // app.ts's global helmet CSP (buildCsp) for this one response
+        // rather than fighting it — that global policy is tuned for the
+        // admin SPA shell, not for rendered-page HTML, so a minimal,
+        // self-contained policy is clearer than trying to merge with it.
+        //
+        // Round 2 fix: the FIRST version of this header
+        // (`default-src 'self' https: data:`) was broken two ways —
+        // (a) render-page.tsx's `shell()` ALWAYS emits an inline
+        // `<style>${styles}</style>` tag (block CSS is inlined at
+        // module-load, there's no client-side hydration to pick up a
+        // linked stylesheet — see that file's own header comment), which
+        // `default-src` alone does not permit; a missing `style-src`
+        // falls back to `default-src`, which has no `'unsafe-inline'`, so
+        // the browser drops every rule in that tag. (b) `'self'` is
+        // meaningless once `sandbox` (no `allow-same-origin`) forces the
+        // frame onto an opaque origin — nothing can ever count as
+        // '`self`' there.
+        //
+        // `script-src 'none'`: verified render-page.tsx/BlockRenderer emit
+        // no client bundle required for basic blocks to render correctly
+        // (no hydration step at all, per render-page.tsx:26-29) — the only
+        // `<script>` tags `shell()` can add are the CTM call-tracking
+        // loader, the analytics snippet, and the web-vitals reporter, none
+        // of which affect how a block LOOKS in preview, and all of which
+        // we'd rather not fire from a draft preview anyway (no reason to
+        // swap phone numbers or emit analytics/vitals events for a page
+        // that isn't published). `style-src`/`img-src` allow `https:`/
+        // `data:` so the package block CSS + any real image URLs still
+        // render; `frame-ancestors 'self'` (not `*`) since only this app
+        // embeds its own preview.
+        res.setHeader(
+          "Content-Security-Policy",
+          "sandbox allow-scripts; default-src 'self' https: data:; " +
+            "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+            "script-src 'none'; frame-ancestors 'self'",
+        );
+        // Item 9 (CodeRabbit — preview refresh): the client now busts the
+        // URL itself with a `v=<nonce>` query param on every change
+        // (SiteDetailPage.tsx), but `no-store` closes the same gap
+        // server-side too — a draft preview must never be served from any
+        // cache (browser or intermediary), stale or otherwise.
+        res.setHeader("Cache-Control", "no-store");
+        // Item 13 (CodeRabbit, cheap adjunct to the SSRF/token work above):
+        // the URL this response is served at carries `?token=<admin token>`
+        // (tokenFromQuery, since the <iframe> can't set a header) — without
+        // this, any same-origin/https subresource the rendered page's own
+        // blocks load (an image, a linked resource) would send that whole
+        // URL, token included, as its Referer. `no-referrer` means this
+        // document never sends a Referer header at all. The full fix (a
+        // short-lived, single-use preview token instead of the long-lived
+        // admin token) is deferred — see the route-header comment above.
+        res.setHeader("Referrer-Policy", "no-referrer");
+        const { html } = renderPage(site, page, { assets, path: previewPath });
+        res.status(200).type("html").send(html);
       } catch (err) {
         next(err);
       }

@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
+import { getAdminToken } from "../lib/adminToken.js";
+import type { AgentChangeEvent } from "../lib/agent-api.js";
 import type { SiteDetail, SiteListRow, SiteStatus } from "../lib/siteTypes.js";
 import { Badge } from "../ui/badge.js";
 import { Card, CardContent } from "../ui/card.js";
@@ -18,6 +20,7 @@ import { SeoSettingsTab } from "./site-tabs/SeoSettingsTab.js";
 import { DomainsTab } from "./site-tabs/DomainsTab.js";
 import { CrmTab } from "./site-tabs/CrmTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
+import { AgentChatDrawer } from "../components/AgentChatDrawer.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
   active: "success",
@@ -84,8 +87,31 @@ export function SiteDetailPage() {
 
 function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   const [tab, setTab] = useState<TabKey>("pages");
-  const { data, loading, error } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
+  const { data, loading, error, reload } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = data?.site;
+
+  // P12-T12 "Start with AI": the wizard's AI path lands here with `?ai=1` to
+  // pop the Studio drawer open and start tailing the job-run conversation it
+  // just kicked off. `previewPageId`/`previewNonce` live here (fed by the
+  // drawer's onChangeEvent, which fires regardless of whether the preview
+  // column is mounted) but the pages-list fallback fetch itself lives in
+  // <DraftPreview>, which only mounts while the drawer is open — otherwise
+  // every site-detail load would issue the same GET the (lazily-mounted)
+  // Pages tab already makes.
+  const [searchParams] = useSearchParams();
+  const [aiOpen, setAiOpen] = useState(searchParams.get("ai") === "1");
+  const [previewPageId, setPreviewPageId] = useState<string | null>(null);
+  const [previewNonce, setPreviewNonce] = useState(0);
+  // Bot-review fix wave item 8: the wizard's AI path lands here with
+  // `ai_error=1` when the site was created but kicking off the initial
+  // build's conversation/job failed — the drawer opens empty (no
+  // conversation exists yet), which would otherwise look unexplained.
+  const aiError = searchParams.get("ai_error") === "1";
+
+  function handleChangeEvent(c: AgentChangeEvent) {
+    if (c.page_id) setPreviewPageId(c.page_id);
+    setPreviewNonce((n) => n + 1);
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -100,6 +126,16 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
           <div className="flex items-center gap-3">
             {site && <SaveAsTemplateDialog siteId={site.id} siteName={site.display_name} />}
+            {site && (
+              <button
+                type="button"
+                onClick={() => setAiOpen((v) => !v)}
+                aria-pressed={aiOpen}
+                className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+              >
+                AI
+              </button>
+            )}
             <a
               href={liveSiteUrl(slug)}
               target="_blank"
@@ -112,6 +148,15 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>
       </div>
+
+      {aiError && (
+        <Card>
+          <CardContent className="pt-5 text-sm text-amber-700">
+            The site was created, but the initial AI build couldn’t be started automatically. Send a
+            message in Studio chat to kick it off.
+          </CardContent>
+        </Card>
+      )}
 
       {loading && (
         <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -145,20 +190,93 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             ))}
           </div>
 
-          <div role="tabpanel">
-            {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
-            {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
-            {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
-            {tab === "members" && <MembersTab siteId={site.id} />}
-            {tab === "media" && <MediaTab siteId={site.id} />}
-            {tab === "plugins" && <PluginsTab siteId={site.id} />}
-            {tab === "domains" && <DomainsTab siteId={site.id} />}
-            {tab === "integrations" && <CrmTab site={site} />}
-            {tab === "seo" && <SeoSettingsTab site={site} />}
-            {tab === "settings" && <SettingsTab site={site} />}
+          <div className="flex gap-4">
+            <div role="tabpanel" className="min-w-0 flex-1">
+              {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
+              {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
+              {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
+              {tab === "members" && <MembersTab siteId={site.id} />}
+              {tab === "media" && <MediaTab siteId={site.id} />}
+              {tab === "plugins" && <PluginsTab siteId={site.id} />}
+              {tab === "domains" && <DomainsTab siteId={site.id} />}
+              {tab === "integrations" && <CrmTab site={site} />}
+              {tab === "seo" && <SeoSettingsTab site={site} />}
+              {tab === "settings" && <SettingsTab site={site} />}
+            </div>
+
+            {aiOpen && (
+              <DraftPreview siteId={siteId} previewPageId={previewPageId} previewNonce={previewNonce} />
+            )}
           </div>
+
+          <AgentChatDrawer
+            siteId={site.id}
+            slug={slug}
+            open={aiOpen}
+            onClose={() => setAiOpen(false)}
+            onSiteChanged={reload}
+            autoTail={searchParams.get("ai") === "1"}
+            onChangeEvent={handleChangeEvent}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Draft preview column (P12-T12). Only mounted while the AI drawer is open,
+ * so its pages-list fallback fetch (`GET /api/sites/:id/pages`) doesn't fire
+ * on every site-detail load — that GET is otherwise identical to the one the
+ * (lazily-mounted) Pages tab already makes. Shows the page from the latest
+ * drawer change event, falling back to the site's first page; `previewNonce`
+ * is used as the iframe's `key` to force a reload on every change event.
+ */
+function DraftPreview({
+  siteId,
+  previewPageId,
+  previewNonce,
+}: {
+  siteId: string;
+  previewPageId: string | null;
+  previewNonce: number;
+}) {
+  const { data: pagesData } = useApi<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`);
+  const firstPageId = pagesData?.pages[0]?.id ?? null;
+  const effectivePreviewPageId = previewPageId ?? firstPageId;
+
+  const adminToken = getAdminToken();
+  // Item 9 (CodeRabbit — preview refresh): append `v=${previewNonce}` so
+  // every change bumps to a genuinely distinct URL, not just a re-mounted
+  // <iframe> pointed at the SAME url (which a cache — browser HTTP cache or
+  // an intermediary — could legitimately serve stale for). Paired with the
+  // preview route's own `Cache-Control: no-store` (admin-pages.ts).
+  const previewQuery = adminToken
+    ? `token=${encodeURIComponent(adminToken)}&v=${previewNonce}`
+    : `v=${previewNonce}`;
+  const previewSrc = effectivePreviewPageId
+    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview?${previewQuery}`
+    : null;
+
+  if (!previewSrc) return null;
+
+  return (
+    <div className="flex w-full max-w-md flex-col gap-2">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
+      <iframe
+        title="Draft preview"
+        src={previewSrc}
+        key={previewNonce}
+        // Critical 2: the preview response is same-origin HTML rendered
+        // from operator/AI-authored blocks — without a sandbox, an
+        // embedded <script> block runs with the parent's origin (reachable
+        // localStorage/cookies/DOM). `allow-scripts` alone (no
+        // `allow-same-origin`) forces the iframe into an opaque, unique
+        // origin: scripts still run (blocks that need them keep working),
+        // but they can't read/write anything under the admin's real origin.
+        sandbox="allow-scripts"
+        className="h-96 w-full rounded border border-zinc-200"
+      />
     </div>
   );
 }

@@ -10,18 +10,25 @@ import { useApi } from "../lib/useApi.js";
 import { BrandTokenFields, DEFAULT_BRAND_TOKENS } from "../components/BrandTokenFields.js";
 
 /**
- * New-site wizard (P4-T4.11, extended P7-T7.8). Step 1 takes name + slug and a
- * "Start from" choice: a blank site or one of the site templates (P7). A blank
- * site continues to step 2 (brand colors) and submits `POST /api/sites`. A
- * template skips the color step (the template carries brand tokens, D-042) and
- * submits `POST /api/sites/from-template`, then polls the new site's detail
- * until materialized pages appear before routing to it.
+ * New-site wizard (P4-T4.11, extended P7-T7.8, P12-T12 "Start with AI"). Step
+ * 1 takes name + slug and a "Start from" choice: a blank site, one of the
+ * site templates (P7), or AI (P12). A blank site continues to step 2 (brand
+ * colors) and submits `POST /api/sites`. A template skips the color step (the
+ * template carries brand tokens, D-042) and submits `POST
+ * /api/sites/from-template`, then polls the new site's detail until
+ * materialized pages appear before routing to it. AI mode also skips the
+ * color step — it reuses the blank-site `POST /api/sites` call (the agent's
+ * Initial-build job establishes the look via its own tools), then kicks off a
+ * job-run conversation and lands on site detail with the Studio drawer open
+ * (`?ai=1`, read by `SiteDetailPage`).
  *
  * Slug regex mirrors the server payload schema (admin-sites.ts).
  */
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const POLL_MS = 700;
 const POLL_TIMEOUT_MS = 8000;
+/** Sentinel `templateId` value selecting "Start with AI" from the same select. */
+const AI_MODE = "ai";
 
 type TemplateOption = { id: string; name: string; pages_count: number };
 
@@ -32,6 +39,7 @@ export function NewSiteWizard() {
   const [slug, setSlug] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
   const [tokens, setTokens] = useState<Record<string, string>>({ ...DEFAULT_BRAND_TOKENS });
+  const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [materializing, setMaterializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +48,10 @@ export function NewSiteWizard() {
   const templates = templatesData?.templates ?? [];
 
   const slugValid = SLUG_RE.test(slug);
-  const step1Valid = displayName.trim().length > 0 && slugValid;
-  const usingTemplate = templateId !== "";
+  const isAiMode = templateId === AI_MODE;
+  const usingTemplate = templateId !== "" && !isAiMode;
+  const step1Valid =
+    displayName.trim().length > 0 && slugValid && (!isAiMode || description.trim().length > 0);
 
   function setToken(key: string, value: string) {
     setTokens((t) => ({ ...t, [key]: value }));
@@ -112,11 +122,55 @@ export function NewSiteWizard() {
     }
   }
 
+  // AI → reuse the blank-site POST /api/sites call + response shape, then
+  // kick a job-run conversation with the operator's description as the first
+  // message, and land on site detail with the Studio drawer open.
+  //
+  // Bot-review fix wave item 8: the site-create call and the
+  // conversation-create call are handled in SEPARATE try/catches. Only a
+  // site-create failure is a real form error (handleConflict — most likely
+  // a duplicate slug, still fixable by editing the form). Once the site
+  // exists, a conversation-create failure (e.g. the job queue returning
+  // 503) must NOT strand the operator on this form: a retry would just
+  // resubmit the same slug and hit admin-sites.ts's 409. Navigate to site
+  // detail regardless — the site is real, and the Studio drawer (opened via
+  // `?ai=1`) is the recovery surface for trying the build again;
+  // `ai_error=1` lets SiteDetailPage explain why the drawer came up empty.
+  async function submitWithAi() {
+    if (!step1Valid || !isAiMode) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const site = await apiFetch<{ site?: { id: string }; id?: string }>("/api/sites", {
+        method: "POST",
+        body: { slug, display_name: displayName.trim() },
+      });
+      const siteId = site.site?.id ?? site.id;
+      if (!siteId) throw new Error("Site created, but no id was returned.");
+
+      try {
+        await apiFetch(`/api/sites/${siteId}/agent/conversations`, {
+          method: "POST",
+          body: { title: "Initial build", message: description.trim(), run: "job" },
+        });
+        navigate(`/sites/${slug}?ai=1`);
+      } catch {
+        navigate(`/sites/${slug}?ai=1&ai_error=1`);
+      }
+    } catch (err) {
+      handleConflict(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">New site</h1>
-        <span className="text-sm text-zinc-500">{usingTemplate ? "From template" : `Step ${step} of 2`}</span>
+        <span className="text-sm text-zinc-500">
+          {usingTemplate ? "From template" : isAiMode ? "Start with AI" : `Step ${step} of 2`}
+        </span>
       </div>
 
       <Card className="max-w-2xl">
@@ -166,6 +220,7 @@ export function NewSiteWizard() {
                     className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm"
                   >
                     <option value="">Blank site</option>
+                    <option value={AI_MODE}>Start with AI ✨</option>
                     {templates.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name} ({t.pages_count} {t.pages_count === 1 ? "page" : "pages"})
@@ -175,10 +230,25 @@ export function NewSiteWizard() {
                   <p className="text-xs text-zinc-400">
                     {usingTemplate
                       ? "Pages and brand colors come from the template — you can edit them after."
-                      : "An empty site you’ll build page by page."}
+                      : isAiMode
+                        ? "The agent builds the site from your description — you can keep editing with it after."
+                        : "An empty site you’ll build page by page."}
                   </p>
                 </div>
-                {usingTemplate && error && <p className="text-sm text-red-600">{error}</p>}
+                {isAiMode && (
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="ai_description">Describe the business, the pages you want, tone…</Label>
+                    <textarea
+                      id="ai_description"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={4}
+                      placeholder="e.g. A family dental practice — home, services, about, contact. Warm, approachable tone."
+                      className="w-full rounded-md border border-zinc-300 p-2 text-sm"
+                    />
+                  </div>
+                )}
+                {(usingTemplate || isAiMode) && error && <p className="text-sm text-red-600">{error}</p>}
               </CardContent>
               <div className="flex justify-end gap-2 px-6 pb-6">
                 <Button type="button" variant="outline" onClick={() => navigate("/")}>
@@ -192,6 +262,16 @@ export function NewSiteWizard() {
                       </span>
                     ) : (
                       "Create from template"
+                    )}
+                  </Button>
+                ) : isAiMode ? (
+                  <Button type="button" onClick={submitWithAi} disabled={!step1Valid || busy}>
+                    {busy ? (
+                      <span className="flex items-center gap-2">
+                        <Spinner /> Creating…
+                      </span>
+                    ) : (
+                      "Create with AI"
                     )}
                   </Button>
                 ) : (

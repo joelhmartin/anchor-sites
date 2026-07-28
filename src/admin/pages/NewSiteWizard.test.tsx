@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { NewSiteWizard } from "./NewSiteWizard.js";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
 
@@ -12,7 +12,14 @@ function json(body: unknown, status = 200): Response {
 /** URL-routing fetch mock. The wizard fetches /api/templates on mount, so a
  * blanket mock that returns the create response for everything would corrupt
  * the templates list — route by url + method instead. */
-function routeFetch(overrides: Partial<{ fromTemplate: () => Response; createSite: () => Response; templates: TemplateOpt[] }> = {}) {
+function routeFetch(
+  overrides: Partial<{
+    fromTemplate: () => Response;
+    createSite: () => Response;
+    aiConversation: () => Response;
+    templates: TemplateOpt[];
+  }> = {},
+) {
   type TemplateOpt = { id: string; name: string; pages_count: number };
   const templates = overrides.templates ?? [{ id: "t1", name: "Starter", pages_count: 2 }];
   return vi.fn(async (url: string, opts?: RequestInit) => {
@@ -22,16 +29,35 @@ function routeFetch(overrides: Partial<{ fromTemplate: () => Response; createSit
       return overrides.createSite ? overrides.createSite() : json({ site: { id: "s1", slug: "x" } }, 201);
     if (url === "/api/sites/from-template" && method === "POST")
       return overrides.fromTemplate ? overrides.fromTemplate() : json({ site: { id: "s9" }, job: { queued: true } }, 201);
+    // Checked before the generic "/api/sites/" fallback below, which would
+    // otherwise swallow this route too.
+    if (url.endsWith("/agent/conversations") && method === "POST")
+      return overrides.aiConversation ? overrides.aiConversation() : json({ conversation: { id: "conv1" } }, 201);
     if (url.startsWith("/api/sites/")) return json({ site: { pages_count: 2 } });
     return json({});
   });
 }
 type TemplateOpt = { id: string; name: string; pages_count: number };
 
+/** Renders at /new (the wizard) with a stubbed /sites/:slug destination so
+ * navigation can be asserted the same way PagesTab.test.tsx probes routes. */
+function RouteProbe() {
+  const { slug } = useParams();
+  const location = useLocation();
+  return (
+    <div>
+      site route reached: {slug} search={location.search}
+    </div>
+  );
+}
+
 function renderWizard() {
   return render(
-    <MemoryRouter>
-      <NewSiteWizard />
+    <MemoryRouter initialEntries={["/new"]}>
+      <Routes>
+        <Route path="/new" element={<NewSiteWizard />} />
+        <Route path="/sites/:slug" element={<RouteProbe />} />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -136,5 +162,100 @@ describe("NewSiteWizard (P4-T4.11 + P7-T7.8)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create from template" }));
 
     await waitFor(() => expect(screen.getByText(/already in use/)).toBeTruthy());
+  });
+
+  it("ai: reveals a required description field and disables submit until filled", () => {
+    global.fetch = routeFetch() as unknown as typeof fetch;
+    renderWizard();
+    fillStep1("Acme Co", "acme-co");
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "ai" } });
+
+    // No brand-colors step for AI mode either.
+    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+    const create = screen.getByRole("button", { name: "Create with AI" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/Describe the business/), {
+      target: { value: "A dental clinic site with services and contact page." },
+    });
+    expect((screen.getByRole("button", { name: "Create with AI" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("ai: creates the site, kicks off a job-run conversation, and navigates to ?ai=1", async () => {
+    const fetchMock = routeFetch();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderWizard();
+    fillStep1("Acme Co", "acme-co");
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "ai" } });
+    fireEvent.change(screen.getByLabelText(/Describe the business/), {
+      target: { value: "A dental clinic site with services and contact page." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create with AI" }));
+
+    await waitFor(() => expect(screen.getByText(/site route reached: acme-co/)).toBeTruthy());
+    expect(screen.getByText(/search=\?ai=1/)).toBeTruthy();
+
+    const siteCalls = postCalls(fetchMock, "/api/sites");
+    expect(siteCalls.length).toBe(1);
+    expect(JSON.parse(siteCalls[0][1]!.body as string)).toEqual({
+      slug: "acme-co",
+      display_name: "Acme Co",
+    });
+
+    const convCalls = postCalls(fetchMock, "/api/sites/s1/agent/conversations");
+    expect(convCalls.length).toBe(1);
+    expect(JSON.parse(convCalls[0][1]!.body as string)).toEqual({
+      title: "Initial build",
+      message: "A dental clinic site with services and contact page.",
+      run: "job",
+    });
+
+    // Order matters: the site must exist before the conversation is created.
+    const siteIdx = fetchMock.mock.calls.findIndex(
+      ([u, o]) => u === "/api/sites" && ((o as RequestInit | undefined)?.method ?? "").toUpperCase() === "POST",
+    );
+    const convIdx = fetchMock.mock.calls.findIndex(
+      ([u, o]) =>
+        u === "/api/sites/s1/agent/conversations" &&
+        ((o as RequestInit | undefined)?.method ?? "").toUpperCase() === "POST",
+    );
+    expect(siteIdx).toBeGreaterThanOrEqual(0);
+    expect(siteIdx).toBeLessThan(convIdx);
+  });
+
+  it("ai: surfaces a duplicate-slug 409 inline instead of navigating", async () => {
+    global.fetch = routeFetch({ createSite: () => json({ error: "slug already in use" }, 409) }) as unknown as typeof fetch;
+
+    renderWizard();
+    fillStep1("Acme Co", "acme-co");
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "ai" } });
+    fireEvent.change(screen.getByLabelText(/Describe the business/), {
+      target: { value: "A dental clinic site." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create with AI" }));
+
+    await waitFor(() => expect(screen.getByText(/already in use/)).toBeTruthy());
+  });
+
+  it("ai: navigates to ?ai=1&ai_error=1 instead of stranding the operator when the site was created but the conversation/job POST fails (item 8)", async () => {
+    const fetchMock = routeFetch({ aiConversation: () => json({ error: "job queue unavailable" }, 503) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderWizard();
+    fillStep1("Acme Co", "acme-co");
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "ai" } });
+    fireEvent.change(screen.getByLabelText(/Describe the business/), {
+      target: { value: "A dental clinic site with services and contact page." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create with AI" }));
+
+    // Navigated anyway — the site exists — rather than showing a form error.
+    await waitFor(() => expect(screen.getByText(/site route reached: acme-co/)).toBeTruthy());
+    expect(screen.getByText(/search=\?ai=1&ai_error=1/)).toBeTruthy();
+    expect(screen.queryByText(/already in use/)).toBeNull();
+
+    // The site POST itself still only fired once — no retry loop.
+    expect(postCalls(fetchMock, "/api/sites").length).toBe(1);
   });
 });

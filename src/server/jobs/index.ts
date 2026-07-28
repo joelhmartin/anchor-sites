@@ -14,9 +14,14 @@ import {
   CRM_SYNC_JOB,
   type CrmSyncInput,
 } from "../crm/sync-job.js";
+import {
+  handleAgentTurn,
+  type AgentTurnInput,
+} from "./agent-turn.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
+export const AGENT_TURN = "ai.agent-turn";
 export { CRM_SYNC_JOB };
 
 /**
@@ -159,6 +164,23 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(CRM_SYNC_JOB);
   await boss.work<CrmSyncInput>(CRM_SYNC_JOB, async ([job]) => {
     await handleCrmSync(job.data, { pool: defaultPool });
+  });
+
+  // Task 9 (AI site agent): build-turn worker.
+  //
+  // Bot-review fix wave round 2, item 1 (Important — singletonKey was
+  // inert): pg-boss's default queue policy is `standard`, under which
+  // `singletonKey` has NO dedupe effect at all (empirically verified: two
+  // `send()` calls with the same `singletonKey` against a `standard` queue
+  // both return distinct job ids). `stately` is the policy that actually
+  // enforces "at most one job per state (queued/active) per singletonKey" —
+  // a second `send()` for a conversation that already has one queued or
+  // active returns `null`. The policy must be set at queue-creation time
+  // (pg-boss refuses to change it afterward), and this queue is new in this
+  // PR, so there's no migration concern.
+  await boss.createQueue(AGENT_TURN, { policy: "stately" });
+  await boss.work<AgentTurnInput>(AGENT_TURN, async ([job]) => {
+    await handleAgentTurn(job.data, { pool: defaultPool });
   });
 }
 
