@@ -27,6 +27,10 @@ export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
 export const AGENT_TURN = "ai.agent-turn";
 export const GIT_EXPORT = "git.export";
+// Task 5 (GitHub sync): queue name only — routes/git-webhook.ts enqueues
+// GitImportInput jobs here, but the createQueue/work registration (and the
+// handler itself) belongs to Task 6 (jobs/git-import.ts), not this task.
+export const GIT_IMPORT = "git.import";
 export { CRM_SYNC_JOB };
 
 /**
