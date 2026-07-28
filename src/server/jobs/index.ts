@@ -22,14 +22,13 @@ import {
   handleGitExport,
   type GitExportInput,
 } from "./git-export.js";
+import { handleGitImport } from "./git-import.js";
+import type { GitImportInput } from "../routes/git-webhook.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
 export const AGENT_TURN = "ai.agent-turn";
 export const GIT_EXPORT = "git.export";
-// Task 5 (GitHub sync): queue name only — routes/git-webhook.ts enqueues
-// GitImportInput jobs here, but the createQueue/work registration (and the
-// handler itself) belongs to Task 6 (jobs/git-import.ts), not this task.
 export const GIT_IMPORT = "git.import";
 export { CRM_SYNC_JOB };
 
@@ -199,6 +198,16 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(GIT_EXPORT);
   await boss.work<GitExportInput>(GIT_EXPORT, async ([job]) => {
     await handleGitExport(job.data, { pool: defaultPool });
+  });
+
+  // Task 6 (GitHub sync): validated import worker. routes/git-webhook.ts
+  // (Task 5) enqueues GitImportInput jobs here after HMAC verification +
+  // loop-prevention filtering; the handler itself is the
+  // disabled-mode/enabled-state/idempotency gate, so registration here is
+  // unconditional — same shape as GIT_EXPORT above.
+  await boss.createQueue(GIT_IMPORT);
+  await boss.work<GitImportInput>(GIT_IMPORT, async ([job]) => {
+    await handleGitImport(job.data, { pool: defaultPool });
   });
 }
 
