@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 // Side-effect: register the static blocks (mirrors src/server/ai/catalog.ts).
 import "./index.js";
-import { buildEditableFieldMap } from "./editable-fields.js";
+import { buildEditableFieldMap, buildUrlValues } from "./editable-fields.js";
 import { listBlocks } from "./registry.js";
+import type { Block } from "./types.js";
 
 /**
  * Expectations below are pinned to the REAL block schemas (verified by
@@ -69,5 +70,27 @@ describe("buildEditableFieldMap (schema-derived classifier)", () => {
     const map = buildEditableFieldMap();
     const registeredTypes = listBlocks().map((b) => b.type).sort();
     expect(Object.keys(map).sort()).toEqual(registeredTypes);
+  });
+});
+
+describe("buildUrlValues (Task 7 — bootData.urls)", () => {
+  it("builds blockId -> field -> value for url-classified fields only", () => {
+    const map = buildEditableFieldMap();
+    const blocks: Block[] = [
+      { id: "h1", type: "hero", props: { title: "Welcome", cta_href: "https://example.com" } },
+      { id: "r1", type: "rich-text", props: { html: "<p>x</p>" } },
+    ];
+    expect(buildUrlValues(blocks, map)).toEqual({ h1: { cta_href: "https://example.com" } });
+  });
+
+  it("a block with props: null does not throw and is skipped (I7 review fix round 1)", () => {
+    const map = buildEditableFieldMap();
+    const blocks: Block[] = [
+      // Legacy row / direct DB edit: props can be null/undefined at runtime
+      // even though the Block type says Record<string, unknown>.
+      { id: "h1", type: "hero", props: null as unknown as Record<string, unknown> },
+    ];
+    expect(() => buildUrlValues(blocks, map)).not.toThrow();
+    expect(buildUrlValues(blocks, map)).toEqual({});
   });
 });

@@ -39,7 +39,7 @@ function fixture(): void {
       </picture>
     </div>
     <div data-block-id="img2" data-block-type="image">
-      <picture class="ac-image--missing-variants"></picture>
+      <picture class="ac-image ac-image--missing-variants"></picture>
     </div>
     <div data-block-id="h1" data-block-type="hero">
       <span data-field="title">Welcome</span>

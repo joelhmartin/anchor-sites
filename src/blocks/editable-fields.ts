@@ -73,16 +73,22 @@ export function buildEditableFieldMap(): EditableFieldMap {
  * a ZodString per `classifyField`, but stored props are `unknown` — a
  * corrupt/legacy value of the wrong type is silently skipped rather than
  * coerced).
+ *
+ * `block.props` itself can be null/undefined on a legacy row or a direct DB
+ * edit — guard it the same way `collectAssetIds` does in
+ * `src/server/render-hydration.ts:20` rather than indexing it unguarded and
+ * 500ing the whole edit-mode preview.
  */
 export function buildUrlValues(blocks: Block[], fields: EditableFieldMap): Record<string, Record<string, string>> {
   const urls: Record<string, Record<string, string>> = {};
   for (const block of blocks) {
     const blockFields = fields[block.type];
     if (!blockFields) continue;
+    const props = (block.props ?? {}) as Record<string, unknown>;
     const entries: Record<string, string> = {};
     for (const [field, kind] of Object.entries(blockFields)) {
       if (kind !== "url") continue;
-      const value = block.props[field];
+      const value = props[field];
       if (typeof value === "string") entries[field] = value;
     }
     if (Object.keys(entries).length > 0) urls[block.id] = entries;
