@@ -60,6 +60,13 @@ describe("inline rich-text block", () => {
     expect(html).toContain("ac-rich-text");
     expect(html).toContain("<p>body</p>");
   });
+
+  it("marks the inner div with data-field=\"html\" for inline editing", () => {
+    const html = renderToString(
+      createElement(RichText, richTextSchema.parse({ html: "<p>body</p>" })),
+    );
+    expect(html).toContain('data-field="html"');
+  });
 });
 
 describe("architectural anchors via SSR on a registered hero block", () => {

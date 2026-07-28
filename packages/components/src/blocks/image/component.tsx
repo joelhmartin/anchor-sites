@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../../lib/cn.js";
 import { useMediaContext, type MediaVariant } from "../../media-context.js";
+import { EditModeContext } from "../../editable.js";
 import type { ImageProps } from "./schema.js";
 
 function buildSrcset(variants: MediaVariant[]): string {
@@ -14,15 +15,19 @@ function buildSrcset(variants: MediaVariant[]): string {
 export function Image({ asset_id, alt, focal_point, fit, aspect_ratio, sizes }: ImageProps) {
   const ctx = useMediaContext();
   const asset = ctx?.getAsset(asset_id);
+  const editMode = React.useContext(EditModeContext);
 
   if (!asset) {
     // Render a stable placeholder. Per-block error styling is intentionally
     // muted in prod (the renderer's BlockRenderer takes care of the
-    // visible-vs-silent decision; we just emit a small marker).
+    // visible-vs-silent decision; we just emit a small marker). In edit mode
+    // it also needs a minimum height so the overlay has something to click.
     return (
       <picture
         className={cn("ac-image ac-image--missing")}
+        data-field="asset_id"
         data-ac-image-missing={asset_id || "(empty)"}
+        style={editMode ? { minHeight: 80 } : undefined}
       />
     );
   }
@@ -54,6 +59,7 @@ export function Image({ asset_id, alt, focal_point, fit, aspect_ratio, sizes }: 
   return (
     <picture
       className={cn("ac-image", `ac-image--fit-${fit}`)}
+      data-field="asset_id"
       style={wrapperStyle}
     >
       {webpSrcset && <source type="image/webp" srcSet={webpSrcset} sizes={sizes || undefined} />}

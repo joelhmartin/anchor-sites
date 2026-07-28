@@ -19,6 +19,8 @@ import { logoReelSchema } from "../logo-reel/schema.js";
 import { FaqAccordion } from "../faq-accordion/component.js";
 import { faqAccordionSchema } from "../faq-accordion/schema.js";
 
+import { EditModeProvider } from "../../editable.js";
+
 describe("ac-hero", () => {
   it("renders with the ac-hero root class + brand tokens", () => {
     const props = heroSchema.parse({ title: "Hello" });
@@ -38,6 +40,47 @@ describe("ac-hero", () => {
     const props = heroSchema.parse({ title: "T", eyebrow: "We do dentistry" });
     render(<Hero {...props} />);
     expect(screen.getByText("We do dentistry")).toBeInTheDocument();
+  });
+
+  it("marks title/eyebrow/subtitle/cta_label with data-field", () => {
+    const props = heroSchema.parse({
+      title: "T",
+      eyebrow: "Eye",
+      subtitle: "Sub",
+      cta_label: "Go",
+    });
+    const { container } = render(<Hero {...props} />);
+    expect(container.querySelector('[data-field="title"]')?.textContent).toBe("T");
+    expect(container.querySelector('[data-field="eyebrow"]')?.textContent).toBe("Eye");
+    expect(container.querySelector('[data-field="subtitle"]')?.textContent).toBe("Sub");
+    expect(container.querySelector('[data-field="cta_label"]')?.textContent).toBe("Go");
+  });
+
+  it("regression: empty eyebrow/subtitle render nothing in normal mode (identical to today)", () => {
+    const props = heroSchema.parse({ title: "T", eyebrow: "", subtitle: "" });
+    const { container } = render(<Hero {...props} />);
+    expect(container.querySelector('[data-field="eyebrow"]')).toBeNull();
+    expect(container.querySelector('[data-field="subtitle"]')).toBeNull();
+  });
+
+  it("regression: empty cta_label renders no button in normal mode", () => {
+    const props = heroSchema.parse({ title: "T", cta_label: "" });
+    const { container } = render(<Hero {...props} />);
+    expect(container.querySelector(".ac-hero__cta")).toBeNull();
+  });
+
+  it("edit mode: empty eyebrow/subtitle/cta_label become clickable data-empty markers", () => {
+    const props = heroSchema.parse({ title: "T", eyebrow: "", subtitle: "", cta_label: "" });
+    const { container } = render(
+      <EditModeProvider>
+        <Hero {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="eyebrow"][data-empty="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-field="subtitle"][data-empty="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-field="cta_label"][data-empty="true"]')).not.toBeNull();
+    // The button itself must render in edit mode even with an empty label.
+    expect(container.querySelector(".ac-hero__cta")).not.toBeNull();
   });
 });
 
@@ -136,6 +179,49 @@ describe("ac-cta", () => {
     expect(container.querySelector(".ac-cta--muted")).not.toBeNull();
     expect(container.querySelector(".bg-theme-muted")).not.toBeNull();
   });
+
+  it("marks heading/body/button_label with data-field", () => {
+    const props = ctaSchema.parse({ heading: "H", body: "B", button_label: "L" });
+    const { container } = render(<Cta {...props} />);
+    expect(container.querySelector('[data-field="heading"]')?.textContent).toBe("H");
+    expect(container.querySelector('[data-field="body"]')?.textContent).toBe("B");
+    expect(container.querySelector('[data-field="button_label"]')?.textContent).toBe("L");
+  });
+
+  it("regression: empty body renders nothing in normal mode", () => {
+    const props = ctaSchema.parse({ body: "" });
+    const { container } = render(<Cta {...props} />);
+    expect(container.querySelector('[data-field="body"]')).toBeNull();
+  });
+
+  it("edit mode: empty body becomes a clickable data-empty marker", () => {
+    const props = ctaSchema.parse({ body: "" });
+    const { container } = render(
+      <EditModeProvider>
+        <Cta {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="body"][data-empty="true"]')).not.toBeNull();
+  });
+
+  it("regression: empty button_label (bypassing the schema's min(1)) renders no button in normal mode", () => {
+    // button_label has a schema-level min(1), but the button must still be
+    // defensively hidden/shown correctly if a caller supplies "" directly.
+    const props = { ...ctaSchema.parse({}), button_label: "" };
+    const { container } = render(<Cta {...props} />);
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("edit mode: empty button_label still renders the button + a clickable marker", () => {
+    const props = { ...ctaSchema.parse({}), button_label: "" };
+    const { container } = render(
+      <EditModeProvider>
+        <Cta {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="button_label"][data-empty="true"]')).not.toBeNull();
+    expect(container.querySelector("a")).not.toBeNull();
+  });
 });
 
 describe("ac-testimonial-carousel", () => {
@@ -160,6 +246,37 @@ describe("ac-testimonial-carousel", () => {
     });
     render(<TestimonialCarousel {...props} />);
     expect(screen.getByText("CEO")).toBeInTheDocument();
+  });
+
+  it("marks heading with data-field", () => {
+    const props = testimonialCarouselSchema.parse({
+      heading: "Voices",
+      items: [{ quote: "Q", author: "A" }],
+    });
+    const { container } = render(<TestimonialCarousel {...props} />);
+    expect(container.querySelector('[data-field="heading"]')?.textContent).toBe("Voices");
+  });
+
+  it("regression: empty heading renders nothing in normal mode", () => {
+    const props = testimonialCarouselSchema.parse({
+      heading: "",
+      items: [{ quote: "Q", author: "A" }],
+    });
+    const { container } = render(<TestimonialCarousel {...props} />);
+    expect(container.querySelector('[data-field="heading"]')).toBeNull();
+  });
+
+  it("edit mode: empty heading becomes a clickable data-empty marker", () => {
+    const props = testimonialCarouselSchema.parse({
+      heading: "",
+      items: [{ quote: "Q", author: "A" }],
+    });
+    const { container } = render(
+      <EditModeProvider>
+        <TestimonialCarousel {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="heading"][data-empty="true"]')).not.toBeNull();
   });
 });
 
@@ -191,6 +308,28 @@ describe("ac-logo-reel", () => {
     const viewport = container.querySelector(".ac-logo-reel__viewport") as HTMLElement;
     expect(viewport.style.getPropertyValue("--ac-logo-reel-duration")).toBe("45s");
   });
+
+  it("marks heading with data-field", () => {
+    const props = logoReelSchema.parse({ heading: "Trusted by", logos: [{ src: "a", alt: "" }] });
+    const { container } = render(<LogoReel {...props} />);
+    expect(container.querySelector('[data-field="heading"]')?.textContent).toBe("Trusted by");
+  });
+
+  it("regression: empty heading renders nothing in normal mode", () => {
+    const props = logoReelSchema.parse({ logos: [{ src: "a", alt: "" }] });
+    const { container } = render(<LogoReel {...props} />);
+    expect(container.querySelector('[data-field="heading"]')).toBeNull();
+  });
+
+  it("edit mode: empty heading becomes a clickable data-empty marker", () => {
+    const props = logoReelSchema.parse({ logos: [{ src: "a", alt: "" }] });
+    const { container } = render(
+      <EditModeProvider>
+        <LogoReel {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="heading"][data-empty="true"]')).not.toBeNull();
+  });
 });
 
 describe("ac-faq-accordion", () => {
@@ -211,5 +350,27 @@ describe("ac-faq-accordion", () => {
     const props = faqAccordionSchema.parse({ heading: "FAQ", items: [{ question: "x", answer: "y" }] });
     render(<FaqAccordion {...props} />);
     expect(screen.getByText("FAQ")).toBeInTheDocument();
+  });
+
+  it("marks heading with data-field", () => {
+    const props = faqAccordionSchema.parse({ heading: "FAQ", items: [{ question: "x", answer: "y" }] });
+    const { container } = render(<FaqAccordion {...props} />);
+    expect(container.querySelector('[data-field="heading"]')?.textContent).toBe("FAQ");
+  });
+
+  it("regression: empty heading renders nothing in normal mode", () => {
+    const props = faqAccordionSchema.parse({ heading: "", items: [{ question: "x", answer: "y" }] });
+    const { container } = render(<FaqAccordion {...props} />);
+    expect(container.querySelector('[data-field="heading"]')).toBeNull();
+  });
+
+  it("edit mode: empty heading becomes a clickable data-empty marker", () => {
+    const props = faqAccordionSchema.parse({ heading: "", items: [{ question: "x", answer: "y" }] });
+    const { container } = render(
+      <EditModeProvider>
+        <FaqAccordion {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="heading"][data-empty="true"]')).not.toBeNull();
   });
 });

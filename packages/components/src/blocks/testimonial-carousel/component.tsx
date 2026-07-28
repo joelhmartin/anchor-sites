@@ -8,6 +8,7 @@ import {
   CarouselPrevious,
 } from "../../primitives/carousel.js";
 import { Card, CardContent } from "../../primitives/card.js";
+import { Editable } from "../../editable.js";
 import type { TestimonialCarouselProps } from "./schema.js";
 
 export function TestimonialCarousel({
@@ -24,11 +25,12 @@ export function TestimonialCarousel({
   return (
     <section className="ac-testimonial-carousel py-16 px-6 bg-theme-surface text-theme-on-surface">
       <div className="ac-testimonial-carousel__inner max-w-4xl mx-auto">
-        {heading && (
-          <h2 className="ac-testimonial-carousel__heading text-3xl text-center mb-8">
-            {heading}
-          </h2>
-        )}
+        <Editable
+          field="heading"
+          as="h2"
+          className="ac-testimonial-carousel__heading text-3xl text-center mb-8"
+          value={heading}
+        />
         <Carousel opts={{ loop: items.length > 1 }} plugins={plugins}>
           <CarouselContent>
             {items.map((t, i) => (
