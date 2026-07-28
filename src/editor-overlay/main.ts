@@ -14,6 +14,8 @@
 
 import { initBridge, type StudioMsg } from "./bridge.js";
 import { blockTypeFor, findEditables, type EditableFieldMap } from "./dom.js";
+import { createImageOverlay } from "./images.js";
+import { createLinkOverlay, type UrlValueMap } from "./links.js";
 import { createRichTextEditor } from "./rich-text.js";
 import { createTextEditor } from "./text-edit.js";
 
@@ -38,6 +40,14 @@ export interface EditBootData {
   siteId: string;
   pageId: string;
   fields: EditableFieldMap;
+  /**
+   * Task 7 — current values of every url-classified field, keyed by
+   * blockId then field name, built server-side from `page.blocks` (see
+   * `buildUrlValues` in `src/blocks/editable-fields.ts`). Optional: older
+   * fixtures/tests that predate this task omit it, so the link overlay
+   * falls back to `{}`.
+   */
+  urls?: UrlValueMap;
   readonly: boolean;
 }
 
@@ -60,19 +70,24 @@ export function boot(): (() => void) | undefined {
 
   const editor = createTextEditor();
   const richTextEditor = createRichTextEditor();
+  const imageOverlay = createImageOverlay();
+  const linkOverlay = createLinkOverlay();
 
   const bridge = initBridge(bootData.token, (msg: StudioMsg) => {
     switch (msg.type) {
       case "apply-field":
         editor.applyField(msg.blockId, msg.field, msg.value);
         richTextEditor.applyField(msg.blockId, msg.field, msg.value);
+        linkOverlay.applyField(msg.blockId, msg.field, msg.value);
         break;
       case "set-readonly":
         editor.setReadonly(msg.on, msg.reason);
         richTextEditor.setReadonly(msg.on, msg.reason);
+        imageOverlay.setReadonly(msg.on);
+        linkOverlay.setReadonly(msg.on);
         break;
       case "apply-image":
-        // Image editing lands in a later task; no-op for now.
+        imageOverlay.applyImage(msg.blockId, msg.field, msg.src, msg.alt);
         break;
     }
   });
@@ -83,10 +98,14 @@ export function boot(): (() => void) | undefined {
 
   editor.activate(plainTextEditables, bridge, bootData.token);
   richTextEditor.activate(richTextEditables, bridge, bootData.token);
+  imageOverlay.activate(document, bootData.fields, bridge, bootData.token);
+  linkOverlay.activate(document, bootData.fields, bootData.urls ?? {}, bridge, bootData.token);
 
   if (bootData.readonly) {
     editor.setReadonly(true);
     richTextEditor.setReadonly(true);
+    imageOverlay.setReadonly(true);
+    linkOverlay.setReadonly(true);
   }
 
   bridge.send({ ac: "edit", token: bootData.token, type: "edit-ready" });

@@ -19,7 +19,7 @@ import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { tokenFromQuery } from "./admin-ai-agent.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
-import { buildEditableFieldMap } from "../../blocks/editable-fields.js";
+import { buildEditableFieldMap, buildUrlValues } from "../../blocks/editable-fields.js";
 
 // Inline Editing Task 4 — Studio mints this token (`crypto.randomUUID()`) and
 // passes it in as `?bridge=`; the server never generates or stores it (keeps
@@ -299,6 +299,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             return;
           }
           const nonce = makeNonce();
+          const fields = buildEditableFieldMap();
           editable = {
             overlayJs: getOverlayJs(),
             nonce,
@@ -306,7 +307,11 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
               token: bridgeToken,
               siteId,
               pageId,
-              fields: buildEditableFieldMap(),
+              fields,
+              // Task 7 — current values of every url-classified field, so the
+              // overlay's link chip can hand Studio's popover a starting
+              // value without the overlay having to infer it from markup.
+              urls: buildUrlValues(page.blocks, fields),
               readonly: false,
             },
           };

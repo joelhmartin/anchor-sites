@@ -1,5 +1,6 @@
 import { listBlocks } from "./registry.js";
 import { coreType, type ZodLike } from "../editor/zod-fields.js";
+import type { Block } from "./types.js";
 
 /**
  * Schema-derived editable-field classifier (Inline Editing Task 3).
@@ -56,4 +57,35 @@ export function buildEditableFieldMap(): EditableFieldMap {
     map[type] = fields;
   }
   return map;
+}
+
+/**
+ * Task 7 — the overlay's link chip needs the CURRENT value of every
+ * `url`-classified field to hand Studio's link popover a starting value
+ * (the overlay only sees rendered markup, not prop values for fields that
+ * have no `[data-field]` DOM node of their own, e.g. a `cta_href` that
+ * drives an `<a href>` but isn't itself rendered as editable text). Built
+ * server-side, once per preview request, from the page's actual blocks +
+ * the same classifier map bootData already sends — never recomputed
+ * client-side.
+ *
+ * Only string prop values are included (a `url`-classified field is always
+ * a ZodString per `classifyField`, but stored props are `unknown` — a
+ * corrupt/legacy value of the wrong type is silently skipped rather than
+ * coerced).
+ */
+export function buildUrlValues(blocks: Block[], fields: EditableFieldMap): Record<string, Record<string, string>> {
+  const urls: Record<string, Record<string, string>> = {};
+  for (const block of blocks) {
+    const blockFields = fields[block.type];
+    if (!blockFields) continue;
+    const entries: Record<string, string> = {};
+    for (const [field, kind] of Object.entries(blockFields)) {
+      if (kind !== "url") continue;
+      const value = block.props[field];
+      if (typeof value === "string") entries[field] = value;
+    }
+    if (Object.keys(entries).length > 0) urls[block.id] = entries;
+  }
+  return urls;
 }

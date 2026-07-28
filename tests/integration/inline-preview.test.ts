@@ -27,7 +27,11 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
   let app: express.Express;
 
   const heroAndRichText = [
-    { id: "h1", type: "hero", props: { title: "Welcome to Acme", align: "center" } },
+    {
+      id: "h1",
+      type: "hero",
+      props: { title: "Welcome to Acme", align: "center", cta_href: "https://example.com/contact" },
+    },
     { id: "r1", type: "rich-text", props: { html: "<p>Body copy</p>" } },
   ];
 
@@ -59,6 +63,11 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(res.text).toContain("window.__AC_EDIT_BOOT__");
     expect(res.text).toContain('"token":"tok_abc123"');
     expect(res.text).toContain("__AC_EDIT_OVERLAY__");
+    // Task 7 — bootData.urls carries the CURRENT value of every url-classified
+    // field (built server-side from page.blocks + the classifier), keyed by
+    // blockId then field name, so the overlay's link chip can hand Studio's
+    // popover a starting value.
+    expect(res.text).toContain('"urls":{"h1":{"cta_href":"https://example.com/contact"}}');
 
     const csp = res.headers["content-security-policy"];
     expect(csp).toContain("script-src 'nonce-");
