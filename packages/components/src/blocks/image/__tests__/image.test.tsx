@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Image } from "../component.js";
 import { imageSchema } from "../schema.js";
 import { MediaProvider, type MediaAssetData } from "../../../media-context.js";
+import { EditModeProvider } from "../../../editable.js";
 
 function makeAsset(overrides: Partial<MediaAssetData> = {}): MediaAssetData {
   return {
@@ -102,6 +103,35 @@ describe("ac-image (P3-T3.12)", () => {
     const picture = container.querySelector("picture.ac-image.ac-image--missing");
     expect(picture).not.toBeNull();
     expect(picture!.getAttribute("data-ac-image-missing")).toBe("missing-id");
+  });
+
+  it("marks the <picture> with data-field=\"asset_id\" when the asset resolves", () => {
+    const { container } = renderWith(makeAsset());
+    expect(container.querySelector('picture[data-field="asset_id"]')).not.toBeNull();
+  });
+
+  it('marks the missing-asset placeholder with data-field="asset_id" too', () => {
+    const { container } = renderWith(null, { asset_id: "missing-id" });
+    const picture = container.querySelector("picture.ac-image--missing");
+    expect(picture!.getAttribute("data-field")).toBe("asset_id");
+  });
+
+  it("regression: missing-asset placeholder has no forced minHeight in normal mode", () => {
+    const { container } = renderWith(null, { asset_id: "missing-id" });
+    const picture = container.querySelector("picture.ac-image--missing") as HTMLElement;
+    expect(picture.style.minHeight).toBe("");
+  });
+
+  it("edit mode: missing-asset placeholder gets a minHeight so it stays clickable", () => {
+    const { container } = render(
+      <EditModeProvider>
+        <MediaProvider assets={[]}>
+          <Image {...imageSchema.parse({ asset_id: "missing-id" })} />
+        </MediaProvider>
+      </EditModeProvider>,
+    );
+    const picture = container.querySelector("picture.ac-image--missing") as HTMLElement;
+    expect(picture.style.minHeight).toBe("80px");
   });
 
   it("renders ac-image--missing-variants if the asset has no jpg variant", () => {

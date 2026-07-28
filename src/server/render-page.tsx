@@ -8,9 +8,10 @@ import { BlockRenderer } from "../components/BlockRenderer.js";
 import type { Block } from "../blocks/types.js";
 import type { ResolvedSite } from "../middleware/resolveSite.js";
 import { mergeBrandTokens } from "../blocks/brand-tokens.js";
-import { MediaProvider, type MediaAssetData } from "@anchorcorps/components";
+import { EditModeProvider, MediaProvider, type MediaAssetData } from "@anchorcorps/components";
 import { hostnameForSlug } from "../config/domain.js";
 import { analyticsScriptTag } from "./analytics.js";
+import { OVERLAY_CSS } from "./preview-overlay.js";
 import {
   applyTitleTemplate,
   effectiveRobots,
@@ -259,6 +260,12 @@ export function renderPage(
     ogImage?: OgImage;
     /** P9-T9.4 — extra JSON-LD nodes (BlogPosting / Event) from the route. */
     extraJsonLd?: Array<Record<string, unknown>>;
+    /**
+     * Inline Editing Task 4 — when set, the preview route renders with block
+     * markers (`data-block-id` / `data-field`), a nonce-scoped inline overlay
+     * script, and its boot payload. Absent in every non-preview render path.
+     */
+    editable?: { overlayJs: string; nonce: string; bootData: object };
   } = {},
 ): { html: string; status: number } {
   const pageSeo = parseSeoLoose(page.seo);
@@ -287,17 +294,30 @@ export function renderPage(
     ...(opts.extraJsonLd ?? []),
   ]);
 
+  // P3-T3.14 — wrap BlockRenderer in MediaProvider so the Image
+  // block + hero-slider can resolve `asset_id` / `image_asset_id`
+  // against the hydrated rows. Empty assets array is the no-image
+  // case and renders the placeholder cleanly.
+  const blockTree = (
+    <MediaProvider assets={opts.assets ?? []}>
+      <BlockRenderer blocks={page.blocks ?? []} editable={Boolean(opts.editable)} />
+    </MediaProvider>
+  );
+  // Inline Editing Task 4 — `EditModeProvider` flips `Editable` (inside
+  // `@anchorcorps/components`) into always-rendered/data-field mode; the
+  // plain render path never touches this, so byte-behavior is unchanged
+  // when `opts.editable` is absent.
   const bodyHtml = renderShellContent(
     site,
-    // P3-T3.14 — wrap BlockRenderer in MediaProvider so the Image
-    // block + hero-slider can resolve `asset_id` / `image_asset_id`
-    // against the hydrated rows. Empty assets array is the no-image
-    // case and renders the placeholder cleanly.
-    <MediaProvider assets={opts.assets ?? []}>
-      <BlockRenderer blocks={page.blocks ?? []} />
-    </MediaProvider>,
+    opts.editable ? <EditModeProvider>{blockTree}</EditModeProvider> : blockTree,
   );
   const seoMeta = renderSeoMeta(site, seo, { canonical, ogImage, title: baseTitle });
+  // Inline Editing Task 4 (exact, per brief) — the boot script carries the
+  // overlay's boot payload. `\u003c` escapes any `<` a bootData string might
+  // contain so it can never form a `</script>` breakout.
+  const editHead = opts.editable
+    ? `\n<script nonce="${opts.editable.nonce}">window.__AC_EDIT_BOOT__ = ${JSON.stringify(opts.editable.bootData).replace(/</g, "\\u003c")};\n${opts.editable.overlayJs}</script>`
+    : "";
   return shell({
     site,
     title,
@@ -305,7 +325,8 @@ export function renderPage(
     bodyHtml,
     status: 200,
     pageOverride: page.brand_tokens_override ?? null,
-    headExtra: jsonLd ? `${seoMeta}\n  ${jsonLd}` : seoMeta,
+    headExtra: jsonLd ? `${seoMeta}\n  ${jsonLd}${editHead}` : `${seoMeta}${editHead}`,
+    extraCss: opts.editable ? OVERLAY_CSS : undefined,
   });
 }
 

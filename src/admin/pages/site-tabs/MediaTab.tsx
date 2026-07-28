@@ -1,19 +1,11 @@
 import { useRef, useState } from "react";
 import { apiFetch } from "../../lib/apiFetch.js";
 import { useApi } from "../../lib/useApi.js";
+import { pickThumb, type Variant } from "../../lib/media-utils.js";
 import { Badge, type BadgeProps } from "../../ui/badge.js";
 import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
 import { Spinner } from "../../ui/spinner.js";
-
-type Variant = {
-  name: string;
-  format: string;
-  width: number;
-  height: number;
-  url: string;
-  bytes: number;
-};
 
 type MediaAsset = {
   id: string;
@@ -31,14 +23,6 @@ type SignedUpload = {
   upload_url: string;
   headers: Record<string, string>;
 };
-
-/** Smallest ready variant for a thumbnail; prefer webp on a width tie. */
-function pickThumb(variants: Variant[] | null): Variant | null {
-  if (!variants || variants.length === 0) return null;
-  return [...variants].sort(
-    (a, b) => a.width - b.width || (a.format === "webp" ? -1 : 1),
-  )[0];
-}
 
 function statusTone(status: string): BadgeProps["tone"] {
   if (status === "ready") return "success";

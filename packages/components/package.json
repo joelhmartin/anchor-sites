@@ -1,6 +1,6 @@
 {
   "name": "@anchorcorps/components",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AnchorCorps global component library — opinionated ac-prefixed blocks built on shadcn/ui primitives and Embla.",
   "type": "module",
   "license": "UNLICENSED",

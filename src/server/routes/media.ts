@@ -11,6 +11,8 @@ import {
 } from "../media/storage.js";
 import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
 import type { PgBoss } from "pg-boss";
+import { searchPixabay } from "../media/pixabay.js";
+import { ingestImageFromUrl } from "../media/ingest.js";
 
 /**
  * Media admin API (P3-T3.9 + P3-T3.11).
@@ -22,7 +24,17 @@ import type { PgBoss } from "pg-boss";
  *   POST /api/sites/:siteId/media/:assetId/complete   (P3-T3.11)
  *     enqueues media.process-upload via pg-boss
  *
- * Both require X-Admin-Token. requireAdmin is applied per-route so
+ *   POST /api/sites/:siteId/media/stock-search   (Task 8, inline editing)
+ *     body: { query, per_page? } → { mode, hits: [{ id, tags, preview,
+ *     download_url, width, height, credit }] } — same hit-mapping convention
+ *     as the AI agent's search_stock_images tool (tools/assets.ts).
+ *
+ *   POST /api/sites/:siteId/media/stock-import   (Task 8, inline editing)
+ *     body: { url, alt } → 202 { asset_id } — delegates to
+ *     ingestImageFromUrl (SSRF/size/timeout guards ride along); guard
+ *     rejections surface as 400 invalid-payload responses.
+ *
+ * All require X-Admin-Token. requireAdmin is applied per-route so
  * unknown /api/* paths fall through to a 404 rather than 401.
  */
 
@@ -40,6 +52,16 @@ const uploadUrlPayload = z.object({
   focal_point: focalPointSchema.optional(),
 });
 
+const stockSearchPayload = z.object({
+  query: z.string().min(2).max(100),
+  per_page: z.number().int().min(1).max(20).optional(),
+});
+
+const stockImportPayload = z.object({
+  url: z.string().url(),
+  alt: z.string().min(3).max(500),
+});
+
 export type MediaRouterOptions = {
   pool?: Pool;
   signUpload?: typeof signUploadUrl;
@@ -50,6 +72,10 @@ export type MediaRouterOptions = {
    * accessor. Tests pass a `{ send }` stub.
    */
   enqueue?: (jobName: string, data: unknown) => Promise<string | null>;
+  /** Inject a stock-photo search fn for tests. Defaults to searchPixabay. */
+  searchFn?: typeof searchPixabay;
+  /** Inject an ingest fn for tests. Defaults to ingestImageFromUrl. */
+  ingestFn?: typeof ingestImageFromUrl;
 };
 
 export function mediaRouter(opts: MediaRouterOptions = {}): Router {
@@ -64,6 +90,8 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
       const boss: PgBoss = getBoss();
       return boss.send(name, data as Record<string, unknown>);
     });
+  const search = opts.searchFn ?? searchPixabay;
+  const ingest = opts.ingestFn ?? ingestImageFromUrl;
   const router = Router();
 
   const admin = requireAdmin();
@@ -165,6 +193,115 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
 
         await enqueue(MEDIA_PROCESS_UPLOAD, { asset_id: assetId });
         res.status(202).json({ asset_id: assetId, variants_status: "pending", enqueued: true });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/media/stock-search — Task 8 (inline editing)
+  //
+  // Thin wrapper around searchPixabay for the operator media picker. Hit
+  // mapping mirrors the AI agent's search_stock_images tool exactly
+  // (tools/assets.ts) so both surfaces speak the same shape.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/media/stock-search",
+    admin,
+    limiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId } = req.params;
+
+      const parsed = stockSearchPayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+
+      try {
+        const siteOk = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+
+        const { query, per_page } = parsed.data;
+        const { mode, hits } = await search(query, { perPage: per_page });
+        res.status(200).json({
+          mode,
+          hits: hits.map((h) => ({
+            id: h.id,
+            tags: h.tags,
+            preview: h.previewURL,
+            download_url: h.largeImageURL,
+            width: h.imageWidth,
+            height: h.imageHeight,
+            credit: h.user,
+          })),
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/media/stock-import — Task 8 (inline editing)
+  //
+  // Delegates to ingestImageFromUrl, which carries its own SSRF/size/timeout
+  // guards (media/ingest.ts). A guard rejection throws a plain Error — caught
+  // here and surfaced as a 400 invalid-payload response (same shape as a
+  // failed zod parse) rather than a 500, since it's the caller-supplied url
+  // that's at fault.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/media/stock-import",
+    admin,
+    limiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId } = req.params;
+
+      const parsed = stockImportPayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+
+      try {
+        const siteOk = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+
+        const { url, alt } = parsed.data;
+        try {
+          const result = await ingest(pool, { siteId, url, alt });
+          res.status(202).json({ asset_id: result.asset_id });
+        } catch (guardErr) {
+          res.status(400).json({
+            error: "invalid payload",
+            details: [
+              {
+                path: "url",
+                message: guardErr instanceof Error ? guardErr.message : "image import failed",
+              },
+            ],
+          });
+        }
       } catch (err) {
         next(err);
       }

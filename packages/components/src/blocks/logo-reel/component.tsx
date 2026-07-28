@@ -1,4 +1,5 @@
 import { cn } from "../../lib/cn.js";
+import { Editable } from "../../editable.js";
 import type { LogoReelProps, LogoEntry } from "./schema.js";
 
 function LogoItem({ logo }: { logo: LogoEntry }) {
@@ -26,11 +27,12 @@ export function LogoReel({ heading, logos, speed_seconds }: LogoReelProps) {
 
   return (
     <section className="ac-logo-reel py-10 bg-theme-surface text-theme-on-surface">
-      {heading && (
-        <h2 className="ac-logo-reel__heading text-center text-sm uppercase tracking-wider opacity-70 mb-6">
-          {heading}
-        </h2>
-      )}
+      <Editable
+        field="heading"
+        as="h2"
+        className="ac-logo-reel__heading text-center text-sm uppercase tracking-wider opacity-70 mb-6"
+        value={heading}
+      />
       <div className={cn("ac-logo-reel__viewport overflow-hidden")} style={style}>
         <div className="ac-logo-reel__track flex items-center w-max">
           {doubled.map((logo, i) => (

@@ -18,6 +18,14 @@ import { renderPage, type PageRecord } from "../render-page.js";
 import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { tokenFromQuery } from "./admin-ai-agent.js";
+import { getOverlayJs, makeNonce } from "../preview-overlay.js";
+import { buildEditableFieldMap, buildUrlValues } from "../../blocks/editable-fields.js";
+
+// Inline Editing Task 4 — Studio mints this token (`crypto.randomUUID()`) and
+// passes it in as `?bridge=`; the server never generates or stores it (keeps
+// this route stateless). Only shape-validated here, then echoed verbatim into
+// bootData so Studio's postMessage bridge can correlate replies back to it.
+const BRIDGE_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
@@ -111,7 +119,24 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             ? JSON.stringify(payload.brand_tokens_override)
             : null;
 
-        const pageRes = await client.query<{ id: string; status: string }>(
+        // Critical 1 (final review): `RETURNING seo` gives us the RESOLVED
+        // seo value from the same UPDATE statement/transaction — thanks to
+        // `COALESCE($2::jsonb, seo)` above, that's payload.seo when the
+        // caller sent one, or the page's PRE-EXISTING seo unchanged when it
+        // didn't. The inline-editing engine's save calls (`src/admin/lib/
+        // inline-editor.ts`) never send `seo` at all — before this fix, the
+        // revision insert below used `payload.seo ?? {}` directly, so every
+        // inline save wrote an SEO-EMPTY revision snapshot even though the
+        // page's actual seo column was untouched. Restoring that revision
+        // (the restore route applies `revision.seo` unconditionally, not
+        // COALESCE) then wiped the page's seo to `{}`. Using the UPDATE's
+        // own RETURNING value instead of the raw payload closes that gap
+        // without a second SELECT (mirrors the "read current state inside
+        // the same transaction" approach `pages.ts`'s update_page tool uses
+        // for its before/after revision snapshots, but atomically — no
+        // separate SELECT ... FOR UPDATE needed since this UPDATE already
+        // touches the row).
+        const pageRes = await client.query<{ id: string; status: string; seo: Record<string, unknown> }>(
           `UPDATE pages
               SET blocks = $1::jsonb,
                   seo = COALESCE($2::jsonb, seo),
@@ -122,7 +147,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
                   END,
                   status = COALESCE($7, status)
             WHERE id = $3 AND site_id = $4
-            RETURNING id, status`,
+            RETURNING id, status, seo`,
           [
             JSON.stringify(payload.blocks),
             payload.seo ? JSON.stringify(payload.seo) : null,
@@ -140,6 +165,8 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           return;
         }
 
+        const resolvedSeo = pageRes.rows[0].seo ?? {};
+
         const revRes = await client.query<{ id: string; created_at: Date }>(
           `INSERT INTO page_revisions (page_id, blocks, seo, source)
            VALUES ($1, $2::jsonb, $3::jsonb, $4)
@@ -147,7 +174,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           [
             pageId,
             JSON.stringify(payload.blocks),
-            JSON.stringify(payload.seo ?? {}),
+            JSON.stringify(resolvedSeo),
             payload.source ?? "manual",
           ],
         );
@@ -159,7 +186,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             id: pageId,
             site_id: siteId,
             blocks: payload.blocks,
-            seo: payload.seo ?? {},
+            seo: resolvedSeo,
             status: pageRes.rows[0].status,
           },
           revision: { id: revRes.rows[0].id, created_at: revRes.rows[0].created_at },
@@ -275,6 +302,40 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // published, instead of only matching every NON-home slug.
         const previewPath = page.slug === "home" ? "/" : `/${page.slug}`;
 
+        // Inline Editing Task 4 — `?edit=1&bridge=<token>` opts this preview
+        // into edit mode. The bridge token is Studio-minted
+        // (`crypto.randomUUID()`) and passed in via the query string (the
+        // iframe consumer can't set/read headers); the server only shape-
+        // validates it, then echoes it into bootData so Studio's
+        // postMessage listener can match replies to the session that
+        // requested them. A malformed token 400s before any CSP/render work.
+        const editMode = req.query.edit === "1";
+        let editable: { overlayJs: string; nonce: string; bootData: object } | undefined;
+        if (editMode) {
+          const bridgeToken = req.query.bridge;
+          if (typeof bridgeToken !== "string" || !BRIDGE_TOKEN_RE.test(bridgeToken)) {
+            res.status(400).json({ error: "invalid bridge token" });
+            return;
+          }
+          const nonce = makeNonce();
+          const fields = buildEditableFieldMap();
+          editable = {
+            overlayJs: getOverlayJs(),
+            nonce,
+            bootData: {
+              token: bridgeToken,
+              siteId,
+              pageId,
+              fields,
+              // Task 7 — current values of every url-classified field, so the
+              // overlay's link chip can hand Studio's popover a starting
+              // value without the overlay having to infer it from markup.
+              urls: buildUrlValues(page.blocks, fields),
+              readonly: false,
+            },
+          };
+        }
+
         // Critical 2 (defense in depth alongside the iframe's `sandbox`
         // attribute): this response is served same-origin at /api/... and
         // renders operator/AI-authored blocks. `res.setHeader` REPLACES
@@ -308,12 +369,26 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // `data:` so the package block CSS + any real image URLs still
         // render; `frame-ancestors 'self'` (not `*`) since only this app
         // embeds its own preview.
-        res.setHeader(
-          "Content-Security-Policy",
-          "sandbox allow-scripts; default-src 'self' https: data:; " +
-            "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
-            "script-src 'none'; frame-ancestors 'self'",
-        );
+        // Inline Editing Task 4: edit mode needs the overlay's inline
+        // `<script nonce="...">` to execute, so its CSP swaps `script-src
+        // 'none'` for a nonce allowlist scoped to that one script tag —
+        // everything else about the policy (sandbox, style-src, img-src,
+        // frame-ancestors) is identical to the plain-preview policy above.
+        if (editable) {
+          res.setHeader(
+            "Content-Security-Policy",
+            "sandbox allow-scripts; default-src 'self' https: data:; " +
+              "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+              `script-src 'nonce-${editable.nonce}'; frame-ancestors 'self'`,
+          );
+        } else {
+          res.setHeader(
+            "Content-Security-Policy",
+            "sandbox allow-scripts; default-src 'self' https: data:; " +
+              "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+              "script-src 'none'; frame-ancestors 'self'",
+          );
+        }
         // Item 9 (CodeRabbit — preview refresh): the client now busts the
         // URL itself with a `v=<nonce>` query param on every change
         // (SiteDetailPage.tsx), but `no-store` closes the same gap
@@ -330,7 +405,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // short-lived, single-use preview token instead of the long-lived
         // admin token) is deferred — see the route-header comment above.
         res.setHeader("Referrer-Policy", "no-referrer");
-        const { html } = renderPage(site, page, { assets, path: previewPath });
+        const { html } = renderPage(site, page, { assets, path: previewPath, editable });
         res.status(200).type("html").send(html);
       } catch (err) {
         next(err);
