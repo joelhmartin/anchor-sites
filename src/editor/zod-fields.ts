@@ -26,8 +26,11 @@ import type { Field, Fields } from "./index.js";
  */
 
 // zod's internal defs aren't part of its public types; introspect structurally.
-type ZodLike = { _def?: ZodDef };
-type ZodDef = {
+// Exported so other modules that need to walk Zod schemas at runtime (e.g.
+// `src/blocks/editable-fields.ts`) reuse this one unwrap helper instead of
+// reimplementing it.
+export type ZodLike = { _def?: ZodDef };
+export type ZodDef = {
   typeName?: string;
   innerType?: ZodLike;
   schema?: ZodLike;
@@ -41,7 +44,7 @@ type ZodDef = {
 const def = (s: ZodLike): ZodDef => s?._def ?? {};
 
 /** Strip Default/Optional/Nullable/Effects wrappers to the underlying type. */
-function coreType(schema: ZodLike): ZodLike {
+export function coreType(schema: ZodLike): ZodLike {
   let cur = schema;
   for (let i = 0; i < 20 && cur?._def; i++) {
     const d = def(cur);

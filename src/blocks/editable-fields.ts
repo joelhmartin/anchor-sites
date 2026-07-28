@@ -1,0 +1,59 @@
+import { listBlocks } from "./registry.js";
+import { coreType, type ZodLike } from "../editor/zod-fields.js";
+
+/**
+ * Schema-derived editable-field classifier (Inline Editing Task 3).
+ *
+ * Walks every registered block's Zod schema (same registry-walk pattern as
+ * `src/server/ai/catalog.ts`) and classifies each TOP-LEVEL shape entry into
+ * a `FieldKind` the inline editor knows how to render an affordance for.
+ * Nothing recurses into arrays or nested objects — only bare top-level
+ * strings are eligible, per the classification rules below.
+ *
+ * Classification (exact):
+ *   1. Name matches `/asset_id$/`                          -> "image"
+ *   2. ZodString with a `.url()` check, OR name matches
+ *      `/(^|_)(url|href|link)$/`                            -> "url"
+ *   3. Any other bare ZodString (not ZodEnum, not nested
+ *      inside an array/object)                              -> "text"
+ *   4. Everything else (enum, number, boolean, array,
+ *      object, ...) is excluded from the map entirely.
+ */
+export type FieldKind = "text" | "url" | "image";
+export type EditableFieldMap = Record<string, Record<string, FieldKind>>;
+
+const ASSET_ID_NAME = /asset_id$/;
+const URL_LIKE_NAME = /(^|_)(url|href|link)$/;
+
+function classifyField(name: string, schema: ZodLike): FieldKind | undefined {
+  const core = coreType(schema);
+  if (core?._def?.typeName !== "ZodString") return undefined;
+
+  if (ASSET_ID_NAME.test(name)) return "image";
+
+  const hasUrlCheck = (core._def?.checks ?? []).some((c) => c.kind === "url");
+  if (hasUrlCheck || URL_LIKE_NAME.test(name)) return "url";
+
+  return "text";
+}
+
+/**
+ * Build the full blockType -> field -> FieldKind map from the live block
+ * registry. Every registered block type gets an entry (possibly `{}` if it
+ * has no editable fields, e.g. a block whose only top-level field is an
+ * array) so callers can rely on `map[type]` always being defined.
+ */
+export function buildEditableFieldMap(): EditableFieldMap {
+  const map: EditableFieldMap = {};
+  for (const { type, entry } of listBlocks()) {
+    const schema = entry.schema as unknown as ZodLike;
+    const shape = schema._def?.typeName === "ZodObject" ? (schema._def.shape?.() ?? {}) : {};
+    const fields: Record<string, FieldKind> = {};
+    for (const [key, child] of Object.entries(shape)) {
+      const kind = classifyField(key, child);
+      if (kind) fields[key] = kind;
+    }
+    map[type] = fields;
+  }
+  return map;
+}
