@@ -48,3 +48,15 @@ export function __resetOverlayCacheForTests(): void {
 export function makeNonce(): string {
   return randomBytes(16).toString("base64url");
 }
+
+/**
+ * Placeholder overlay CSS (Task 4) — hover-outline only, so an editable field
+ * is visibly discoverable in the preview iframe before the real interaction
+ * styles land. Task 5 (I5) replaces this with the full `OVERLAY_CSS` (empty
+ * placeholders, selection state, drag affordances, etc.) — keep this minimal
+ * on purpose so that follow-up diff stays clean.
+ */
+export const OVERLAY_CSS = `
+[data-field] { outline: 1px dashed transparent; outline-offset: 1px; cursor: text; }
+[data-field]:hover { outline-color: rgba(99, 102, 241, 0.6); }
+`;

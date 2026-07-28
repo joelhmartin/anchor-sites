@@ -18,6 +18,14 @@ import { renderPage, type PageRecord } from "../render-page.js";
 import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { tokenFromQuery } from "./admin-ai-agent.js";
+import { getOverlayJs, makeNonce } from "../preview-overlay.js";
+import { buildEditableFieldMap } from "../../blocks/editable-fields.js";
+
+// Inline Editing Task 4 — Studio mints this token (`crypto.randomUUID()`) and
+// passes it in as `?bridge=`; the server never generates or stores it (keeps
+// this route stateless). Only shape-validated here, then echoed verbatim into
+// bootData so Studio's postMessage bridge can correlate replies back to it.
+const BRIDGE_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 const savePayload = z.object({
   blocks: z.array(blockShape),
@@ -275,6 +283,35 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // published, instead of only matching every NON-home slug.
         const previewPath = page.slug === "home" ? "/" : `/${page.slug}`;
 
+        // Inline Editing Task 4 — `?edit=1&bridge=<token>` opts this preview
+        // into edit mode. The bridge token is Studio-minted
+        // (`crypto.randomUUID()`) and passed in via the query string (the
+        // iframe consumer can't set/read headers); the server only shape-
+        // validates it, then echoes it into bootData so Studio's
+        // postMessage listener can match replies to the session that
+        // requested them. A malformed token 400s before any CSP/render work.
+        const editMode = req.query.edit === "1";
+        let editable: { overlayJs: string; nonce: string; bootData: object } | undefined;
+        if (editMode) {
+          const bridgeToken = req.query.bridge;
+          if (typeof bridgeToken !== "string" || !BRIDGE_TOKEN_RE.test(bridgeToken)) {
+            res.status(400).json({ error: "invalid bridge token" });
+            return;
+          }
+          const nonce = makeNonce();
+          editable = {
+            overlayJs: getOverlayJs(),
+            nonce,
+            bootData: {
+              token: bridgeToken,
+              siteId,
+              pageId,
+              fields: buildEditableFieldMap(),
+              readonly: false,
+            },
+          };
+        }
+
         // Critical 2 (defense in depth alongside the iframe's `sandbox`
         // attribute): this response is served same-origin at /api/... and
         // renders operator/AI-authored blocks. `res.setHeader` REPLACES
@@ -308,12 +345,26 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // `data:` so the package block CSS + any real image URLs still
         // render; `frame-ancestors 'self'` (not `*`) since only this app
         // embeds its own preview.
-        res.setHeader(
-          "Content-Security-Policy",
-          "sandbox allow-scripts; default-src 'self' https: data:; " +
-            "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
-            "script-src 'none'; frame-ancestors 'self'",
-        );
+        // Inline Editing Task 4: edit mode needs the overlay's inline
+        // `<script nonce="...">` to execute, so its CSP swaps `script-src
+        // 'none'` for a nonce allowlist scoped to that one script tag —
+        // everything else about the policy (sandbox, style-src, img-src,
+        // frame-ancestors) is identical to the plain-preview policy above.
+        if (editable) {
+          res.setHeader(
+            "Content-Security-Policy",
+            "sandbox allow-scripts; default-src 'self' https: data:; " +
+              "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+              `script-src 'nonce-${editable.nonce}'; frame-ancestors 'self'`,
+          );
+        } else {
+          res.setHeader(
+            "Content-Security-Policy",
+            "sandbox allow-scripts; default-src 'self' https: data:; " +
+              "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+              "script-src 'none'; frame-ancestors 'self'",
+          );
+        }
         // Item 9 (CodeRabbit — preview refresh): the client now busts the
         // URL itself with a `v=<nonce>` query param on every change
         // (SiteDetailPage.tsx), but `no-store` closes the same gap
@@ -330,7 +381,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // short-lived, single-use preview token instead of the long-lived
         // admin token) is deferred — see the route-header comment above.
         res.setHeader("Referrer-Policy", "no-referrer");
-        const { html } = renderPage(site, page, { assets, path: previewPath });
+        const { html } = renderPage(site, page, { assets, path: previewPath, editable });
         res.status(200).type("html").send(html);
       } catch (err) {
         next(err);
