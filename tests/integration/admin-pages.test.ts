@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
@@ -516,5 +516,136 @@ d("admin pages rate limiting (integration)", () => {
     const r3 = await request(app).post(url).set(headers).send({ blocks: validBlocks("-3") });
     expect(r3.status).toBe(429);
     expect(r3.headers["retry-after"]).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// git.export publish trigger (T4, GitHub sync)
+// ---------------------------------------------------------------------------
+d("admin pages — git.export publish trigger (T4)", () => {
+  let pool: Pool;
+  let siteId: string;
+  let pageId: string;
+  const originalToken = process.env.GITHUB_CONTENT_TOKEN;
+  const originalRepo = process.env.GITHUB_CONTENT_REPO;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+
+    const r = await pool.query<{ id: string; page_id: string }>(
+      `SELECT s.id, p.id AS page_id
+         FROM sites s JOIN pages p ON p.site_id = s.id
+        WHERE s.slug = 'muldoon-dental' AND p.slug = 'home'`,
+    );
+    siteId = r.rows[0].id;
+    pageId = r.rows[0].page_id;
+
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    // Enabled ("api") mode — the route's resolveGitMode() check reads real
+    // env, so these tests need it non-disabled to reach the getGitState gate.
+    process.env.GITHUB_CONTENT_TOKEN = "tok123";
+    process.env.GITHUB_CONTENT_REPO = "acme/content";
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]).catch(() => undefined);
+    await pool.query(`UPDATE pages SET status = 'draft' WHERE id = $1`, [pageId]).catch(() => undefined);
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+    if (originalToken === undefined) delete process.env.GITHUB_CONTENT_TOKEN;
+    else process.env.GITHUB_CONTENT_TOKEN = originalToken;
+    if (originalRepo === undefined) delete process.env.GITHUB_CONTENT_REPO;
+    else process.env.GITHUB_CONTENT_REPO = originalRepo;
+  });
+
+  beforeEach(async () => {
+    await pool.query(`DELETE FROM page_revisions WHERE page_id = $1`, [pageId]);
+    await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]);
+    await pool.query(`UPDATE pages SET status = 'draft', brand_tokens_override = NULL WHERE id = $1`, [pageId]);
+  });
+
+  function buildAppWithEnqueueSpy(
+    spy: (input: { siteId: string; trigger: string }) => Promise<string | null>,
+  ): express.Express {
+    const app = express();
+    app.use(express.json({ limit: "1mb" }));
+    app.use(
+      "/api",
+      adminPagesRouter({
+        pool,
+        saveRateLimit: { max: 100, windowMs: 60_000 },
+        enqueueGitExport: spy,
+      }),
+    );
+    return app;
+  }
+
+  it("enqueues git.export once with {siteId, trigger:'publish'} when a publish save's site has git sync enabled", async () => {
+    await pool.query(
+      `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, true, now())`,
+      [siteId],
+    );
+    const spy = vi.fn(async () => "job-1");
+    const app = buildAppWithEnqueueSpy(spy);
+
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/pages/${pageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-pub-trigger"), status: "published" });
+
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith({ siteId, trigger: "publish" });
+  });
+
+  it("does not enqueue when the save leaves the page as draft", async () => {
+    await pool.query(
+      `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, true, now())`,
+      [siteId],
+    );
+    const spy = vi.fn(async () => "job-1");
+    const app = buildAppWithEnqueueSpy(spy);
+
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/pages/${pageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-draft-trigger") });
+
+    expect(res.status).toBe(200);
+    expect(res.body.page.status).toBe("draft");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue when the site has no git state row, even on a publish save", async () => {
+    // beforeEach already ensures no site_git_state row exists.
+    const spy = vi.fn(async () => "job-1");
+    const app = buildAppWithEnqueueSpy(spy);
+
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/pages/${pageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-nostate-trigger"), status: "published" });
+
+    expect(res.status).toBe(200);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue when the site's git state row is disabled, even on a publish save", async () => {
+    await pool.query(
+      `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, false, now())`,
+      [siteId],
+    );
+    const spy = vi.fn(async () => "job-1");
+    const app = buildAppWithEnqueueSpy(spy);
+
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/pages/${pageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-stateoff-trigger"), status: "published" });
+
+    expect(res.status).toBe(200);
+    expect(spy).not.toHaveBeenCalled();
   });
 });

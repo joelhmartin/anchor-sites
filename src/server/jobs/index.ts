@@ -18,10 +18,15 @@ import {
   handleAgentTurn,
   type AgentTurnInput,
 } from "./agent-turn.js";
+import {
+  handleGitExport,
+  type GitExportInput,
+} from "./git-export.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
 export const AGENT_TURN = "ai.agent-turn";
+export const GIT_EXPORT = "git.export";
 export { CRM_SYNC_JOB };
 
 /**
@@ -181,6 +186,15 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(AGENT_TURN, { policy: "stately" });
   await boss.work<AgentTurnInput>(AGENT_TURN, async ([job]) => {
     await handleAgentTurn(job.data, { pool: defaultPool });
+  });
+
+  // Task 4 (GitHub sync): export-on-publish/manual worker. The handler
+  // itself is the disabled-mode/enabled-state gate (mode disabled or the
+  // site's git state row missing/disabled → silent no-op), so registration
+  // here is unconditional — same shape as every other job above.
+  await boss.createQueue(GIT_EXPORT);
+  await boss.work<GitExportInput>(GIT_EXPORT, async ([job]) => {
+    await handleGitExport(job.data, { pool: defaultPool });
   });
 }
 
