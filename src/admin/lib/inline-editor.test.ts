@@ -621,6 +621,164 @@ describe("createInlineEditor (Studio bridge + save engine)", () => {
     expect(events.states.at(-1)).toBe("saved");
   });
 
+  // --- Final review fix wave ---
+
+  it("Important 1: re-posts the current readonly state when the overlay sends edit-ready (e.g. an iframe reload)", async () => {
+    const blocksData = makeBlocks();
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      return { page: {}, revision: {} };
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+
+    handle.setReadonly(true, "another editor has the lock");
+    iframePostMessageMock(iframe).mockClear();
+
+    // Simulate a mid-session iframe reload: the freshly-booted overlay
+    // announces itself with edit-ready, same as on first boot. Without the
+    // fix this message type was silently ignored (`case "edit-ready":`
+    // fell through to the shared no-op `default:`), so a reloaded overlay
+    // would start back in its own default (editable) state, unaware the
+    // handle had already locked it readonly.
+    postFromOverlay(iframe, handle.token, { type: "edit-ready" });
+
+    const postMessageCalls = iframePostMessageMock(iframe).mock.calls;
+    const readonlyMsg = postMessageCalls.find(
+      (args: unknown[]) => (args[0] as Record<string, unknown>).type === "set-readonly",
+    );
+    expect(readonlyMsg?.[0]).toMatchObject({
+      ac: "edit",
+      token: handle.token,
+      type: "set-readonly",
+      on: true,
+      reason: "another editor has the lock",
+    });
+  });
+
+  it("Important 1: edit-ready re-posts an editable (on: false) state when the handle was never made readonly", async () => {
+    const blocksData = makeBlocks();
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      return { page: {}, revision: {} };
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+    iframePostMessageMock(iframe).mockClear();
+
+    postFromOverlay(iframe, handle.token, { type: "edit-ready" });
+
+    const postMessageCalls = iframePostMessageMock(iframe).mock.calls;
+    const readonlyMsg = postMessageCalls.find(
+      (args: unknown[]) => (args[0] as Record<string, unknown>).type === "set-readonly",
+    );
+    expect(readonlyMsg?.[0]).toMatchObject({ ac: "edit", token: handle.token, type: "set-readonly", on: false });
+  });
+
+  it("Minor (c): readProp reads the current value of a block's prop out of local state", async () => {
+    const blocksData = makeBlocks();
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      return { page: {}, revision: {} };
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(handle.readProp("b2", "alt")).toBe("old alt");
+    expect(handle.readProp("b2", "image")).toBe("old-asset-id");
+    expect(handle.readProp("does-not-exist", "alt")).toBeUndefined();
+    expect(handle.readProp("b2", "does-not-exist")).toBeUndefined();
+  });
+
+  it("Minor (c): applyField drops and warns when the editor is readonly (Studio-initiated path)", async () => {
+    const blocksData = makeBlocks();
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      return { page: {}, revision: {} };
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+
+    handle.setReadonly(true, "locked");
+    iframePostMessageMock(iframe).mockClear();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    handle.applyField("b1", "html", "should be dropped");
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+    expect(postCalls).toHaveLength(0);
+    expect(iframePostMessageMock(iframe)).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
+  it("Minor (c): applyImage drops and warns when the editor is readonly (Studio-initiated path)", async () => {
+    const blocksData = makeBlocks();
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      return { page: {}, revision: {} };
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+
+    handle.setReadonly(true, "locked");
+    iframePostMessageMock(iframe).mockClear();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    handle.applyImage("b2", "image", "asset-99", "https://cdn.example.com/asset-99.jpg", "should be dropped");
+    await vi.advanceTimersByTimeAsync(0);
+
+    const postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+    expect(postCalls).toHaveLength(0);
+    expect(iframePostMessageMock(iframe)).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    expect(handle.readProp("b2", "alt")).toBe("old alt"); // unchanged
+
+    warnSpy.mockRestore();
+  });
+
   it("re-attaching removes the prior window listener instead of leaking a duplicate — minor (b)", async () => {
     const blocksData = makeBlocks();
     const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {

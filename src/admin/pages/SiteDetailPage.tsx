@@ -262,10 +262,12 @@ const READONLY_BUSY_REASON = "The AI is working on this site…";
  * drawer's `onStatusChange`) forces the handle readonly while the AI is
  * actively writing to the same site — editing over its writes would race.
  *
- * The `previewNonce` change-event reload is suppressed while an edit
- * session is dirty/saving (a reload would tear down the contenteditable
- * session mid-keystroke); the latest page/nonce is applied once the save
- * settles or edit mode turns off.
+ * The `previewNonce`/page-id change-event reload is suppressed for the
+ * WHOLE edit session, not just while dirty (final review Important 3) — a
+ * reload would tear down the contenteditable session mid-keystroke, and a
+ * page-id swap specifically would remount the iframe onto a page the live
+ * `InlineEditorHandle` isn't saving to, silently dropping edits made on it.
+ * The latest queued page/nonce is applied once edit mode turns off.
  */
 function DraftPreview({
   siteId,
@@ -287,7 +289,7 @@ function DraftPreview({
   const [edit, setEdit] = useState(false);
   const [editToken, setEditToken] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [imagePick, setImagePick] = useState<{ blockId: string; field: string } | null>(null);
+  const [imagePick, setImagePick] = useState<{ blockId: string; field: string; alt?: string } | null>(null);
   const [linkEdit, setLinkEdit] = useState<{ blockId: string; field: string; value: string } | null>(null);
   const [displayed, setDisplayed] = useState({ pageId: effectivePreviewPageId, nonce: previewNonce });
 
@@ -295,15 +297,27 @@ function DraftPreview({
   const handleRef = useRef<InlineEditorHandle | null>(null);
   const mountedRef = useRef(true);
 
-  const dirty = saveState === "dirty" || saveState === "saving";
-
-  // Suppressed-reload queue: while an edit session is dirty, hold onto
+  // Suppressed-reload queue: while edit mode is ON at all, hold onto
   // whatever page/nonce the drawer's change events point at rather than
-  // applying it immediately — applied below once dirty clears or edit exits.
+  // applying it immediately — applied below once edit exits.
+  //
+  // Final review Important 3: this used to only suppress while `dirty`
+  // (`if (edit && dirty) return;`). A change event can swap
+  // `effectivePreviewPageId` to a DIFFERENT page while edit mode is on but
+  // idle/saved (not dirty) — e.g. the AI writes another page while the
+  // operator is mid-edit-session on this one. That immediately remounted
+  // the iframe onto the new page (the iframe `key` includes
+  // `displayed.pageId`), while the live `InlineEditorHandle` — created once
+  // in `toggleEdit` and closed over the page id it started with — kept
+  // right on saving to the OLD page. Any edits the operator then made on
+  // the newly-shown page were silently dropped: nothing was editing it.
+  // Pinning `displayed.pageId` for the ENTIRE edit session (not just while
+  // dirty) means the iframe never moves out from under the live handle;
+  // the queued page/nonce is applied the moment `edit` flips back to false.
   useEffect(() => {
-    if (edit && dirty) return;
+    if (edit) return;
     setDisplayed({ pageId: effectivePreviewPageId, nonce: previewNonce });
-  }, [effectivePreviewPageId, previewNonce, edit, dirty]);
+  }, [effectivePreviewPageId, previewNonce, edit]);
 
   /**
    * Flush + destroy whatever handle is live, then — fix-round-1 directed
@@ -384,7 +398,19 @@ function DraftPreview({
       siteId,
       pageId: displayed.pageId,
       events: {
-        onImagePickRequest: (blockId, field) => setImagePick({ blockId, field }),
+        // Final review Important 4: seed the dialog with the image block's
+        // EXISTING alt text via the handle's `readProp` accessor (reads the
+        // handle's local blocks — the same ones `applyImage` mutates and
+        // saves). Without this, the dialog always opened with an empty alt
+        // field, so any pick — even re-picking the exact same asset —
+        // clobbered a previously-authored alt back to "". The prop name on
+        // an image block is always literally "alt" (see
+        // packages/components/src/blocks/image/schema.ts), independent of
+        // which field ("asset_id") triggered the request.
+        onImagePickRequest: (blockId, field) => {
+          const alt = handleRef.current?.readProp(blockId, "alt");
+          setImagePick({ blockId, field, alt: typeof alt === "string" ? alt : undefined });
+        },
         onLinkEditRequest: (blockId, field, value) => setLinkEdit({ blockId, field, value }),
         onSaveStateChange: (s) => setSaveState(s),
       },
@@ -435,13 +461,25 @@ function DraftPreview({
           {edit && saveState === "saving" && <span className="text-xs text-zinc-500">Saving…</span>}
           {edit && saveState === "saved" && <span className="text-xs text-zinc-500">Saved · just now</span>}
           {edit && saveState === "error" && (
-            <span className="text-xs text-amber-600">Save failed — retrying</span>
+            // Minor (a): match the real behavior — a terminal save failure
+            // does NOT keep auto-retrying (inline-editor.ts's
+            // runSaveCycle retries exactly once, then stops and restores
+            // the edit to `dirtyFields` so the NEXT edit or `flush()`
+            // resends it, per its "Important 2" comment). "retrying" was
+            // never true here.
+            <span className="text-xs text-amber-600">Save failed — will retry on next edit</span>
           )}
           {agentBusy && <span className="text-xs text-amber-600">{READONLY_BUSY_REASON}</span>}
           <button
             type="button"
             aria-pressed={edit}
-            disabled={agentBusy}
+            // Minor (b): only gate ENTERING edit mode on agentBusy — once
+            // already editing, the operator must still be able to click
+            // Edit to exit (which flushes + destroys the handle via
+            // `toggleEdit`'s `if (edit)` branch above). Disabling exit too
+            // trapped the operator in edit mode for the whole duration of
+            // an AI run.
+            disabled={agentBusy && !edit}
             onClick={toggleEdit}
             className={cn(
               "rounded border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
@@ -474,6 +512,7 @@ function DraftPreview({
       <ImagePickerDialog
         siteId={siteId}
         open={imagePick !== null}
+        initialAlt={imagePick?.alt}
         onClose={() => setImagePick(null)}
         onPick={handleImagePicked}
       />

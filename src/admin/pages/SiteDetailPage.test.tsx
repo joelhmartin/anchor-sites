@@ -30,6 +30,7 @@ const { inlineEditorCalls, inlineEditorHandle } = vi.hoisted(() => {
     attach: vi.fn(),
     applyField: vi.fn(),
     applyImage: vi.fn(),
+    readProp: vi.fn(),
     setReadonly: vi.fn(),
     flush: vi.fn(async () => {}),
     destroy: vi.fn(),
@@ -106,6 +107,7 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     inlineEditorHandle.attach.mockClear();
     inlineEditorHandle.applyField.mockClear();
     inlineEditorHandle.applyImage.mockClear();
+    inlineEditorHandle.readProp.mockReset();
     inlineEditorHandle.setReadonly.mockClear();
     inlineEditorHandle.flush.mockClear();
     inlineEditorHandle.destroy.mockClear();
@@ -369,7 +371,10 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     await waitFor(() => expect(screen.getByText("Saved · just now")).toBeTruthy());
 
     act(() => events.onSaveStateChange("error"));
-    await waitFor(() => expect(screen.getByText("Save failed — retrying")).toBeTruthy());
+    // Minor (a): match the real retry behavior — runSaveCycle retries
+    // exactly once then stops; a terminal failure is resent on the NEXT
+    // edit or an explicit flush(), not by continuing to auto-retry.
+    await waitFor(() => expect(screen.getByText("Save failed — will retry on next edit")).toBeTruthy());
   });
 
   it("shows a readonly banner and forces the inline editor readonly while the agent drawer reports busy", async () => {
@@ -386,16 +391,38 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     await waitFor(() =>
       expect(inlineEditorHandle.setReadonly).toHaveBeenLastCalledWith(true, "The AI is working on this site…"),
     );
-    // The Edit toggle itself is gated too — can't leave/enter edit mode mid-run.
+    // Minor (b): the toggle is gated on ENTERING edit mode while busy, but
+    // must stay clickable while ALREADY editing so the operator can still
+    // exit (flush + destroy the handle) instead of being trapped in edit
+    // mode for the whole duration of an AI run.
     expect(
       within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" }).hasAttribute("disabled"),
-    ).toBe(true);
+    ).toBe(false);
 
     act(() => {
       last.onStatusChange?.("active", false);
     });
     await waitFor(() => expect(inlineEditorHandle.setReadonly).toHaveBeenLastCalledWith(false, undefined));
     expect(screen.queryByText(/The AI is working on this site/)).toBeNull();
+  });
+
+  it("Minor (b): still gates ENTERING edit mode while the agent is busy (not editing yet)", async () => {
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+
+    const last = drawerCalls[drawerCalls.length - 1];
+    act(() => {
+      last.onStatusChange?.("running", true);
+    });
+
+    const editToggle = within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" });
+    await waitFor(() => expect(editToggle.hasAttribute("disabled")).toBe(true));
+    expect(inlineEditorCalls.length).toBe(0);
   });
 
   it("opens the image picker on an image-pick request, and a pick calls handle.applyImage", async () => {
@@ -407,6 +434,10 @@ describe("SiteDetailPage (P4-T4.12)", () => {
 
     await waitFor(() => expect(screen.getByTestId("image-picker-stub")).toBeTruthy());
     expect(imagePickerCalls[imagePickerCalls.length - 1].siteId).toBe("s1");
+    // Final review Important 4: onImagePickRequest must ask the handle for
+    // the block's CURRENT alt via readProp — a stale/empty dialog would
+    // clobber a previously-authored alt on save.
+    expect(inlineEditorHandle.readProp).toHaveBeenCalledWith("blk1", "alt");
 
     act(() => {
       imagePickerCalls[imagePickerCalls.length - 1].onPick({
@@ -424,6 +455,17 @@ describe("SiteDetailPage (P4-T4.12)", () => {
       "A picture",
     );
     await waitFor(() => expect(screen.queryByTestId("image-picker-stub")).toBeNull());
+  });
+
+  it("Important 4: seeds ImagePickerDialog's initialAlt from the image block's existing alt text", async () => {
+    await openPreviewInEditMode();
+    inlineEditorHandle.readProp.mockReturnValue("Existing alt text");
+
+    const events = inlineEditorCalls[0].events as { onImagePickRequest: (b: string, f: string) => void };
+    act(() => events.onImagePickRequest("blk1", "image"));
+
+    await waitFor(() => expect(screen.getByTestId("image-picker-stub")).toBeTruthy());
+    expect(imagePickerCalls[imagePickerCalls.length - 1].initialAlt).toBe("Existing alt text");
   });
 
   it("opens the link popover on a link-edit request; Save calls handle.applyField with a valid URL", async () => {
@@ -459,7 +501,7 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     expect(screen.getByText(/valid http/)).toBeTruthy();
   });
 
-  it("suppresses the preview reload while an edit session is dirty, then catches up once it settles", async () => {
+  it("suppresses the preview reload while an edit session is dirty", async () => {
     await openPreviewInEditMode();
     const events = inlineEditorCalls[0].events as { onSaveStateChange: (s: string) => void };
     act(() => events.onSaveStateChange("dirty"));
@@ -473,8 +515,43 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     // Still dirty — the change-event reload must be suppressed (would drop
     // the contenteditable session).
     expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toBe(beforeSrc);
+  });
 
+  // Final review Important 3: a change event's new page-id must not apply
+  // while edit mode is on AT ALL — not just while dirty. The live
+  // `InlineEditorHandle` is scoped to whichever page was displayed when
+  // edit mode was toggled on (`toggleEdit` reads `displayed.pageId`); if
+  // the iframe remounts onto a different page mid-session, the handle
+  // keeps saving to the OLD page while any edits made on the newly-shown
+  // page are silently dropped (nothing is editing it). The queued switch
+  // is only allowed to apply once edit mode turns off.
+  it("Important 3: pins the displayed page for the whole edit session (not just while dirty) — a queued page switch only applies after toggling edit off", async () => {
+    await openPreviewInEditMode();
+    const events = inlineEditorCalls[0].events as { onSaveStateChange: (s: string) => void };
+    const last = drawerCalls[drawerCalls.length - 1];
+    const beforeSrc = (screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src");
+    expect(beforeSrc).toContain("/pages/pg1/preview");
+
+    act(() => {
+      last.onChangeEvent?.({ kind: "page_updated", page_id: "pg2", revision_id: "rev1", summary: "Updated hero" });
+    });
+    // Not dirty at all (still "idle") — under the OLD (dirty-only) guard
+    // this would have applied immediately. It must stay pinned to pg1.
+    expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+      "/pages/pg1/preview",
+    );
+
+    // Cycling through dirty -> saved while STILL editing must not release
+    // the pin either.
+    act(() => events.onSaveStateChange("dirty"));
     act(() => events.onSaveStateChange("saved"));
+    expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+      "/pages/pg1/preview",
+    );
+
+    // Only toggling edit OFF applies the queued switch.
+    const editToggle = within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" });
+    fireEvent.click(editToggle);
     await waitFor(() =>
       expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
         "/pages/pg2/preview",

@@ -28,6 +28,18 @@ export type InlineEditorHandle = {
   attach(iframe: HTMLIFrameElement): void;
   applyField(blockId: string, field: string, value: string): void;
   applyImage(blockId: string, field: string, assetId: string, src: string, alt: string): void;
+  /**
+   * Final review Important 4: read a block's CURRENT prop value out of the
+   * handle's local `blocks` (the same array `applyField`/`applyImage`
+   * mutate and `post()` saves). Used by SiteDetailPage to seed
+   * `<ImagePickerDialog initialAlt>` with the image block's existing alt
+   * text on an `image-pick-request` — without this, the dialog always
+   * opened with an empty alt field, so re-picking the SAME image (or
+   * picking a different one without retyping alt) clobbered a
+   * previously-set alt back to "". Returns `undefined` if the block or
+   * field isn't found.
+   */
+  readProp(blockId: string, field: string): unknown;
   setReadonly(on: boolean, reason?: string): void;
   flush(): Promise<void>;
   destroy(): void;
@@ -70,6 +82,7 @@ export function createInlineEditor(opts: {
   let queuedFollowUp = false;
   let currentSave: Promise<void> | null = null;
   let readonly = false;
+  let readonlyReason: string | undefined;
   let destroyed = false;
 
   // Cancellable version of the retry backoff: destroy() needs to be able to
@@ -273,6 +286,18 @@ export function createInlineEditor(opts: {
         events.onLinkEditRequest(data.blockId, data.field, data.value);
         break;
       case "edit-ready":
+        // Final review Important 1: the overlay sends `edit-ready` on every
+        // boot — including a mid-session iframe reload/remount (e.g. the
+        // draft preview re-navigating). Without this, a freshly-booted
+        // overlay always starts in its own default (editable) state and
+        // never learns about a readonly lock this handle already
+        // established (e.g. `agentBusy` from SiteDetailPage's effect) —
+        // the operator could keep editing a page the AI is actively
+        // writing to. Re-post the LAST readonly state this handle set
+        // (tracked here, not re-derived) so a reloaded overlay always
+        // starts in sync with it.
+        postToIframe({ ac: "edit", token, type: "set-readonly", on: readonly, reason: readonlyReason });
+        break;
       default:
         break;
     }
@@ -307,6 +332,16 @@ export function createInlineEditor(opts: {
     },
 
     applyField(blockId: string, field: string, value: string): void {
+      // Minor (c): this is the STUDIO-initiated path (link popover Save,
+      // etc.) — the overlay-initiated `field-edit` message already guards
+      // on `readonly` in handleMessage above, but this method is called
+      // directly from admin UI code and had no such guard, so a stale
+      // popover callback firing after a readonly lock kicked in could still
+      // write. Drop it, same as the overlay side does.
+      if (readonly) {
+        console.warn("[inline-editor] applyField dropped: editor is readonly", { blockId, field });
+        return;
+      }
       const block = findBlock(blockId);
       if (block) {
         block.props = { ...block.props, [field]: value };
@@ -317,6 +352,13 @@ export function createInlineEditor(opts: {
     },
 
     applyImage(blockId: string, field: string, assetId: string, src: string, alt: string): void {
+      // Minor (c): same readonly guard as applyField above — a stale image
+      // picker callback (dialog opened before a readonly lock, resolved
+      // after) must not still write.
+      if (readonly) {
+        console.warn("[inline-editor] applyImage dropped: editor is readonly", { blockId, field });
+        return;
+      }
       const block = findBlock(blockId);
       if (block) {
         block.props = { ...block.props, [field]: assetId };
@@ -333,8 +375,13 @@ export function createInlineEditor(opts: {
       void triggerSave();
     },
 
+    readProp(blockId: string, field: string): unknown {
+      return findBlock(blockId)?.props?.[field];
+    },
+
     setReadonly(on: boolean, reason?: string): void {
       readonly = on;
+      readonlyReason = reason;
       postToIframe({ ac: "edit", token, type: "set-readonly", on, reason });
     },
 
