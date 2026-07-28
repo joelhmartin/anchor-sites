@@ -119,7 +119,24 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             ? JSON.stringify(payload.brand_tokens_override)
             : null;
 
-        const pageRes = await client.query<{ id: string; status: string }>(
+        // Critical 1 (final review): `RETURNING seo` gives us the RESOLVED
+        // seo value from the same UPDATE statement/transaction — thanks to
+        // `COALESCE($2::jsonb, seo)` above, that's payload.seo when the
+        // caller sent one, or the page's PRE-EXISTING seo unchanged when it
+        // didn't. The inline-editing engine's save calls (`src/admin/lib/
+        // inline-editor.ts`) never send `seo` at all — before this fix, the
+        // revision insert below used `payload.seo ?? {}` directly, so every
+        // inline save wrote an SEO-EMPTY revision snapshot even though the
+        // page's actual seo column was untouched. Restoring that revision
+        // (the restore route applies `revision.seo` unconditionally, not
+        // COALESCE) then wiped the page's seo to `{}`. Using the UPDATE's
+        // own RETURNING value instead of the raw payload closes that gap
+        // without a second SELECT (mirrors the "read current state inside
+        // the same transaction" approach `pages.ts`'s update_page tool uses
+        // for its before/after revision snapshots, but atomically — no
+        // separate SELECT ... FOR UPDATE needed since this UPDATE already
+        // touches the row).
+        const pageRes = await client.query<{ id: string; status: string; seo: Record<string, unknown> }>(
           `UPDATE pages
               SET blocks = $1::jsonb,
                   seo = COALESCE($2::jsonb, seo),
@@ -130,7 +147,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
                   END,
                   status = COALESCE($7, status)
             WHERE id = $3 AND site_id = $4
-            RETURNING id, status`,
+            RETURNING id, status, seo`,
           [
             JSON.stringify(payload.blocks),
             payload.seo ? JSON.stringify(payload.seo) : null,
@@ -148,6 +165,8 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           return;
         }
 
+        const resolvedSeo = pageRes.rows[0].seo ?? {};
+
         const revRes = await client.query<{ id: string; created_at: Date }>(
           `INSERT INTO page_revisions (page_id, blocks, seo, source)
            VALUES ($1, $2::jsonb, $3::jsonb, $4)
@@ -155,7 +174,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           [
             pageId,
             JSON.stringify(payload.blocks),
-            JSON.stringify(payload.seo ?? {}),
+            JSON.stringify(resolvedSeo),
             payload.source ?? "manual",
           ],
         );
@@ -167,7 +186,7 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             id: pageId,
             site_id: siteId,
             blocks: payload.blocks,
-            seo: payload.seo ?? {},
+            seo: resolvedSeo,
             status: pageRes.rows[0].status,
           },
           revision: { id: revRes.rows[0].id, created_at: revRes.rows[0].created_at },

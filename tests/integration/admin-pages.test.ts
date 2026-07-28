@@ -388,6 +388,64 @@ d("admin pages API (integration)", () => {
     expect(page.rows[0].blocks[0].id).toBe("h1-first");
   });
 
+  // Critical 1 (final review): the inline-editing engine's saves never send
+  // `seo` at all (`src/admin/lib/inline-editor.ts` posts `{ blocks, source:
+  // "inline" }`). Before the fix, the revision insert used `payload.seo ??
+  // {}` directly, so an inline save wrote an SEO-EMPTY revision snapshot
+  // even though the page's own seo column was left untouched by the
+  // `COALESCE` — and restoring that revision (which applies seo
+  // unconditionally, not COALESCE) then wiped the page's real seo to `{}`.
+  it("an inline-style save (no seo in the payload) snapshots the page's CURRENT seo into the revision, so restoring it does not wipe seo", async () => {
+    // 1st save — sets real seo.
+    const withSeo = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-seo"), seo: { title: "Real SEO title" } });
+    expect(withSeo.status).toBe(200);
+
+    // 2nd save — inline-editor shape: blocks + source only, NO seo key.
+    const inlineSave = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-inline"), source: "inline" });
+    expect(inlineSave.status).toBe(200);
+    // The response's resolved seo must reflect the still-unchanged page
+    // seo, not an empty object.
+    expect(inlineSave.body.page.seo).toMatchObject({ title: "Real SEO title" });
+    const inlineRevisionId = inlineSave.body.revision.id;
+
+    // The revision this inline save just created must carry the CURRENT
+    // seo, not '{}'.
+    const inlineRevRow = await pool.query<{ seo: Record<string, unknown> }>(
+      `SELECT seo FROM page_revisions WHERE id = $1`,
+      [inlineRevisionId],
+    );
+    expect(inlineRevRow.rows[0].seo).toMatchObject({ title: "Real SEO title" });
+
+    // A later save that changes seo, so restoring the inline revision is a
+    // genuine rollback, not a no-op.
+    const later = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-later"), seo: { title: "Overwritten title" } });
+    expect(later.status).toBe(200);
+
+    // Restore the inline (seo-omitted) revision.
+    const restored = await request(app)
+      .post(
+        `/api/sites/${muldoonSiteId}/pages/${muldoonPageId}/revisions/${inlineRevisionId}/restore`,
+      )
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(restored.status).toBe(200);
+
+    const page = await pool.query<{ seo: Record<string, unknown> }>(
+      `SELECT seo FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    // Must be the original real seo, NOT '{}'.
+    expect(page.rows[0].seo).toMatchObject({ title: "Real SEO title" });
+  });
+
   it("restore 404s when the revision belongs to a different page", async () => {
     // Seed a revision against demo page so the id exists but mismatches muldoon.
     const demo = await pool.query<{ id: string }>(
