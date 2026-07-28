@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
+import { resolveGitMode } from "../git/client.js";
 import { getGitState } from "../git/state-repo.js";
 import { GIT_IMPORT } from "../jobs/index.js";
 
@@ -129,7 +130,16 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
 
         const payload = req.body as PushPayload;
         const defaultBranch = payload?.repository?.default_branch;
-        if (!payload?.ref || !defaultBranch || payload.ref !== `refs/heads/${defaultBranch}`) {
+        // Fold the `after` presence check in here (round 1 review fix): a
+        // push payload missing its head sha is just as malformed as one
+        // missing `ref`/`repository.default_branch` — 204, not an empty-
+        // string headSha silently smuggled into the enqueue payload below.
+        if (
+          !payload?.ref ||
+          !defaultBranch ||
+          payload.ref !== `refs/heads/${defaultBranch}` ||
+          !payload.after
+        ) {
           res.status(204).end();
           return;
         }
@@ -143,6 +153,21 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
           (c) => typeof c.message === "string" && c.message.includes(EXPORT_TRAILER),
         );
         if (allTrailer) {
+          res.status(204).end();
+          return;
+        }
+
+        // Round 1 review fix (Important): cheap-gate-first, mirroring
+        // git-export.ts/handleGitExport's established convention. With git
+        // sync globally disabled (no GITHUB_CONTENT_TOKEN/REPO), no site
+        // could legitimately have `getGitState(...).enabled === true` in the
+        // first place — but without this check every push still pays a
+        // `sites` SELECT + `getGitState` read + a persisted pg-boss job per
+        // referenced site, and a `202 {queued:[...]}` response would lie
+        // about "queued" work Task 6's import job will only silently no-op.
+        // No DB I/O happens above this line, so disabled deployments never
+        // touch the pool at all.
+        if (resolveGitMode(env) === "disabled") {
           res.status(204).end();
           return;
         }
@@ -188,7 +213,7 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
           ];
 
           try {
-            await enqueueImport({ siteId, headSha: payload.after ?? "", paths });
+            await enqueueImport({ siteId, headSha: payload.after, paths });
             queued.push(slug);
           } catch {
             // Per-site fan-out is best-effort — one site's enqueue failure

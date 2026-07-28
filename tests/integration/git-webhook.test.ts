@@ -16,6 +16,18 @@ const d = TEST_DB_URL ? describe : describe.skip;
 
 const SECRET = "test-webhook-secret";
 
+// Round 1 review fix: the webhook now cheap-gates on `resolveGitMode(env)`
+// (git.export's established convention), which requires BOTH a content
+// token and a repo to resolve to "api" — independent of
+// GITHUB_WEBHOOK_SECRET. Every test that expects an actual enqueue needs
+// this env alongside the secret; the one test that omits it exercises the
+// new disabled-mode short-circuit.
+const ENABLED_ENV: NodeJS.ProcessEnv = {
+  GITHUB_WEBHOOK_SECRET: SECRET,
+  GITHUB_CONTENT_TOKEN: "test-content-token",
+  GITHUB_CONTENT_REPO: "acme/content",
+};
+
 function sign(body: string, secret = SECRET): string {
   return "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
 }
@@ -52,7 +64,7 @@ function pushPayload(opts: {
 function buildApp(
   pool: import("pg").Pool,
   enqueueImport: (input: GitImportInput) => Promise<string | null>,
-  env: NodeJS.ProcessEnv = { GITHUB_WEBHOOK_SECRET: SECRET },
+  env: NodeJS.ProcessEnv = ENABLED_ENV,
 ) {
   const app = express();
   // Mirrors the app.ts verify hook (Global Constraints, raw-body rule).
@@ -196,6 +208,28 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
       .send(raw);
     expect(res.status).toBe(204);
     expect(enqueueSpy).not.toHaveBeenCalled();
+  });
+
+  it("204s + zero enqueue when git sync is globally disabled (no content token/repo), even for an otherwise-valid signed push", async () => {
+    // Round 1 review fix: cheap-gate on resolveGitMode BEFORE the per-site
+    // DB loop. Distinct app instance: same webhook secret (so the signature
+    // still verifies), but GITHUB_CONTENT_TOKEN/REPO are absent — the exact
+    // env shape resolveGitMode(env) treats as "disabled".
+    const disabledModeEnqueueSpy = vi.fn(async () => "job-id-should-not-be-called");
+    const disabledModeApp = buildApp(db.getPool(), disabledModeEnqueueSpy, {
+      GITHUB_WEBHOOK_SECRET: SECRET,
+    });
+    const site = await db.seedSite("gitwh-mode-disabled");
+    await setGitEnabled(db.getPool(), site.id, true);
+    const raw = JSON.stringify(pushPayload({ slug: site.slug }));
+    const res = await request(disabledModeApp)
+      .post("/api/git/webhook")
+      .set("Content-Type", "application/json")
+      .set("X-GitHub-Event", "push")
+      .set("X-Hub-Signature-256", sign(raw))
+      .send(raw);
+    expect(res.status).toBe(204);
+    expect(disabledModeEnqueueSpy).not.toHaveBeenCalled();
   });
 
   it("does not enqueue for a site whose git sync is disabled", async () => {
