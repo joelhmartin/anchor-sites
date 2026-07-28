@@ -44,17 +44,40 @@ describe("GitCard (GitHub sync Task 7)", () => {
     expect(screen.queryByRole("button", { name: "Export now" })).toBeNull();
   });
 
-  it("renders export/import shas, relative time, and a repo link when configured + enabled", async () => {
+  it("renders export/import shas, a repo link, and a Last synced line (not tied to export) when configured + enabled", async () => {
     global.fetch = vi.fn(async () => json(CONFIGURED_ENABLED)) as unknown as typeof fetch;
     render(<GitCard siteId="s1" slug="acme" />);
 
     await waitFor(() => expect(screen.getByText(/Exported abcdef1/)).toBeTruthy());
     expect(screen.getByText(/Imported 1234567/)).toBeTruthy();
+    expect(screen.getByText(/Last synced/)).toBeTruthy();
     expect(screen.getByText("enabled")).toBeTruthy();
 
     const link = screen.getByRole("link", { name: "acme/content" }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("https://github.com/acme/content/tree/main/sites/acme");
     expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  it("labels the relative time 'Last synced' rather than implying it's specifically export time (fix round 2, Minor)", async () => {
+    // last_export_sha is null (no export has ever run), but last_synced_at
+    // is set because an IMPORT bumps the same column (state-repo.ts's
+    // recordImport). The old copy read "Exported <sha> · <time>" only when
+    // last_export_sha existed, but the reverse bug — an import's timestamp
+    // being the only one available and getting attributed to "Exported" —
+    // is what this line must not do: "Exported" must never appear without
+    // an export sha, and the timestamp must be labeled on its own.
+    global.fetch = vi.fn(async () =>
+      json({
+        configured: true,
+        repo: "acme/content",
+        state: { ...ENABLED_STATE, last_export_sha: null },
+      }),
+    ) as unknown as typeof fetch;
+    render(<GitCard siteId="s1" slug="acme" />);
+
+    await waitFor(() => expect(screen.getByText(/Last synced/)).toBeTruthy());
+    expect(screen.getByText(/Imported 1234567/)).toBeTruthy();
+    expect(screen.queryByText(/Exported/)).toBeNull();
   });
 
   it("shows a last_error line in red when present", async () => {

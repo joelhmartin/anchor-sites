@@ -341,7 +341,8 @@ Studio's database after validation.
 ## Layout
 
 \`\`\`
-sites/<slug>/site.json         site display name, brand tokens, SEO defaults
+sites/<slug>/site.json         exported site fields (see below) — only some
+                                of them are applied back on import
 sites/<slug>/pages/<slug>.json one file per page (title, status, seo, blocks)
 sites/<slug>/media.json        read-only manifest of processed media assets
 README.md                      this file (generated)
@@ -353,9 +354,15 @@ BLOCKS.md                      reference for every block type (generated)
 - Edit \`pages/*.json\` files directly to change page content. Each file is
   \`{ title, status, seo, blocks }\`; see \`BLOCKS.md\` for the full list of
   block types and their props.
-- Edit \`site.json\` to change the site's display name, brand tokens
-  (**replaced** wholesale on import), or SEO defaults (**shallow-merged**
-  over what's already in the database).
+- \`site.json\` is exported with \`display_name\`, \`default_brand_tokens\`,
+  \`seo_defaults\`, \`domains\`, and \`plugins\`, but only **two** of those
+  apply back on import: \`default_brand_tokens\` (**replaced** wholesale) and
+  \`seo_defaults\` (**shallow-merged** over what's already in the database —
+  a key the file omits survives untouched). \`display_name\`, \`domains\`,
+  and \`plugins\` are **export-only**: they're included so you can see the
+  current values, but editing them here does nothing on import, and the
+  next export overwrites your edit with the database's value again. Change
+  the display name, domains, or plugins from the Studio itself.
 - \`media.json\`, \`README.md\`, and \`BLOCKS.md\` are generated — edits to
   them are ignored on import (noted in the commit comment).
 - Deleting a file in this repo is reported back as a comment on the
@@ -379,6 +386,11 @@ every other valid file in the same push is still applied.
   \`Anchor-Sync: export\` — the import webhook skips any push where every
   commit carries that trailer, which prevents export → import → export
   loops.
+- Exports never delete a \`pages/*.json\` file for a page deleted in the
+  Studio — the file is simply left behind. If you then edit and push that
+  stale file, import has no way to know the page was ever deleted and will
+  **re-create it**. Delete the file from this repo too if you don't want
+  that.
 
 See \`docs/github-sync.md\` in the Studio's own repository for the full
 architecture and the operator runbook.

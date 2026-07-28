@@ -107,6 +107,20 @@ describe("generateReadme", () => {
     expect(readme).toContain("acme/anchor-content");
     expect(readme).toContain("Anchor-Sync: export");
   });
+
+  it("states site.json's import scope accurately: brand tokens + seo_defaults apply, display_name/domains/plugins are export-only", () => {
+    const readme = generateReadme("acme/anchor-content");
+    expect(readme).toContain("default_brand_tokens");
+    expect(readme).toContain("seo_defaults");
+    expect(readme).toContain("export-only");
+    expect(readme).toMatch(/display_name.*domains.*plugins/s);
+  });
+
+  it("documents that a page deleted in Studio leaves a stale file that re-creates the page if edited and pushed", () => {
+    const readme = generateReadme("acme/anchor-content");
+    expect(readme).toMatch(/stale file/i);
+    expect(readme).toMatch(/re-create/i);
+  });
 });
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;

@@ -98,6 +98,16 @@ rejects the whole page, with a clear message, not a broken image).
 - **Deletions are reported, never applied** (v1 safety) — a file removed in
   the repo shows up in the commit comment, but the corresponding page stays
   in the builder; delete pages from the Studio itself.
+- **A page deleted in Studio leaves its file behind in the repo** — the
+  inverse of the rule above. Deleting a page in the Studio removes it from
+  the database, but the next export only adds/updates files for pages that
+  still exist; it never deletes the now-orphaned `pages/<slug>.json` (v1's
+  exporter has no "prune" step). That stale file sits in the repo
+  indefinitely, and if anyone edits and pushes it, import treats it like any
+  other valid `pages/*.json` file and **re-creates the page** in the
+  database — it has no way to know the slug was ever deleted. If you don't
+  want a deleted page's file to come back, delete the file from the repo
+  too.
 - **Generated files are read-only from the import side.** Edits to
   `media.json`, `README.md`, or `BLOCKS.md` in the repo are ignored on
   import, noted in the commit comment rather than silently dropped.
@@ -179,8 +189,17 @@ relative time, any error in red, and a link to
    (remember: that flag **replaces the whole list** on every deploy — see the
    note at the top of `cloudbuild.yaml`).
    ```bash
-   openssl rand -base64 32 | gcloud secrets versions add GITHUB_WEBHOOK_SECRET --data-file=-
+   SECRET=$(openssl rand -base64 32); echo "$SECRET"
+   printf '%s' "$SECRET" | gcloud secrets versions add GITHUB_WEBHOOK_SECRET \
+     --project=anchor-hub-480305 --data-file=-
    ```
+   Piping `openssl rand` straight into `gcloud secrets versions add` stores
+   the secret but never shows it to you, and a bare pipe (without
+   `printf '%s'`) also stores a trailing newline the pasted-into-GitHub value
+   won't have — signatures would never match. Capture it in a variable,
+   `echo` it once so you can see it, and `printf '%s'` (no trailing newline)
+   into the secret. Paste that **same** printed value into GitHub's webhook
+   "Secret" field in step 5 below.
 4. Set `GITHUB_CONTENT_REPO=<owner>/anchor-sites-content` — update the
    `--set-env-vars` value in `cloudbuild.yaml` (currently left empty on
    purpose) and redeploy.
@@ -237,6 +256,48 @@ picks up the new version on the next deploy.
   is enabled (`site_git_state.enabled`), not just the server-wide config;
   the webhook silently skips a matched-but-disabled site (by design — a
   push to a slug this builder doesn't have opted in is not an error).
+- **A page deleted in the Studio reappeared after a push** — the exporter
+  never prunes a deleted page's `pages/<slug>.json` file from the repo (see
+  "Sync semantics" above); editing that stale file and pushing it makes
+  import re-create the page, since import has no way to know the slug was
+  ever deleted. Delete the file from the repo as well if you don't want this.
+
+## Known limitations
+
+These are accepted v1 gaps, not bugs — each has a workaround and none risks
+data loss:
+
+- **Publish-during-active-export race**: `GIT_EXPORT` is `stately`-keyed on
+  bare `siteId` (one export in flight per site at a time). If a page
+  publishes while an export for that site is already running, the second
+  `enqueueExport` call is deduped (returns `null`) and silently swallowed —
+  the in-flight export started before that publish, so its commit may not
+  include the newest edit. Nothing is lost: the next export trigger (the
+  next publish, or a manual "Export now") serializes the DB's current state
+  again and catches it up.
+- **Webhook 202-on-null enqueue**: the webhook's per-site fan-out treats a
+  resolved `enqueueImport` call as "queued" without distinguishing a real
+  job id from pg-boss returning `null` (e.g. a swallowed queue failure) —
+  the response can report `202 {queued:[slug]}` for a site whose import was
+  never actually created. Because the response is a 2xx, GitHub won't
+  auto-retry the delivery. Recovery is a manual redelivery from the repo's
+  webhook settings ("Recent Deliveries" -> "Redeliver"), which is idempotent
+  (`last_import_sha` dedupes an already-processed `headSha`).
+- **1MB body cap on giant pushes**: `app.ts`'s `express.json({ limit: "1mb" })`
+  rejects a push payload larger than that outright. A push touching an
+  unusually large number of files (or with very large commit messages) can
+  exceed it. Recovery: split the push into smaller commits/pushes and
+  redeliver, or use the repo webhook's manual redelivery once the payload is
+  under the cap.
+- **Commit-comment failure on an informational-only run lands only in Cloud
+  Run logs**: when an import has zero validation `failures` but still has
+  reported deletions or ignored generated-file edits, `last_error` is never
+  written (it's only set when `failures.length > 0`) — so if
+  `createCommitComment` itself then fails, the only trace of that
+  informational content is the `console.warn` in Cloud Run's logs; the
+  GitCard and `site_git_state.last_error` show nothing unusual. Check Cloud
+  Run logs for `[git.import] createCommitComment failed` if a push's
+  reported deletions/ignored-files never showed up as a commit comment.
 
 ## Extending (out of scope for v1)
 

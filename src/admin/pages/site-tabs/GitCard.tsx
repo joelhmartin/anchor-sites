@@ -148,12 +148,19 @@ export function GitCard({ siteId, slug }: { siteId: string; slug: string }) {
         </div>
 
         <div className="flex flex-col gap-1 text-sm text-zinc-600">
-          {state?.last_export_sha && (
-            <p>
-              Exported {shortSha(state.last_export_sha)} ·{" "}
-              {relativeTime(state.last_synced_at ?? state.updated_at)}
-            </p>
+          {/*
+           * Fix round 2 (Minor): `last_synced_at` is bumped by BOTH
+           * recordExport and recordImport (state-repo.ts), so it isn't
+           * specifically an export timestamp — the old copy read "Exported
+           * <sha> · <time>" even when that relative time came from the most
+           * recent IMPORT. Label the timestamp on its own honest line and
+           * keep the export/import sha lines free of a time that isn't
+           * necessarily theirs.
+           */}
+          {(state?.last_synced_at || state?.updated_at) && (
+            <p>Last synced {relativeTime(state.last_synced_at ?? state.updated_at)}</p>
           )}
+          {state?.last_export_sha && <p>Exported {shortSha(state.last_export_sha)}</p>}
           {state?.last_import_sha && <p>Imported {shortSha(state.last_import_sha)}</p>}
           {state?.last_error && <p className="text-red-600">{state.last_error}</p>}
         </div>
