@@ -50,13 +50,27 @@ export function makeNonce(): string {
 }
 
 /**
- * Placeholder overlay CSS (Task 4) — hover-outline only, so an editable field
- * is visibly discoverable in the preview iframe before the real interaction
- * styles land. Task 5 (I5) replaces this with the full `OVERLAY_CSS` (empty
- * placeholders, selection state, drag affordances, etc.) — keep this minimal
- * on purpose so that follow-up diff stays clean.
+ * Edit overlay CSS (Inline Editing Task 5).
+ *
+ * Class names here match `text-edit.ts`'s exported constants
+ * (`ac-edit-active`, `ac-edit-readonly`, `ac-edit-readonly-banner`) — keep
+ * them in sync if either side changes.
+ *
+ *   - `[data-field]` hover: dashed indigo outline, discoverability only.
+ *   - `.ac-edit-active`: solid outline while a field is being edited.
+ *   - `.ac-edit-readonly`: dims the hover affordance once Studio has flipped
+ *     the page to read-only (e.g. another operator holds the save lock).
+ *   - `.ac-edit-readonly-banner`: fixed-top amber banner shown in that state.
  */
 export const OVERLAY_CSS = `
-[data-field] { outline: 1px dashed transparent; outline-offset: 1px; cursor: text; }
+[data-field] { outline: 1.5px dashed transparent; outline-offset: 1px; cursor: text; transition: outline-color 120ms ease; }
 [data-field]:hover { outline-color: rgba(99, 102, 241, 0.6); }
+[data-field].ac-edit-active { outline: 1.5px solid #6366f1; outline-offset: 1px; }
+[data-field].ac-edit-readonly { cursor: default; outline-color: transparent !important; }
+.ac-edit-readonly-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
+  background: #f59e0b; color: #1f2937;
+  font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 6px 12px; text-align: center;
+}
 `;
