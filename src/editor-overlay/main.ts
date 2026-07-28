@@ -13,8 +13,21 @@
  */
 
 import { initBridge, type StudioMsg } from "./bridge.js";
-import { findEditables, type EditableFieldMap } from "./dom.js";
+import { blockTypeFor, findEditables, type EditableFieldMap } from "./dom.js";
+import { createRichTextEditor } from "./rich-text.js";
 import { createTextEditor } from "./text-edit.js";
+
+/**
+ * `findEditables` classifies by FieldKind alone (Task 3's schema walk has no
+ * "rich-text" kind — the rich-text block's `html` field is a bare
+ * `ZodString`, same as any plain-text field), so the plain-text/rich-text
+ * split happens here: blockType "rich-text" field "html" goes to Task 6's
+ * contenteditable-HTML editor; every other "text" field keeps Task 5's
+ * innerText path.
+ */
+function isRichTextField(el: HTMLElement): boolean {
+  return blockTypeFor(el) === "rich-text" && el.getAttribute("data-field") === "html";
+}
 
 // Marker Task 4's compiler (preview-overlay.ts) and its test assert on —
 // `minifySyntax` must not rename/strip this identifier away.
@@ -46,14 +59,17 @@ export function boot(): (() => void) | undefined {
   if (!bootData) return undefined;
 
   const editor = createTextEditor();
+  const richTextEditor = createRichTextEditor();
 
   const bridge = initBridge(bootData.token, (msg: StudioMsg) => {
     switch (msg.type) {
       case "apply-field":
         editor.applyField(msg.blockId, msg.field, msg.value);
+        richTextEditor.applyField(msg.blockId, msg.field, msg.value);
         break;
       case "set-readonly":
         editor.setReadonly(msg.on, msg.reason);
+        richTextEditor.setReadonly(msg.on, msg.reason);
         break;
       case "apply-image":
         // Image editing lands in a later task; no-op for now.
@@ -62,9 +78,16 @@ export function boot(): (() => void) | undefined {
   });
 
   const editables = findEditables(bootData.fields);
-  editor.activate(editables, bridge, bootData.token);
+  const richTextEditables = editables.filter(isRichTextField);
+  const plainTextEditables = editables.filter((el) => !isRichTextField(el));
 
-  if (bootData.readonly) editor.setReadonly(true);
+  editor.activate(plainTextEditables, bridge, bootData.token);
+  richTextEditor.activate(richTextEditables, bridge, bootData.token);
+
+  if (bootData.readonly) {
+    editor.setReadonly(true);
+    richTextEditor.setReadonly(true);
+  }
 
   bridge.send({ ac: "edit", token: bootData.token, type: "edit-ready" });
 
