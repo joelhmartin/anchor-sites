@@ -1,0 +1,180 @@
+import express from "express";
+import request from "supertest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Pool } from "pg";
+import { setupAgentDb } from "../helpers/agent-db.js";
+import { adminGitRouter } from "../../src/server/routes/admin-git.js";
+import { setGitEnabled } from "../../src/server/git/state-repo.js";
+import type { GitExportInput } from "../../src/server/jobs/git-export.js";
+
+const TEST_DB_URL = process.env.TEST_DATABASE_URL;
+const d = TEST_DB_URL ? describe : describe.skip;
+
+const ADMIN_TOKEN = "test-admin-token";
+const auth = (r: request.Test) => r.set("X-Admin-Token", ADMIN_TOKEN);
+const UNKNOWN_SITE_ID = "00000000-0000-0000-0000-000000000000";
+
+function buildApp(
+  pool: Pool,
+  enqueueExport: (input: GitExportInput) => Promise<string | null>,
+  env: NodeJS.ProcessEnv = {},
+) {
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/api",
+    adminGitRouter({ pool, enqueueExport, env, rateLimit: { max: 200, windowMs: 60_000 } }),
+  );
+  return app;
+}
+
+d("admin git endpoints (integration, GitHub sync Task 7)", () => {
+  const db = setupAgentDb();
+  let enqueueSpy: ReturnType<typeof vi.fn>;
+  // Server-wide git mode "disabled" (no GITHUB_CONTENT_TOKEN/REPO) — the
+  // default state every site starts in.
+  let app: express.Express;
+  // Server-wide git mode "api" — token + repo configured.
+  let appConfigured: express.Express;
+
+  beforeAll(async () => {
+    await db.runMigrations();
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    enqueueSpy = vi.fn(async () => "job-id-1");
+    app = buildApp(db.getPool(), enqueueSpy, {});
+    appConfigured = buildApp(db.getPool(), enqueueSpy, {
+      GITHUB_CONTENT_TOKEN: "test-token",
+      GITHUB_CONTENT_REPO: "anchorcorps/content",
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await db.teardown();
+  });
+
+  describe("GET /sites/:siteId/git", () => {
+    it("401s without admin auth", async () => {
+      const site = await db.seedSite("git-get-noauth");
+      const res = await request(app).get(`/api/sites/${site.id}/git`);
+      expect(res.status).toBe(401);
+    });
+
+    it("404s for an unknown site", async () => {
+      const res = await auth(request(app).get(`/api/sites/${UNKNOWN_SITE_ID}/git`));
+      expect(res.status).toBe(404);
+    });
+
+    it("reports configured:false, repo:null, state:null when git mode is disabled", async () => {
+      const site = await db.seedSite("git-get-unconfigured");
+      const res = await auth(request(app).get(`/api/sites/${site.id}/git`));
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ configured: false, repo: null, state: null });
+    });
+
+    it("reports configured:true + repo + state once the server is configured and the site enabled", async () => {
+      const site = await db.seedSite("git-get-configured");
+      await setGitEnabled(db.getPool(), site.id, true);
+      const res = await auth(request(appConfigured).get(`/api/sites/${site.id}/git`));
+      expect(res.status).toBe(200);
+      expect(res.body.configured).toBe(true);
+      expect(res.body.repo).toBe("anchorcorps/content");
+      expect(res.body.state.enabled).toBe(true);
+    });
+  });
+
+  describe("POST /sites/:siteId/git/enable", () => {
+    it("400s on invalid payload", async () => {
+      const site = await db.seedSite("git-enable-invalid");
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/git/enable`).send({ enabled: "yes" }),
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid payload");
+    });
+
+    it("404s for an unknown site", async () => {
+      const res = await auth(
+        request(app).post(`/api/sites/${UNKNOWN_SITE_ID}/git/enable`).send({ enabled: true }),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("upserts an enabled state row and enqueues an initial export", async () => {
+      enqueueSpy.mockClear();
+      const site = await db.seedSite("git-enable");
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/git/enable`).send({ enabled: true }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.state.enabled).toBe(true);
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith({ siteId: site.id, trigger: "initial" });
+    });
+
+    it("disabling upserts the row but does NOT enqueue", async () => {
+      const site = await db.seedSite("git-disable");
+      await auth(request(app).post(`/api/sites/${site.id}/git/enable`).send({ enabled: true }));
+      enqueueSpy.mockClear();
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/git/enable`).send({ enabled: false }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.state.enabled).toBe(false);
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("503s honestly when the initial-export enqueue fails, instead of a fake 200", async () => {
+      const failApp = buildApp(db.getPool(), vi.fn(async () => null), {});
+      const site = await db.seedSite("git-enable-fail");
+      const res = await auth(
+        request(failApp).post(`/api/sites/${site.id}/git/enable`).send({ enabled: true }),
+      );
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "job queue unavailable" });
+    });
+  });
+
+  describe("POST /sites/:siteId/git/export", () => {
+    it("404s for an unknown site", async () => {
+      const res = await auth(request(app).post(`/api/sites/${UNKNOWN_SITE_ID}/git/export`).send({}));
+      expect(res.status).toBe(404);
+    });
+
+    it("409s when git sync isn't enabled for this site", async () => {
+      const site = await db.seedSite("git-export-disabled");
+      const res = await auth(request(app).post(`/api/sites/${site.id}/git/export`).send({}));
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: "git not enabled" });
+    });
+
+    it("202s + enqueues a manual export once enabled", async () => {
+      const site = await db.seedSite("git-export-enabled");
+      await setGitEnabled(db.getPool(), site.id, true);
+      enqueueSpy.mockClear();
+      const res = await auth(request(app).post(`/api/sites/${site.id}/git/export`).send({}));
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ queued: true });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith({ siteId: site.id, trigger: "manual" });
+    });
+
+    it("503s honestly when the manual-export enqueue fails", async () => {
+      const failApp = buildApp(db.getPool(), vi.fn(async () => null), {});
+      const site = await db.seedSite("git-export-fail");
+      await setGitEnabled(db.getPool(), site.id, true);
+      const res = await auth(request(failApp).post(`/api/sites/${site.id}/git/export`).send({}));
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: "job queue unavailable" });
+    });
+
+    it("cross-site 404: a site's git state never leaks into another site's export check", async () => {
+      const siteA = await db.seedSite("git-cross-a");
+      const siteB = await db.seedSite("git-cross-b");
+      await setGitEnabled(db.getPool(), siteA.id, true);
+      // siteB never enabled — its own export must still 409, not ride on
+      // siteA's enabled state.
+      const res = await auth(request(app).post(`/api/sites/${siteB.id}/git/export`).send({}));
+      expect(res.status).toBe(409);
+    });
+  });
+});

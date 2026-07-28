@@ -21,6 +21,7 @@ import { adminJobsRouter } from "./routes/admin-jobs.js";
 import { adminAiAgentRouter } from "./routes/admin-ai-agent.js";
 import { meRouter } from "./routes/me.js";
 import { gitWebhookRouter, type RawBodyRequest } from "./routes/git-webhook.js";
+import { adminGitRouter } from "./routes/admin-git.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
@@ -122,6 +123,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Task 10 (AI site agent): conversation CRUD + SSE message/tail routes.
   app.use("/api", adminAiAgentRouter());
+
+  // GitHub sync Task 7: admin status/enable/export endpoints backing the
+  // Studio GitCard. Gated by requireAdmin like every other admin-sites route.
+  app.use("/api", adminGitRouter());
 
   // GitHub sync Task 5: push webhook — HMAC-verified, no requireAdmin (GitHub
   // can't send an admin token; the signature check IS the auth).

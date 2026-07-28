@@ -8,6 +8,7 @@ import { Card, CardContent } from "../../ui/card.js";
 import { Input } from "../../ui/input.js";
 import { Label } from "../../ui/label.js";
 import { Spinner } from "../../ui/spinner.js";
+import { GitCard } from "./GitCard.js";
 
 /**
  * Settings tab (P4-T4.15). Edit display_name + brand tokens (reusing the
@@ -148,6 +149,8 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
           <p className="text-xs text-zinc-400">Manage all domains (add custom hostnames, provision SSL) in the <strong>Domains</strong> tab.</p>
         </CardContent>
       </Card>
+
+      <GitCard siteId={site.id} slug={site.slug} />
     </div>
   );
 }

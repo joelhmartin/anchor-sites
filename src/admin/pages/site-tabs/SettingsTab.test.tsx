@@ -20,6 +20,14 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// GitCard (GitHub sync Task 7) fetches `GET /api/sites/:siteId/git` on mount
+// alongside every SettingsTab render — every fetch mock below has to answer
+// that call too, or GitCard's useApi hook logs an unhandled "unconfigured"
+// error state instead of the intended muted copy. Kept minimal (git sync
+// disabled) since these tests aren't about GitCard's own behavior (see
+// GitCard.test.tsx for that).
+const GIT_UNCONFIGURED = { configured: false, repo: null, state: null };
+
 describe("SettingsTab (P4-T4.15)", () => {
   const realFetch = global.fetch;
   beforeEach(() => setAdminToken("tok"));
@@ -31,6 +39,7 @@ describe("SettingsTab (P4-T4.15)", () => {
   });
 
   it("loads the current display name and the site's brand-color value", () => {
+    global.fetch = vi.fn(async () => json(GIT_UNCONFIGURED)) as unknown as typeof fetch;
     render(<SettingsTab site={SITE} />);
     expect((screen.getByLabelText("Display name") as HTMLInputElement).value).toBe("Acme Dental");
     // The site's --theme-main overrides the default in the Main color picker.
@@ -40,7 +49,10 @@ describe("SettingsTab (P4-T4.15)", () => {
   });
 
   it("Save is disabled until something changes, then PATCHes only the diff", async () => {
-    const fetchMock = vi.fn(async () => json({ site: { ...SITE, display_name: "Acme Dental Group" } }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);
+      return json({ site: { ...SITE, display_name: "Acme Dental Group" } });
+    });
     global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<SettingsTab site={SITE} />);
@@ -52,7 +64,8 @@ describe("SettingsTab (P4-T4.15)", () => {
     fireEvent.click(save());
 
     await waitFor(() => expect(screen.getByText("Saved.")).toBeTruthy());
-    const [path, opts] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const patchCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PATCH")!;
+    const [path, opts] = patchCall as unknown as [string, RequestInit];
     expect(path).toBe("/api/sites/s1");
     expect(opts.method).toBe("PATCH");
     // Only the changed field is sent — colors weren't touched.
@@ -60,21 +73,29 @@ describe("SettingsTab (P4-T4.15)", () => {
   });
 
   it("includes brand tokens in the diff when a color changes", async () => {
-    const fetchMock = vi.fn(async () => json({ site: SITE }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);
+      return json({ site: SITE });
+    });
     global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<SettingsTab site={SITE} />);
     fireEvent.change(screen.getByLabelText("Main"), { target: { value: "#112233" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sites/s1", expect.anything()));
+    const patchCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PATCH")!;
+    const body = JSON.parse((patchCall[1] as RequestInit).body as string);
     expect(body.display_name).toBeUndefined();
     expect(body.default_brand_tokens["--theme-main"]).toBe("#112233");
   });
 
   it("surfaces a save validation error", async () => {
-    global.fetch = vi.fn(async () => json({ error: "invalid payload" }, 400)) as unknown as typeof fetch;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);
+      return json({ error: "invalid payload" }, 400);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
     render(<SettingsTab site={SITE} />);
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Renamed" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
