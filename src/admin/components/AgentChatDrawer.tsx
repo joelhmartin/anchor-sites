@@ -32,6 +32,13 @@ export type AgentChatDrawerProps = {
   autoTail?: boolean;
   /** Fires for every event (streamed or tailed) that carries a `change`. */
   onChangeEvent?: (c: AgentChangeEvent) => void;
+  /**
+   * Fires whenever the conversation's status or in-flight state changes
+   * (Task 11 — the site-detail preview uses this to gate inline editing
+   * while the agent is actively working). `busy` is
+   * `sending || liveTurn !== null || status === "running"`.
+   */
+  onStatusChange?: (status: AiConversation["status"] | null, busy: boolean) => void;
 };
 
 function todayKey(): string {
@@ -63,6 +70,7 @@ export function AgentChatDrawer({
   onSiteChanged,
   autoTail,
   onChangeEvent,
+  onStatusChange,
 }: AgentChatDrawerProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<AiConversation | null>(null);
@@ -149,6 +157,19 @@ export function AgentChatDrawer({
     if (!el || !isNearBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
   }, [items, liveTurn]);
+
+  // Task 11 agent-busy guard: report status/busy on every change to
+  // `conversation`, `sending`, or `liveTurn` so a caller (site-detail's
+  // inline editor) can gate itself while a turn is actively running.
+  // `onStatusChange` is intentionally left out of the dep array — it's
+  // typically a fresh closure each render, and re-invoking on identity
+  // change alone (with unchanged status/busy) would just be redundant work.
+  useEffect(() => {
+    const status = conversation?.status ?? null;
+    const busy = sending || liveTurn !== null || status === "running";
+    onStatusChange?.(status, busy);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation?.status, sending, liveTurn]);
 
   /**
    * Replace the transcript with the authoritative persisted history. Used

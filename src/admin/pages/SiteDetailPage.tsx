@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
 import { getAdminToken } from "../lib/adminToken.js";
-import type { AgentChangeEvent } from "../lib/agent-api.js";
+import type { AgentChangeEvent, AiConversation } from "../lib/agent-api.js";
 import type { SiteDetail, SiteListRow, SiteStatus } from "../lib/siteTypes.js";
 import { Badge } from "../ui/badge.js";
 import { Card, CardContent } from "../ui/card.js";
@@ -21,6 +21,10 @@ import { DomainsTab } from "./site-tabs/DomainsTab.js";
 import { CrmTab } from "./site-tabs/CrmTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
 import { AgentChatDrawer } from "../components/AgentChatDrawer.js";
+import { createInlineEditor, type InlineEditorHandle } from "../lib/inline-editor.js";
+import { ImagePickerDialog } from "../components/ImagePickerDialog.js";
+import type { PickedImage } from "../components/image-sources.js";
+import { LinkPopover } from "../components/LinkPopover.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
   active: "success",
@@ -108,9 +112,18 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   // conversation exists yet), which would otherwise look unexplained.
   const aiError = searchParams.get("ai_error") === "1";
 
+  // Task 11 agent-busy guard: lifted from the drawer's onStatusChange so
+  // <DraftPreview> can force its inline editor readonly while the agent is
+  // actively working the site — editing over the AI's own writes would race.
+  const [agentBusy, setAgentBusy] = useState(false);
+
   function handleChangeEvent(c: AgentChangeEvent) {
     if (c.page_id) setPreviewPageId(c.page_id);
     setPreviewNonce((n) => n + 1);
+  }
+
+  function handleStatusChange(_status: AiConversation["status"] | null, busy: boolean) {
+    setAgentBusy(busy);
   }
 
   return (
@@ -205,7 +218,12 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             </div>
 
             {aiOpen && (
-              <DraftPreview siteId={siteId} previewPageId={previewPageId} previewNonce={previewNonce} />
+              <DraftPreview
+                siteId={siteId}
+                previewPageId={previewPageId}
+                previewNonce={previewNonce}
+                agentBusy={agentBusy}
+              />
             )}
           </div>
 
@@ -217,6 +235,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             onSiteChanged={reload}
             autoTail={searchParams.get("ai") === "1"}
             onChangeEvent={handleChangeEvent}
+            onStatusChange={handleStatusChange}
           />
         </>
       )}
@@ -224,49 +243,167 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   );
 }
 
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+
+const READONLY_BUSY_REASON = "The AI is working on this site…";
+
 /**
- * Draft preview column (P12-T12). Only mounted while the AI drawer is open,
- * so its pages-list fallback fetch (`GET /api/sites/:id/pages`) doesn't fire
- * on every site-detail load — that GET is otherwise identical to the one the
- * (lazily-mounted) Pages tab already makes. Shows the page from the latest
- * drawer change event, falling back to the site's first page; `previewNonce`
- * is used as the iframe's `key` to force a reload on every change event.
+ * Draft preview column (P12-T12; Task 11 adds inline edit mode). Only
+ * mounted while the AI drawer is open, so its pages-list fallback fetch
+ * (`GET /api/sites/:id/pages`) doesn't fire on every site-detail load — that
+ * GET is otherwise identical to the one the (lazily-mounted) Pages tab
+ * already makes. Shows the page from the latest drawer change event,
+ * falling back to the site's first page.
+ *
+ * Edit mode: the "Edit" toggle spins up an `InlineEditorHandle` (Task 9)
+ * bridged into the iframe via `&edit=1&bridge=${token}`, wires its
+ * image-pick/link-edit requests to `<ImagePickerDialog>`/`<LinkPopover>`,
+ * and surfaces its save-state as a chip. `agentBusy` (lifted from the
+ * drawer's `onStatusChange`) forces the handle readonly while the AI is
+ * actively writing to the same site — editing over its writes would race.
+ *
+ * The `previewNonce` change-event reload is suppressed while an edit
+ * session is dirty/saving (a reload would tear down the contenteditable
+ * session mid-keystroke); the latest page/nonce is applied once the save
+ * settles or edit mode turns off.
  */
 function DraftPreview({
   siteId,
   previewPageId,
   previewNonce,
+  agentBusy,
 }: {
   siteId: string;
   previewPageId: string | null;
   previewNonce: number;
+  agentBusy: boolean;
 }) {
   const { data: pagesData } = useApi<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`);
   const firstPageId = pagesData?.pages[0]?.id ?? null;
   const effectivePreviewPageId = previewPageId ?? firstPageId;
 
   const adminToken = getAdminToken();
-  // Item 9 (CodeRabbit — preview refresh): append `v=${previewNonce}` so
-  // every change bumps to a genuinely distinct URL, not just a re-mounted
+
+  const [edit, setEdit] = useState(false);
+  const [editToken, setEditToken] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [imagePick, setImagePick] = useState<{ blockId: string; field: string } | null>(null);
+  const [linkEdit, setLinkEdit] = useState<{ blockId: string; field: string; value: string } | null>(null);
+  const [displayed, setDisplayed] = useState({ pageId: effectivePreviewPageId, nonce: previewNonce });
+
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const handleRef = useRef<InlineEditorHandle | null>(null);
+
+  const dirty = saveState === "dirty" || saveState === "saving";
+
+  // Suppressed-reload queue: while an edit session is dirty, hold onto
+  // whatever page/nonce the drawer's change events point at rather than
+  // applying it immediately — applied below once dirty clears or edit exits.
+  useEffect(() => {
+    if (edit && dirty) return;
+    setDisplayed({ pageId: effectivePreviewPageId, nonce: previewNonce });
+  }, [effectivePreviewPageId, previewNonce, edit, dirty]);
+
+  // Create/destroy the inline editor handle as edit mode toggles.
+  useEffect(() => {
+    if (!edit || !displayed.pageId) return;
+    const handle = createInlineEditor({
+      siteId,
+      pageId: displayed.pageId,
+      events: {
+        onImagePickRequest: (blockId, field) => setImagePick({ blockId, field }),
+        onLinkEditRequest: (blockId, field, value) => setLinkEdit({ blockId, field, value }),
+        onSaveStateChange: (s) => setSaveState(s),
+      },
+    });
+    handleRef.current = handle;
+    setEditToken(handle.token);
+    return () => {
+      handleRef.current = null;
+      setEditToken(null);
+      void handle.flush().finally(() => handle.destroy());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit, siteId, displayed.pageId]);
+
+  // Agent-busy guard: force readonly while the drawer reports the AI is
+  // actively working; re-run on `editToken` so a freshly-created handle
+  // immediately picks up the current busy state.
+  useEffect(() => {
+    handleRef.current?.setReadonly(agentBusy, agentBusy ? READONLY_BUSY_REASON : undefined);
+  }, [agentBusy, editToken]);
+
+  function handleIframeLoad() {
+    if (edit && handleRef.current && iframeRef.current) {
+      handleRef.current.attach(iframeRef.current);
+    }
+  }
+
+  function handleImagePicked(picked: PickedImage) {
+    if (imagePick && handleRef.current) {
+      handleRef.current.applyImage(imagePick.blockId, imagePick.field, picked.asset_id, picked.src, picked.alt);
+    }
+    setImagePick(null);
+  }
+
+  function handleLinkSaved(url: string) {
+    if (linkEdit && handleRef.current) {
+      handleRef.current.applyField(linkEdit.blockId, linkEdit.field, url);
+    }
+    setLinkEdit(null);
+  }
+
+  // Item 9 (CodeRabbit — preview refresh): append `v=${nonce}` so every
+  // change bumps to a genuinely distinct URL, not just a re-mounted
   // <iframe> pointed at the SAME url (which a cache — browser HTTP cache or
   // an intermediary — could legitimately serve stale for). Paired with the
   // preview route's own `Cache-Control: no-store` (admin-pages.ts).
-  const previewQuery = adminToken
-    ? `token=${encodeURIComponent(adminToken)}&v=${previewNonce}`
-    : `v=${previewNonce}`;
-  const previewSrc = effectivePreviewPageId
-    ? `/api/sites/${siteId}/pages/${effectivePreviewPageId}/preview?${previewQuery}`
+  const baseQuery = adminToken
+    ? `token=${encodeURIComponent(adminToken)}&v=${displayed.nonce}`
+    : `v=${displayed.nonce}`;
+  const editQuery = edit && editToken ? `&edit=1&bridge=${encodeURIComponent(editToken)}` : "";
+  const previewSrc = displayed.pageId
+    ? `/api/sites/${siteId}/pages/${displayed.pageId}/preview?${baseQuery}${editQuery}`
     : null;
 
   if (!previewSrc) return null;
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-2">
-      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
+    <div
+      data-testid="draft-preview-panel"
+      className={cn("flex w-full flex-col gap-2", edit ? "max-w-3xl" : "max-w-md")}
+    >
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
+        <div className="flex items-center gap-2">
+          {edit && saveState === "saving" && <span className="text-xs text-zinc-500">Saving…</span>}
+          {edit && saveState === "saved" && <span className="text-xs text-zinc-500">Saved · just now</span>}
+          {edit && saveState === "error" && (
+            <span className="text-xs text-amber-600">Save failed — retrying</span>
+          )}
+          {agentBusy && <span className="text-xs text-amber-600">{READONLY_BUSY_REASON}</span>}
+          <button
+            type="button"
+            aria-pressed={edit}
+            disabled={agentBusy}
+            onClick={() => setEdit((v) => !v)}
+            className={cn(
+              "rounded border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
+              edit
+                ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                : "border-zinc-300 text-zinc-600 hover:bg-zinc-50",
+            )}
+          >
+            Edit
+          </button>
+        </div>
+      </div>
       <iframe
+        ref={iframeRef}
         title="Draft preview"
         src={previewSrc}
-        key={previewNonce}
+        key={`${displayed.pageId}:${displayed.nonce}:${edit}`}
+        onLoad={handleIframeLoad}
         // Critical 2: the preview response is same-origin HTML rendered
         // from operator/AI-authored blocks — without a sandbox, an
         // embedded <script> block runs with the parent's origin (reachable
@@ -275,7 +412,21 @@ function DraftPreview({
         // origin: scripts still run (blocks that need them keep working),
         // but they can't read/write anything under the admin's real origin.
         sandbox="allow-scripts"
-        className="h-96 w-full rounded border border-zinc-200"
+        className={cn("w-full rounded border border-zinc-200", edit ? "h-[70vh]" : "h-96")}
+      />
+
+      <ImagePickerDialog
+        siteId={siteId}
+        open={imagePick !== null}
+        onClose={() => setImagePick(null)}
+        onPick={handleImagePicked}
+      />
+
+      <LinkPopover
+        open={linkEdit !== null}
+        initialValue={linkEdit?.value}
+        onClose={() => setLinkEdit(null)}
+        onSave={handleLinkSaved}
       />
     </div>
   );

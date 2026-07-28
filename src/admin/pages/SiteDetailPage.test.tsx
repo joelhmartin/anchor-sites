@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SiteDetailPage } from "./SiteDetailPage.js";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
 import type { AgentChatDrawerProps } from "../components/AgentChatDrawer.js";
+import type { ImagePickerDialog as ImagePickerDialogType } from "../components/ImagePickerDialog.js";
 
 // Stub the Studio chat drawer (Task 11) so this suite can assert the props
 // Task 12 threads into it (open/autoTail/onChangeEvent) without dealing with
@@ -14,6 +16,43 @@ vi.mock("../components/AgentChatDrawer.js", () => ({
   AgentChatDrawer: (props: AgentChatDrawerProps) => {
     drawerCalls.push(props);
     return props.open ? <div data-testid="agent-drawer-stub">Studio chat stub (open)</div> : null;
+  },
+}));
+
+// Task 11: mock createInlineEditor so tests can capture the `events` it was
+// wired with and invoke them directly (image-pick/link-edit requests,
+// save-state changes), and assert on the calls made to the returned handle
+// (attach/applyImage/applyField/setReadonly/flush/destroy) without exercising
+// the real debounce/save-cycle machinery (that's inline-editor.test.ts's job).
+const { inlineEditorCalls, inlineEditorHandle } = vi.hoisted(() => {
+  const handle = {
+    token: "tok-edit-1",
+    attach: vi.fn(),
+    applyField: vi.fn(),
+    applyImage: vi.fn(),
+    setReadonly: vi.fn(),
+    flush: vi.fn(async () => {}),
+    destroy: vi.fn(),
+  };
+  return { inlineEditorCalls: [] as Array<Record<string, unknown>>, inlineEditorHandle: handle };
+});
+vi.mock("../lib/inline-editor.js", () => ({
+  createInlineEditor: (opts: Record<string, unknown>) => {
+    inlineEditorCalls.push(opts);
+    return inlineEditorHandle;
+  },
+}));
+
+// Task 11: stub the image picker dialog — its own sources/upload/stock flows
+// are covered by ImagePickerDialog's own tests; here we only need to assert
+// it opens/closes and that a pick reaches `handle.applyImage`.
+const { imagePickerCalls } = vi.hoisted(() => ({
+  imagePickerCalls: [] as Array<ComponentProps<typeof ImagePickerDialogType>>,
+}));
+vi.mock("../components/ImagePickerDialog.js", () => ({
+  ImagePickerDialog: (props: ComponentProps<typeof ImagePickerDialogType>) => {
+    imagePickerCalls.push(props);
+    return props.open ? <div data-testid="image-picker-stub">Image picker stub</div> : null;
   },
 }));
 
@@ -62,6 +101,14 @@ describe("SiteDetailPage (P4-T4.12)", () => {
   beforeEach(() => {
     setAdminToken("tok");
     drawerCalls.length = 0;
+    inlineEditorCalls.length = 0;
+    imagePickerCalls.length = 0;
+    inlineEditorHandle.attach.mockClear();
+    inlineEditorHandle.applyField.mockClear();
+    inlineEditorHandle.applyImage.mockClear();
+    inlineEditorHandle.setReadonly.mockClear();
+    inlineEditorHandle.flush.mockClear();
+    inlineEditorHandle.destroy.mockClear();
   });
   afterEach(() => {
     cleanup();
@@ -231,5 +278,177 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     // the swapped page id) — that's what makes it a genuinely distinct URL
     // a cache can't legitimately serve stale.
     expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain("v=1");
+  });
+
+  // ── Task 11: inline edit mode + agent-busy guard ──
+
+  async function openPreviewInEditMode() {
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+    fireEvent.click(within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(inlineEditorCalls.length).toBe(1));
+  }
+
+  it("Edit toggle turns on inline editing: widens the panel and appends edit=1&bridge= to the iframe src", async () => {
+    mockApi([SITE], SITE, [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "AI" }));
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+
+    const editToggle = within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" });
+    expect(editToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("draft-preview-panel").className).toContain("max-w-md");
+
+    fireEvent.click(editToggle);
+    expect(editToggle.getAttribute("aria-pressed")).toBe("true");
+
+    await waitFor(() => expect(inlineEditorCalls.length).toBe(1));
+    expect(inlineEditorCalls[0]).toMatchObject({ siteId: "s1", pageId: "pg1" });
+
+    await waitFor(() => {
+      const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
+      expect(iframe.getAttribute("src")).toContain(`&edit=1&bridge=${inlineEditorHandle.token}`);
+    });
+    const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
+    expect(iframe.className).toContain("h-[70vh]");
+    expect(screen.getByTestId("draft-preview-panel").className).toContain("max-w-3xl");
+
+    // Turning it back off flushes and destroys the handle.
+    fireEvent.click(editToggle);
+    await waitFor(() => expect(inlineEditorHandle.flush).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(inlineEditorHandle.destroy).toHaveBeenCalledTimes(1));
+    expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).not.toContain("edit=1");
+  });
+
+  it("shows a save-state chip driven by the inline editor's onSaveStateChange", async () => {
+    await openPreviewInEditMode();
+    const events = inlineEditorCalls[0].events as { onSaveStateChange: (s: string) => void };
+
+    act(() => events.onSaveStateChange("saving"));
+    await waitFor(() => expect(screen.getByText("Saving…")).toBeTruthy());
+
+    act(() => events.onSaveStateChange("saved"));
+    await waitFor(() => expect(screen.getByText("Saved · just now")).toBeTruthy());
+
+    act(() => events.onSaveStateChange("error"));
+    await waitFor(() => expect(screen.getByText("Save failed — retrying")).toBeTruthy());
+  });
+
+  it("shows a readonly banner and forces the inline editor readonly while the agent drawer reports busy", async () => {
+    await openPreviewInEditMode();
+    const last = drawerCalls[drawerCalls.length - 1];
+
+    expect(screen.queryByText(/The AI is working on this site/)).toBeNull();
+
+    act(() => {
+      last.onStatusChange?.("running", true);
+    });
+
+    await waitFor(() => expect(screen.getByText(/The AI is working on this site/)).toBeTruthy());
+    await waitFor(() =>
+      expect(inlineEditorHandle.setReadonly).toHaveBeenLastCalledWith(true, "The AI is working on this site…"),
+    );
+    // The Edit toggle itself is gated too — can't leave/enter edit mode mid-run.
+    expect(
+      within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" }).hasAttribute("disabled"),
+    ).toBe(true);
+
+    act(() => {
+      last.onStatusChange?.("active", false);
+    });
+    await waitFor(() => expect(inlineEditorHandle.setReadonly).toHaveBeenLastCalledWith(false, undefined));
+    expect(screen.queryByText(/The AI is working on this site/)).toBeNull();
+  });
+
+  it("opens the image picker on an image-pick request, and a pick calls handle.applyImage", async () => {
+    await openPreviewInEditMode();
+    expect(screen.queryByTestId("image-picker-stub")).toBeNull();
+
+    const events = inlineEditorCalls[0].events as { onImagePickRequest: (b: string, f: string) => void };
+    act(() => events.onImagePickRequest("blk1", "image"));
+
+    await waitFor(() => expect(screen.getByTestId("image-picker-stub")).toBeTruthy());
+    expect(imagePickerCalls[imagePickerCalls.length - 1].siteId).toBe("s1");
+
+    act(() => {
+      imagePickerCalls[imagePickerCalls.length - 1].onPick({
+        asset_id: "asset-1",
+        src: "https://cdn.example.com/asset-1.jpg",
+        alt: "A picture",
+      });
+    });
+
+    expect(inlineEditorHandle.applyImage).toHaveBeenCalledWith(
+      "blk1",
+      "image",
+      "asset-1",
+      "https://cdn.example.com/asset-1.jpg",
+      "A picture",
+    );
+    await waitFor(() => expect(screen.queryByTestId("image-picker-stub")).toBeNull());
+  });
+
+  it("opens the link popover on a link-edit request; Save calls handle.applyField with a valid URL", async () => {
+    await openPreviewInEditMode();
+    const events = inlineEditorCalls[0].events as {
+      onLinkEditRequest: (b: string, f: string, v: string) => void;
+    };
+    act(() => events.onLinkEditRequest("blk2", "href", "https://old.example.com"));
+
+    await waitFor(() => expect(screen.getByText("Edit link")).toBeTruthy());
+    const urlInput = screen.getByLabelText("URL") as HTMLInputElement;
+    expect(urlInput.value).toBe("https://old.example.com");
+
+    fireEvent.change(urlInput, { target: { value: "https://new.example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(inlineEditorHandle.applyField).toHaveBeenCalledWith("blk2", "href", "https://new.example.com");
+    await waitFor(() => expect(screen.queryByText("Edit link")).toBeNull());
+  });
+
+  it("rejects a non-http(s) URL in the link popover without calling applyField", async () => {
+    await openPreviewInEditMode();
+    const events = inlineEditorCalls[0].events as {
+      onLinkEditRequest: (b: string, f: string, v: string) => void;
+    };
+    act(() => events.onLinkEditRequest("blk3", "href", ""));
+
+    await waitFor(() => expect(screen.getByText("Edit link")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "javascript:alert(1)" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(inlineEditorHandle.applyField).not.toHaveBeenCalled();
+    expect(screen.getByText(/valid http/)).toBeTruthy();
+  });
+
+  it("suppresses the preview reload while an edit session is dirty, then catches up once it settles", async () => {
+    await openPreviewInEditMode();
+    const events = inlineEditorCalls[0].events as { onSaveStateChange: (s: string) => void };
+    act(() => events.onSaveStateChange("dirty"));
+
+    const last = drawerCalls[drawerCalls.length - 1];
+    const beforeSrc = (screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src");
+
+    act(() => {
+      last.onChangeEvent?.({ kind: "page_updated", page_id: "pg2", revision_id: "rev1", summary: "Updated hero" });
+    });
+    // Still dirty — the change-event reload must be suppressed (would drop
+    // the contenteditable session).
+    expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toBe(beforeSrc);
+
+    act(() => events.onSaveStateChange("saved"));
+    await waitFor(() =>
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+        "/pages/pg2/preview",
+      ),
+    );
   });
 });

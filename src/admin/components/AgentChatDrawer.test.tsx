@@ -720,4 +720,86 @@ describe("AgentChatDrawer (P-T11)", () => {
     );
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
+
+  // ── Task 11: onStatusChange (site-detail agent-busy guard) ──
+
+  it("reports busy via onStatusChange while a turn is in flight, and settles after turn_done", async () => {
+    let onEventCb: ((e: Record<string, unknown>) => void) | undefined;
+    let resolveStream: (() => void) | undefined;
+    streamAgentEvents.mockImplementationOnce(
+      (_path: string, opts: { onEvent: (e: Record<string, unknown>) => void }) => {
+        onEventCb = opts.onEvent;
+        return new Promise<void>((resolve) => {
+          resolveStream = resolve;
+        });
+      },
+    );
+    mockFreshConversationFetch();
+    const onStatusChange = vi.fn();
+
+    renderDrawer({ onStatusChange });
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+
+    // Idle: not busy.
+    expect(onStatusChange).toHaveBeenCalledWith(null, false);
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onEventCb).toBeTruthy());
+    await waitFor(() =>
+      expect(onStatusChange.mock.calls.some(([status, busy]) => status === "active" && busy === true)).toBe(true),
+    );
+
+    // Mirrors a real stream: turn_done fires first, then the SSE connection closes.
+    act(() => onEventCb!({ type: "turn_done", reason: "end_turn" }));
+    await act(async () => {
+      resolveStream?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(onStatusChange.mock.calls[onStatusChange.mock.calls.length - 1]).toEqual(["active", false]),
+    );
+  });
+
+  it("reports busy when a tailed status event marks the conversation as running", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c9/events?after=m2"] = [
+      { type: "status", status: "running" },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({
+          conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} }],
+        });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9" && method === "GET") {
+        return json({
+          conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+          messages: [
+            { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
+            {
+              id: "m2",
+              conversation_id: "c9",
+              role: "assistant",
+              content: [{ type: "text", text: "Hi there" }],
+              created_at: "t2",
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const onStatusChange = vi.fn();
+
+    renderDrawer({ autoTail: true, onStatusChange });
+
+    await waitFor(() => expect(screen.getByText("Hi there")).toBeTruthy());
+    await waitFor(() =>
+      expect(onStatusChange.mock.calls.some(([status, busy]) => status === "running" && busy === true)).toBe(true),
+    );
+  });
 });
