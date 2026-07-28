@@ -25,7 +25,14 @@ FROM node:20-alpine AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/components/package.json ./packages/components/package.json
-RUN npm ci --omit=dev --no-audit --no-fund
+# --ignore-scripts: better-auth peer-depends on vitest, so npm installs
+# vite-node with a NESTED esbuild@0.21.5 even under --omit=dev; that nested
+# copy's postinstall validates `esbuild --version` against the hoisted
+# top-level esbuild (0.28, the overlay compiler) and fails the build.
+# Scripts are unnecessary here: esbuild (>=0.18) and sharp (>=0.33) ship
+# their binaries via @esbuild/* / @img/* optionalDependencies, verified by
+# a full runtime smoke (buildSync, sharp, react-dom/server, pg, tsx).
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 # ---- run: minimal runtime image -------------------------------------------
 FROM node:20-alpine AS run
