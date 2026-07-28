@@ -310,14 +310,15 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     fireEvent.click(editToggle);
     expect(editToggle.getAttribute("aria-pressed")).toBe("true");
 
-    await waitFor(() => expect(inlineEditorCalls.length).toBe(1));
+    // Synchronous — fireEvent.click already flushes the click handler's
+    // batched state updates, so the handle exists and the src carries the
+    // bridge token on this very render (fix-round-1 finding 1 regression:
+    // previously the handle was created a tick later in an effect, so this
+    // first render would have been missing `&edit=1&bridge=`).
+    expect(inlineEditorCalls.length).toBe(1);
     expect(inlineEditorCalls[0]).toMatchObject({ siteId: "s1", pageId: "pg1" });
-
-    await waitFor(() => {
-      const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
-      expect(iframe.getAttribute("src")).toContain(`&edit=1&bridge=${inlineEditorHandle.token}`);
-    });
     const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
+    expect(iframe.getAttribute("src")).toContain(`&edit=1&bridge=${inlineEditorHandle.token}`);
     expect(iframe.className).toContain("h-[70vh]");
     expect(screen.getByTestId("draft-preview-panel").className).toContain("max-w-3xl");
 
@@ -326,6 +327,35 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     await waitFor(() => expect(inlineEditorHandle.flush).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(inlineEditorHandle.destroy).toHaveBeenCalledTimes(1));
     expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).not.toContain("edit=1");
+  });
+
+  it("attaches the inline editor to the iframe on its load event, exactly once", async () => {
+    await openPreviewInEditMode();
+    const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
+    inlineEditorHandle.attach.mockClear();
+
+    fireEvent.load(iframe);
+
+    expect(inlineEditorHandle.attach).toHaveBeenCalledTimes(1);
+    expect(inlineEditorHandle.attach).toHaveBeenCalledWith(iframe);
+  });
+
+  it("bumps the preview nonce once edit-mode exit's flush resolves, so the plain iframe re-fetches saved content", async () => {
+    await openPreviewInEditMode();
+    const editToggle = within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" });
+
+    fireEvent.click(editToggle); // turn edit off — kicks off flush().then(bump nonce).finally(destroy)
+
+    await waitFor(() => expect(inlineEditorHandle.flush).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const src = (screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src") ?? "";
+      const match = src.match(/[?&]v=(\d+)/);
+      expect(match).toBeTruthy();
+      // Nonce started at 0 (first render); the post-flush bump must move it
+      // past that, not leave the iframe pointed at a URL a cache could
+      // still be legitimately serving stale for.
+      expect(Number(match?.[1])).toBeGreaterThan(0);
+    });
   });
 
   it("shows a save-state chip driven by the inline editor's onSaveStateChange", async () => {

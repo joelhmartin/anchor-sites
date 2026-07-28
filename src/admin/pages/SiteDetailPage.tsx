@@ -293,6 +293,7 @@ function DraftPreview({
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const handleRef = useRef<InlineEditorHandle | null>(null);
+  const mountedRef = useRef(true);
 
   const dirty = saveState === "dirty" || saveState === "saving";
 
@@ -304,27 +305,41 @@ function DraftPreview({
     setDisplayed({ pageId: effectivePreviewPageId, nonce: previewNonce });
   }, [effectivePreviewPageId, previewNonce, edit, dirty]);
 
-  // Create/destroy the inline editor handle as edit mode toggles.
+  /**
+   * Flush + destroy whatever handle is live, then — fix-round-1 directed
+   * extra — bump the displayed nonce once the flush resolves, so the plain
+   * (non-edit) iframe that reappears actually re-fetches instead of showing
+   * a URL a cache could legitimately still be holding stale from before the
+   * edit session. Shared by the explicit toggle-off path (`toggleEdit`
+   * below) and unmount.
+   */
+  function teardownHandle() {
+    const handle = handleRef.current;
+    if (!handle) return;
+    handleRef.current = null;
+    setEditToken(null);
+    void handle
+      .flush()
+      .then(() => {
+        // Guard against setting state after unmount — the flush is async
+        // and this same function also runs from the unmount cleanup below.
+        if (mountedRef.current) setDisplayed((d) => ({ ...d, nonce: d.nonce + 1 }));
+      })
+      .finally(() => {
+        handle.destroy();
+      });
+  }
+
+  // Unmount-only cleanup (e.g. the AI drawer/preview column closes mid-edit)
+  // — `toggleEdit` below handles the in-app "Edit" off-click path itself so
+  // that transition isn't deferred to a passive-effect cleanup.
   useEffect(() => {
-    if (!edit || !displayed.pageId) return;
-    const handle = createInlineEditor({
-      siteId,
-      pageId: displayed.pageId,
-      events: {
-        onImagePickRequest: (blockId, field) => setImagePick({ blockId, field }),
-        onLinkEditRequest: (blockId, field, value) => setLinkEdit({ blockId, field, value }),
-        onSaveStateChange: (s) => setSaveState(s),
-      },
-    });
-    handleRef.current = handle;
-    setEditToken(handle.token);
     return () => {
-      handleRef.current = null;
-      setEditToken(null);
-      void handle.flush().finally(() => handle.destroy());
+      mountedRef.current = false;
+      teardownHandle();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit, siteId, displayed.pageId]);
+  }, []);
 
   // Agent-busy guard: force readonly while the drawer reports the AI is
   // actively working; re-run on `editToken` so a freshly-created handle
@@ -337,6 +352,47 @@ function DraftPreview({
     if (edit && handleRef.current && iframeRef.current) {
       handleRef.current.attach(iframeRef.current);
     }
+  }
+
+  /**
+   * Edit toggle. Turning ON creates the `InlineEditorHandle` — and stashes
+   * its token into state — SYNCHRONOUSLY, right here in the click handler,
+   * alongside `setEdit(true)` (React 18 batches both into a single render).
+   *
+   * Fix-round-1 finding 1 (bridge-token race): the handle used to be
+   * created in a `useEffect` keyed on `edit`. That meant the FIRST render
+   * after the click always had `edit=true` but `editToken=null` — the
+   * effect hadn't run yet — so the iframe mounted with a src missing
+   * `&edit=1&bridge=`, then re-navigated a tick later once the effect set
+   * the token (only harmless because `attach()` is idempotent). Creating
+   * the handle here means `editToken` is already populated on the very
+   * render that flips `edit` to true, so `previewSrc`/the iframe `key`
+   * below are correct from that render's first paint — no tokenless mount,
+   * no second navigation. (The alternative — gate the iframe on
+   * `!edit || editToken` and fold `editToken` into its key — was passed
+   * over: it still needs an extra render to "catch up", just hides it
+   * behind a blank slot instead of removing it.)
+   */
+  function toggleEdit() {
+    if (edit) {
+      setEdit(false);
+      teardownHandle();
+      return;
+    }
+    if (!displayed.pageId) return;
+    const handle = createInlineEditor({
+      siteId,
+      pageId: displayed.pageId,
+      events: {
+        onImagePickRequest: (blockId, field) => setImagePick({ blockId, field }),
+        onLinkEditRequest: (blockId, field, value) => setLinkEdit({ blockId, field, value }),
+        onSaveStateChange: (s) => setSaveState(s),
+      },
+    });
+    handleRef.current = handle;
+    setEditToken(handle.token);
+    setSaveState("idle");
+    setEdit(true);
   }
 
   function handleImagePicked(picked: PickedImage) {
@@ -386,7 +442,7 @@ function DraftPreview({
             type="button"
             aria-pressed={edit}
             disabled={agentBusy}
-            onClick={() => setEdit((v) => !v)}
+            onClick={toggleEdit}
             className={cn(
               "rounded border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
               edit
