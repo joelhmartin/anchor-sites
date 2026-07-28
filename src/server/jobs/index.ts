@@ -220,11 +220,20 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   // (Task 5) enqueues GitImportInput jobs here after HMAC verification +
   // loop-prevention filtering; the handler itself is the
   // disabled-mode/enabled-state/idempotency gate, so registration here is
-  // unconditional — same shape as GIT_EXPORT above. `stately` policy (fix
-  // round 1, Important — same rationale as GIT_EXPORT: the webhook sends
-  // with `singletonKey: siteId` per push, and a burst of pushes to the same
-  // site should collapse to at most one queued/active import, not one per
-  // push).
+  // unconditional — same shape as GIT_EXPORT above. `stately` policy, PLUS
+  // (fix round 1, Important 3) a per-PUSH `singletonKey`:
+  // `${siteId}:${headSha}` (see git-webhook.ts's enqueueImport doc), not
+  // bare `siteId`. Bare `siteId` was wrong: under `stately`, a SECOND real
+  // push to the same site (different content, different headSha) while the
+  // first push's import job is still queued/active would `send()` with the
+  // same key and get `null` back — silently dropping that push's edits
+  // forever, since nothing retries a job that was never created (unlike
+  // GIT_EXPORT, where every send() carries the SAME siteId-only key by
+  // design — re-exporting the current DB state is idempotent regardless of
+  // which trigger asked for it, so collapsing bursts to one is exactly what
+  // GIT_EXPORT wants). Keying GIT_IMPORT on the pair instead keeps the
+  // intended dedupe (a redelivered webhook for the SAME push collapses to
+  // one job) while letting two DIFFERENT pushes to the same site both queue.
   await boss.createQueue(GIT_IMPORT, { policy: "stately" });
   await boss.work<GitImportInput>(GIT_IMPORT, async ([job]) => {
     await handleGitImport(job.data, { pool: defaultPool });

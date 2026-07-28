@@ -1,7 +1,25 @@
 import { createHmac } from "node:crypto";
 import express from "express";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Fix round 1 (Important 3): spy on pg-boss's `getBoss().send` while keeping
+// every other export of jobs/index.js real, so the singletonKey tests below
+// can exercise gitWebhookRouter's REAL default `enqueueImport` (the lazy
+// `getBoss().send(GIT_IMPORT, input, {singletonKey})` idiom) instead of the
+// injected spy every other test in this file uses. Every OTHER test in this
+// file always injects its own `enqueueImport`, so it never reaches the
+// dynamic `import("../jobs/index.js")` this mock targets — safe to mock
+// module-wide.
+const bossSendSpy = vi.fn(async (..._args: unknown[]) => "job-id-1");
+vi.mock("../../src/server/jobs/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/server/jobs/index.js")>();
+  return {
+    ...actual,
+    getBoss: () => ({ send: bossSendSpy }) as unknown as ReturnType<typeof actual.getBoss>,
+  };
+});
+
 import { setupAgentDb } from "../helpers/agent-db.js";
 import {
   gitWebhookRouter,
@@ -63,7 +81,11 @@ function pushPayload(opts: {
 
 function buildApp(
   pool: import("pg").Pool,
-  enqueueImport: (input: GitImportInput) => Promise<string | null>,
+  // Fix round 1: optional now — omitting it exercises gitWebhookRouter's
+  // REAL default enqueueImport (routed through the mocked `getBoss().send`
+  // above), which every OTHER test in this file bypasses by injecting its
+  // own spy.
+  enqueueImport?: (input: GitImportInput) => Promise<string | null>,
   env: NodeJS.ProcessEnv = ENABLED_ENV,
 ) {
   const app = express();
@@ -76,7 +98,7 @@ function buildApp(
       },
     }),
   );
-  app.use("/api", gitWebhookRouter({ pool, enqueueImport, env }));
+  app.use("/api", gitWebhookRouter({ pool, ...(enqueueImport ? { enqueueImport } : {}), env }));
   return app;
 }
 
@@ -123,6 +145,10 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
 
   afterAll(async () => {
     await db.teardown();
+  });
+
+  afterEach(() => {
+    bossSendSpy.mockClear();
   });
 
   it("503s when GITHUB_WEBHOOK_SECRET is unset — no signature check, no enqueue", async () => {
@@ -331,5 +357,71 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
     expect(res.status).toBe(202);
     expect(res.body.queued.sort()).toEqual([siteA.slug, siteB.slug].sort());
     expect(enqueueSpy).toHaveBeenCalledTimes(2);
+  });
+
+  // --- Fix round 1 (Important 3): default enqueueImport's singletonKey ----
+  //
+  // These two tests skip the injected `enqueueSpy` entirely (no second arg
+  // to `buildApp`) so gitWebhookRouter's REAL default enqueueImport runs —
+  // the one that calls `getBoss().send(GIT_IMPORT, input, {singletonKey})`,
+  // mocked at the top of this file to capture calls in `bossSendSpy` instead
+  // of touching a real pg-boss instance.
+
+  it("keys the default enqueue's pg-boss send() on `${siteId}:${headSha}` — two DIFFERENT pushes to the same site both get sent, not collapsed under the stately policy", async () => {
+    const site = await db.seedSite("gitwh-singletonkey");
+    await setGitEnabled(db.getPool(), site.id, true);
+    const noInjectApp = buildApp(db.getPool());
+
+    const raw1 = JSON.stringify(pushPayload({ slug: site.slug, after: "sha-one" }));
+    await request(noInjectApp)
+      .post("/api/git/webhook")
+      .set("Content-Type", "application/json")
+      .set("X-GitHub-Event", "push")
+      .set("X-Hub-Signature-256", sign(raw1))
+      .send(raw1);
+
+    const raw2 = JSON.stringify(pushPayload({ slug: site.slug, after: "sha-two" }));
+    await request(noInjectApp)
+      .post("/api/git/webhook")
+      .set("Content-Type", "application/json")
+      .set("X-GitHub-Event", "push")
+      .set("X-Hub-Signature-256", sign(raw2))
+      .send(raw2);
+
+    expect(bossSendSpy).toHaveBeenCalledTimes(2);
+    expect(bossSendSpy).toHaveBeenNthCalledWith(
+      1,
+      "git.import",
+      expect.objectContaining({ siteId: site.id, headSha: "sha-one" }),
+      { singletonKey: `${site.id}:sha-one` },
+    );
+    expect(bossSendSpy).toHaveBeenNthCalledWith(
+      2,
+      "git.import",
+      expect.objectContaining({ siteId: site.id, headSha: "sha-two" }),
+      { singletonKey: `${site.id}:sha-two` },
+    );
+  });
+
+  it("uses the SAME singletonKey for a redelivered push (same siteId+headSha twice) — this code always calls send(); the actual dedupe is enforced DB-side by pg-boss's stately policy, not by this route", async () => {
+    const site = await db.seedSite("gitwh-samekey");
+    await setGitEnabled(db.getPool(), site.id, true);
+    const noInjectApp = buildApp(db.getPool());
+    const raw = JSON.stringify(pushPayload({ slug: site.slug, after: "same-sha" }));
+
+    for (let i = 0; i < 2; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      await request(noInjectApp)
+        .post("/api/git/webhook")
+        .set("Content-Type", "application/json")
+        .set("X-GitHub-Event", "push")
+        .set("X-Hub-Signature-256", sign(raw))
+        .send(raw);
+    }
+
+    expect(bossSendSpy).toHaveBeenCalledTimes(2);
+    const [firstCall, secondCall] = bossSendSpy.mock.calls;
+    expect(firstCall[2]).toEqual({ singletonKey: `${site.id}:same-sha` });
+    expect(secondCall[2]).toEqual({ singletonKey: `${site.id}:same-sha` });
   });
 });

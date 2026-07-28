@@ -38,9 +38,22 @@ export type GitWebhookOptions = {
   pool?: Pool;
   /**
    * Inject the enqueue call for tests. Defaults to the lazy
-   * `getBoss().send(GIT_IMPORT, input, { singletonKey: siteId })` idiom
-   * (routes/media.ts precedent), wrapped in try/catch so a pg-boss hiccup
-   * for one site never 500s the whole webhook response.
+   * `getBoss().send(GIT_IMPORT, input, { singletonKey: `${siteId}:${headSha}` })`
+   * idiom (routes/media.ts precedent, keyed on the pair — see the fix round 1
+   * note below), wrapped in try/catch so a pg-boss hiccup for one site never
+   * 500s the whole webhook response.
+   *
+   * Fix round 1 (Important 3): GIT_IMPORT runs under pg-boss's `stately`
+   * policy (jobs/index.ts), where a second `send()` for a key that already
+   * has a queued/active job returns `null` instead of queuing anything.
+   * Keying on bare `siteId` (the original shape) meant a second REAL push to
+   * the same site — different content, different `headSha` — while the
+   * first push's import was still queued/active would silently return
+   * `null` and never queue at all; nothing retries a job that was never
+   * created, so that push's edits would be lost for good. Keying on
+   * `${siteId}:${headSha}` keeps the dedupe pg-boss's `stately` policy is
+   * FOR (a redelivered webhook for the SAME push collapsing to one job)
+   * while letting two distinct pushes to the same site both queue.
    */
   enqueueImport?: (input: GitImportInput) => Promise<string | null>;
   env?: NodeJS.ProcessEnv;
@@ -96,7 +109,9 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
     (async (input: GitImportInput) => {
       try {
         const { getBoss } = await import("../jobs/index.js");
-        return await getBoss().send(GIT_IMPORT, input, { singletonKey: input.siteId });
+        return await getBoss().send(GIT_IMPORT, input, {
+          singletonKey: `${input.siteId}:${input.headSha}`,
+        });
       } catch {
         return null;
       }

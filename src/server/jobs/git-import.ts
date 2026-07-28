@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { makeGithubClient, resolveGitMode, type GithubClient } from "../git/client.js";
+import { GithubApiError, makeGithubClient, resolveGitMode, type GithubClient } from "../git/client.js";
 import { getGitState, recordGitError, recordImport } from "../git/state-repo.js";
 import { parsePageFile, parseSiteFile, type FileParseError } from "../git/serialize.js";
 import { validateBlocks, type BlockShape } from "../../blocks/validate.js";
@@ -47,6 +47,19 @@ import "../../blocks/index.js";
  *     that already validated, and re-applying identical content produces a
  *     harmless identical revision.
  *
+ * Fix round 1 (Important 1) carves out ONE exception from the "fetch errors
+ * rethrow" rule above: a 404 from `getFileAtRef` specifically (`GithubApiError`
+ * with `status === 404`) is downgraded to a per-file VALIDATION failure
+ * instead. This is the edit-then-delete race — a push that both modifies and
+ * later removes the same path lands the modified copy in `addedOrModified`
+ * (the webhook route dedupes per-path but doesn't diff the two lists against
+ * each other), and by the time this job fetches it at `headSha` the file is
+ * already gone. Treating that as a hard failure would rethrow, dead-letter
+ * the whole job after retries, and never apply any of the OTHER valid files
+ * in the same push. A 404 for any other reason (bad path, wrong ref) is
+ * indistinguishable from this race at this layer, so it gets the same
+ * tolerant treatment — either way there is nothing to validate.
+ *
  * `recordImport` runs whenever the loop completes without throwing — even
  * when some files failed validation, since the sha as a whole WAS
  * processed (the plan's "partially applied" case); `recordGitError` is
@@ -54,6 +67,20 @@ import "../../blocks/index.js";
  * `last_error` write is the one left standing (`recordImport` itself always
  * clears `last_error`, so calling it second would erase the failure summary
  * `recordGitError` just wrote).
+ *
+ * Fix round 1 (Important 2): the commit-comment body is bounded (at most
+ * `MAX_ITEMS_PER_SECTION` bulleted items per section, "…and N more"
+ * otherwise) — an unbounded body built from, say, hundreds of failed pages
+ * can exceed GitHub's comment size limit and 422. Posting the comment is
+ * ALSO wrapped in its own try/catch: a comment-post failure downgrades to a
+ * `console.warn` plus a `recordGitError` write of the validation SUMMARY
+ * (not the HTTP error text) rather than throwing. Letting it throw would
+ * propagate to the outer catch below, which would `recordGitError` the HTTP
+ * error message instead — overwriting the correct summary this same run
+ * already wrote — and then rethrow for a retry that immediately no-ops at
+ * the idempotency gate above (since `recordImport` already advanced
+ * `last_import_sha` earlier in THIS run), permanently losing the real
+ * failure report behind meaningless HTTP noise with no way to recover it.
  */
 export type GitImportDeps = { pool: Pool; client?: GithubClient };
 
@@ -64,11 +91,46 @@ const SITE_PREFIX_RE = /^sites\/[a-z0-9-]+\/(.+)$/;
 const PAGE_PATH_RE = /^pages\/([a-z0-9-]+)\.json$/;
 const IGNORED_BASENAMES = new Set(["media.json", "README.md", "BLOCKS.md"]);
 const ASSET_ID_KEY_RE = /asset_id$/i;
+/** Cap on bulleted items per section in the commit comment (fix round 1, Important 2). */
+const MAX_ITEMS_PER_SECTION = 20;
 
 /** Strip the `sites/<slug>/` prefix a webhook-sourced path always carries. */
 function relativePath(path: string): string {
   const match = SITE_PREFIX_RE.exec(path);
   return match ? match[1] : path;
+}
+
+/**
+ * `client.getFileAtRef`, tolerant of a 404 specifically (fix round 1,
+ * Important 1 — the edit-then-delete-in-one-push race, see the module doc
+ * comment). A 404 is recorded as a per-file validation failure and the
+ * caller gets `undefined` back (nothing to apply); any other error
+ * (network, auth, 5xx) propagates uncaught so the outer `try/catch` in
+ * `handleGitImport` records it and rethrows for a pg-boss retry.
+ */
+async function fetchFile(
+  client: GithubClient,
+  data: GitImportInput,
+  path: string,
+  failures: FileFailure[],
+): Promise<string | undefined> {
+  try {
+    return await client.getFileAtRef(path, data.headSha);
+  } catch (err) {
+    if (err instanceof GithubApiError && err.status === 404) {
+      failures.push({
+        path,
+        errors: [
+          {
+            path: "(root)",
+            message: `file not present at ${data.headSha.slice(0, 7)} (deleted later in push?)`,
+          },
+        ],
+      });
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -99,6 +161,14 @@ function summarizeFailures(failures: FileFailure[]): string {
     .join(" | ");
 }
 
+/** Push at most `MAX_ITEMS_PER_SECTION` bulleted `line`s, then a remainder note. */
+function pushCappedBullets<T>(lines: string[], items: T[], toLine: (item: T) => string): void {
+  const shown = items.slice(0, MAX_ITEMS_PER_SECTION);
+  for (const item of shown) lines.push(`- ${toLine(item)}`);
+  const remaining = items.length - shown.length;
+  if (remaining > 0) lines.push(`- …and ${remaining} more`);
+}
+
 function buildCommentBody(
   headSha: string,
   failures: FileFailure[],
@@ -108,18 +178,18 @@ function buildCommentBody(
   const lines: string[] = [`Import of \`${headSha.slice(0, 7)}\`:`];
   if (failures.length > 0) {
     lines.push("", "**Rejected (validation failed — not applied):**");
-    for (const f of failures) {
+    pushCappedBullets(lines, failures, (f) => {
       const detail = f.errors.map((e) => `${e.path}: ${e.message}`).join("; ");
-      lines.push(`- \`${f.path}\`: ${detail}`);
-    }
+      return `\`${f.path}\`: ${detail}`;
+    });
   }
   if (removed.length > 0) {
     lines.push("", "**Deleted in the repo (page NOT deleted — delete it from the Studio itself):**");
-    for (const path of removed) lines.push(`- \`${path}\``);
+    pushCappedBullets(lines, removed, (path) => `\`${path}\``);
   }
   if (ignored.length > 0) {
     lines.push("", "**Ignored (generated file — edits here are not imported):**");
-    for (const path of ignored) lines.push(`- \`${path}\``);
+    pushCappedBullets(lines, ignored, (path) => `\`${path}\``);
   }
   return lines.join("\n");
 }
@@ -131,7 +201,8 @@ async function applySiteFile(
   path: string,
   failures: FileFailure[],
 ): Promise<void> {
-  const content = await client.getFileAtRef(path, data.headSha);
+  const content = await fetchFile(client, data, path, failures);
+  if (content === undefined) return;
   const parsed = parseSiteFile(content);
   if (!parsed.ok) {
     failures.push({ path, errors: parsed.errors });
@@ -163,7 +234,8 @@ async function applyPageFile(
   slug: string,
   failures: FileFailure[],
 ): Promise<void> {
-  const content = await client.getFileAtRef(path, data.headSha);
+  const content = await fetchFile(client, data, path, failures);
+  if (content === undefined) return;
   const parsed = parsePageFile(content);
   if (!parsed.ok) {
     failures.push({ path, errors: parsed.errors });
@@ -334,10 +406,25 @@ export async function handleGitImport(data: GitImportInput, deps: GitImportDeps)
     }
 
     if (failures.length > 0 || removed.length > 0 || ignored.length > 0) {
-      await client.createCommitComment(
-        data.headSha,
-        buildCommentBody(data.headSha, failures, removed, ignored),
-      );
+      try {
+        await client.createCommitComment(
+          data.headSha,
+          buildCommentBody(data.headSha, failures, removed, ignored),
+        );
+      } catch (commentErr) {
+        // Fix round 1 (Important 2): swallow here, not the outer catch — see
+        // the module doc comment. `last_error` gets the validation summary
+        // (already written above when failures.length > 0), never the HTTP
+        // error text from the failed comment post.
+        const message = commentErr instanceof Error ? commentErr.message : String(commentErr);
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[git.import] createCommitComment failed for site ${data.siteId} @ ${data.headSha}: ${message}`,
+        );
+        if (failures.length > 0) {
+          await recordGitError(pool, data.siteId, summarizeFailures(failures)).catch(() => undefined);
+        }
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
