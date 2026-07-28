@@ -2,10 +2,13 @@
  * Rich-text HTML allowlist sanitizer (Inline Editing Task 6).
  *
  * Runs client-side, in the sandboxed preview iframe, on every outbound
- * `field-edit` for the rich-text block's `html` field — defense in depth
- * only; Studio/the server re-sanitize on the way in (never trust the wire),
- * but a compromised/buggy contenteditable implementation shouldn't be able
- * to smuggle a `<script>` even one hop.
+ * `field-edit` for the rich-text block's `html` field. This is currently
+ * the PRIMARY defense — there is no server-side HTML sanitizer in this
+ * codebase; the server's Zod validation for the rich-text block only checks
+ * that `html` is a string (see `src/blocks/rich-text/schema.ts`). Until a
+ * server-side pass exists, a bug or bypass here reaches the wire unfiltered,
+ * so treat changes to the allowlist/removal rules below as security-
+ * sensitive.
  *
  * DOMParser-based allowlist walk:
  *   - Allowed tags (`ALLOWED_TAGS`) are kept; all attributes are stripped
@@ -16,6 +19,17 @@
  *     have already been sanitized) but the element itself is discarded.
  *   - Comment nodes and anything else that isn't a text or element node are
  *     dropped.
+ *   - Tag-name matching is done on `tagName.toUpperCase()`, not raw
+ *     `tagName`. `DOMParser`'s HTML parser puts SVG/MathML foreign-content
+ *     subtrees (`<svg>`, `<math>`, and everything nested inside them) in
+ *     their own namespace with LOWERCASE `tagName`s that preserve author
+ *     casing (e.g. `<svg><script>` yields a nested element whose `tagName`
+ *     is literally `"script"`, not `"SCRIPT"`). Comparing that raw casing
+ *     against the (uppercase) `ALLOWED_TAGS`/`REMOVED_ENTIRELY` sets would
+ *     make it miss `REMOVED_ENTIRELY`, fall through to "disallowed", and
+ *     get unwrapped — leaking the script's raw text into the sanitized
+ *     output. Normalizing both lookups closes that hole regardless of
+ *     namespace/casing.
  */
 
 const ALLOWED_TAGS = new Set([
@@ -49,7 +63,9 @@ function sanitizeChildren(parent: ParentNode): void {
     }
 
     const el = node as Element;
-    const tag = el.tagName;
+    // Normalize casing — see module docblock (SVG/MathML foreign-content
+    // tagNames preserve author casing, e.g. lowercase "script").
+    const tag = el.tagName.toUpperCase();
 
     if (REMOVED_ENTIRELY.has(tag)) {
       el.remove();

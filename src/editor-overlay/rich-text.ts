@@ -50,6 +50,16 @@ export interface RichTextEditor {
   applyField(blockId: string, field: string, value: string): void;
   /** Inbound `set-readonly`: disable editing on every activated field (the shared banner lives in text-edit.ts). */
   setReadonly(on: boolean, reason?: string): void;
+  /**
+   * Tear down the document-level `selectionchange` listener and remove the
+   * toolbar node from the DOM. Not currently called anywhere — `main.ts`'s
+   * `boot()` creates exactly one `RichTextEditor` per page load and the
+   * overlay lives for the page's lifetime, so there's nothing to tear down
+   * in production today. Exposed for hygiene/reuse (e.g. a future SPA-style
+   * re-boot without a full page reload, or tighter test cleanup) rather than
+   * because anything currently calls it.
+   */
+  destroy(): void;
 }
 
 export function createRichTextEditor(): RichTextEditor {
@@ -266,6 +276,21 @@ export function createRichTextEditor(): RichTextEditor {
         state.el.classList.remove(RT_ACTIVE_CLASS);
       }
       if (on) hideToolbar();
+    },
+
+    destroy() {
+      if (listening) {
+        document.removeEventListener("selectionchange", onSelectionChange);
+        listening = false;
+      }
+      for (const state of states.values()) {
+        if (state.timer) clearTimeout(state.timer);
+      }
+      toolbar?.remove();
+      toolbar = null;
+      linkRow = null;
+      linkInput = null;
+      activeState = null;
     },
   };
 }

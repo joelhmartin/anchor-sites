@@ -73,6 +73,33 @@ describe("sanitizeHtml", () => {
     expect(sanitizeHtml('<a href="#">x</a>')).toBe("<a>x</a>");
   });
 
+  // Regression: DOMParser's HTML parser puts SVG/MathML foreign-content
+  // subtrees in their own namespace with tagNames that don't match the
+  // uppercase HTML tagNames the allowlist/removal sets are keyed on (e.g. a
+  // <script> nested inside <svg> reports tagName "script", not "SCRIPT").
+  // Comparing raw (un-uppercased) tagName let it fall through
+  // REMOVED_ENTIRELY, get treated as "disallowed", and unwrap — leaking the
+  // script's raw text content into the sanitized output instead of removing
+  // it. Fixed by normalizing both lookups via tagName.toUpperCase().
+  it("removes a <script> nested inside <svg> entirely (foreign-content casing)", () => {
+    expect(sanitizeHtml("<svg><script>alert(1)</script></svg>")).toBe("");
+  });
+
+  it("removes a <script> nested inside <math> entirely (foreign-content casing)", () => {
+    expect(sanitizeHtml("<math><script>alert(1)</script></math>")).toBe("");
+  });
+
+  it("removes a mixed-case <SvG><ScRiPt> variant entirely", () => {
+    const out = sanitizeHtml("<SvG><ScRiPt>alert(1)</ScRiPt></SvG>");
+    expect(out).not.toContain("alert(1)");
+    expect(out).not.toContain("script");
+  });
+
+  it("does not leak script text via svg even alongside allowed content", () => {
+    const out = sanitizeHtml('<p>before</p><svg><script>alert(document.cookie)</script></svg><p>after</p>');
+    expect(out).toBe("<p>before</p><p>after</p>");
+  });
+
   it("strips onclick and other attributes from allowed tags", () => {
     const out = sanitizeHtml('<p onclick="alert(1)" style="color:red" class="x">text</p>');
     expect(out).toBe("<p>text</p>");
@@ -310,5 +337,39 @@ describe("rich-text toolbar + field editing", () => {
 
     el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(el.contentEditable).toBe("false");
+  });
+
+  it("destroy() removes the selectionchange listener and the toolbar node", () => {
+    const el = fixture();
+    const editor = createRichTextEditor();
+    editor.activate([el], bridge, TOKEN);
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    selectWithin(el);
+    expect(document.querySelector(`.${RT_TOOLBAR_VISIBLE_CLASS}`)).not.toBeNull();
+
+    editor.destroy();
+
+    // Toolbar node is gone from the DOM entirely (not just hidden).
+    expect(document.querySelector(".ac-edit-rt-toolbar")).toBeNull();
+
+    // The selectionchange listener no longer fires: reselecting doesn't
+    // resurrect a toolbar (there's nothing left to append one to react to).
+    selectWithin(el);
+    expect(document.querySelector(".ac-edit-rt-toolbar")).toBeNull();
+  });
+
+  it("destroy() clears any pending debounce timer without sending", () => {
+    const el = fixture();
+    const editor = createRichTextEditor();
+    editor.activate([el], bridge, TOKEN);
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    el.innerHTML = "<p>pending edit</p>";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+
+    editor.destroy();
+    vi.advanceTimersByTime(1000);
+
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 });
