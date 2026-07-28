@@ -123,8 +123,18 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
     "/git/webhook",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
+        // Mirrors resolveGitMode's token-sentinel convention (client.ts):
+        // Task 8 seeds GITHUB_WEBHOOK_SECRET with the literal placeholder
+        // value "disabled" in Secret Manager before a real secret is
+        // generated (step 3 of the runbook below). That placeholder is
+        // documented in this very file — treating it as "configured" would
+        // let anyone compute a valid HMAC against the publicly-known value
+        // and forge pushes against a deployment that just hasn't rotated
+        // the secret yet. Same 503 as the unset case; the caller can't tell
+        // (and shouldn't be able to) which of the two placeholder states it
+        // is.
         const secret = env.GITHUB_WEBHOOK_SECRET;
-        if (!secret) {
+        if (!secret || secret === "disabled") {
           res.status(503).json({ error: "webhook not configured" });
           return;
         }

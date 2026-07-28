@@ -163,6 +163,34 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
 
+  it("503s when GITHUB_WEBHOOK_SECRET is still the placeholder sentinel \"disabled\" — even for a correctly-signed push against that literal value, no enqueue", async () => {
+    // Security fix round 2 (Important 1): the placeholder value Task 8
+    // seeds into Secret Manager ahead of a real secret is a *publicly
+    // documented* literal ("disabled") — a deployment that hasn't rotated
+    // it yet must never accept a signature computed against that literal,
+    // or anyone reading this file could forge a push. Sign the body with
+    // "disabled" itself to prove this isn't just falling through to the
+    // generic bad-signature 401 path.
+    const placeholderSecretApp = buildApp(db.getPool(), enqueueSpy, {
+      GITHUB_WEBHOOK_SECRET: "disabled",
+      GITHUB_CONTENT_TOKEN: "test-content-token",
+      GITHUB_CONTENT_REPO: "acme/content",
+    });
+    enqueueSpy.mockClear();
+    const site = await db.seedSite("gitwh-placeholder-secret");
+    await setGitEnabled(db.getPool(), site.id, true);
+    const raw = JSON.stringify(pushPayload({ slug: site.slug }));
+    const res = await request(placeholderSecretApp)
+      .post("/api/git/webhook")
+      .set("Content-Type", "application/json")
+      .set("X-GitHub-Event", "push")
+      .set("X-Hub-Signature-256", sign(raw, "disabled"))
+      .send(raw);
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: "webhook not configured" });
+    expect(enqueueSpy).not.toHaveBeenCalled();
+  });
+
   it("401s on a bad signature and never enqueues", async () => {
     enqueueSpy.mockClear();
     const site = await db.seedSite("gitwh-badsig");
