@@ -117,7 +117,7 @@ steps:
       # (not --set-secrets) since it's not sensitive, just config. Left empty
       # here on purpose: the operator sets a real value only once the content
       # repo + PAT + webhook secret from docs/github-sync.md's runbook exist.
-      - --set-env-vars=NODE_ENV=production,GITHUB_CONTENT_REPO=
+      - --set-env-vars=NODE_ENV=production,GITHUB_CONTENT_REPO=jmartin-anchorcorps/anchor-sites-content
       # NOTE: --set-secrets REPLACES the service's entire secret list on every
       # deploy. Any secret NOT listed here is dropped from the next revision —
       # so OAuth (Studio Google sign-in) and GoDaddy DNS MUST be listed here, or
