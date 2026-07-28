@@ -521,4 +521,149 @@ describe("createInlineEditor (Studio bridge + save engine)", () => {
     expect(events.onImagePickRequest).toHaveBeenCalledWith("b2", "image");
     expect(events.onLinkEditRequest).toHaveBeenCalledWith("b1", "href", "https://example.com");
   });
+
+  // --- Fix round 1 (review I9): destroy() cancellation, flush()-after-error
+  // resend, and attach() re-entrancy. ---
+
+  it("destroy() mid-retry stops the retry: no further POST, no further onSaveStateChange", async () => {
+    const blocksData = makeBlocks();
+    let postCallCount = 0;
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      postCallCount++;
+      throw new ApiError("boom", 500, null);
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+
+    postFromOverlay(iframe, handle.token, {
+      type: "field-edit",
+      blockId: "b1",
+      field: "html",
+      kind: "text",
+      value: "x",
+    });
+
+    await vi.advanceTimersByTimeAsync(2000); // debounce fires, POST #1 fails, retry(1500ms) scheduled
+    expect(postCallCount).toBe(1);
+
+    const statesBeforeDestroy = [...events.states];
+    const postMessageCallsBeforeDestroy = iframePostMessageMock(iframe).mock.calls.length;
+
+    handle.destroy(); // fires mid-retry-wait — must cancel, not let the retry fire
+    await vi.advanceTimersByTimeAsync(1500); // if the retry weren't cancelled, this would fire it
+
+    expect(postCallCount).toBe(1); // no retry POST after destroy
+    expect(events.states).toEqual(statesBeforeDestroy); // no further onSaveStateChange calls
+    expect(iframePostMessageMock(iframe).mock.calls.length).toBe(postMessageCallsBeforeDestroy); // no further postMessage
+    expect(events.states.at(-1)).not.toBe("error"); // never reached the terminal error emission
+    expect(events.states.at(-1)).not.toBe("saved");
+  });
+
+  it("flush() resends edits after a terminal (non-validation) save failure — Important 2", async () => {
+    const blocksData = makeBlocks();
+    let postCallCount = 0;
+    const postBodies: unknown[] = [];
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      postCallCount++;
+      postBodies.push(opts.body);
+      if (postCallCount <= 2) throw new ApiError("boom", 500, null);
+      return { page: {}, revision: {} };
+    });
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe = makeIframe();
+    handle.attach(iframe);
+    await vi.advanceTimersByTimeAsync(0);
+
+    postFromOverlay(iframe, handle.token, {
+      type: "field-edit",
+      blockId: "b1",
+      field: "html",
+      kind: "text",
+      value: "resend me",
+    });
+
+    await vi.advanceTimersByTimeAsync(2000); // debounce fires -> POST #1 fails
+    await vi.advanceTimersByTimeAsync(1500); // retry fires -> POST #2 fails -> terminal error
+
+    expect(postCallCount).toBe(2);
+    expect(events.states.at(-1)).toBe("error");
+
+    // Without the fix, dirty/dirtyFields were cleared before POST #1 and
+    // never restored — flush() would see nothing dirty and no-op here.
+    const flushPromise = handle.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushPromise;
+
+    expect(postCallCount).toBe(3);
+    expect(postBodies[2]).toEqual({
+      blocks: [
+        { id: "b1", type: "rich-text", props: { html: "resend me" } },
+        { id: "b2", type: "image", props: { image: "old-asset-id", alt: "old alt" } },
+      ],
+      source: "inline",
+    });
+    expect(events.states.at(-1)).toBe("saved");
+  });
+
+  it("re-attaching removes the prior window listener instead of leaking a duplicate — minor (b)", async () => {
+    const blocksData = makeBlocks();
+    const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+      if (!opts?.method || opts.method === "GET") return { page: { blocks: blocksData } };
+      return { page: {}, revision: {} };
+    });
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    const events = makeEvents();
+    const handle = createInlineEditor({
+      siteId: "s1",
+      pageId: "p1",
+      events,
+      fetchImpl: fetchImpl as unknown as typeof apiFetch,
+    });
+    const iframe1 = makeIframe();
+    const iframe2 = makeIframe();
+
+    handle.attach(iframe1);
+    await vi.advanceTimersByTimeAsync(0);
+    handle.attach(iframe2);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const messageAddCalls = addSpy.mock.calls.filter(([type]) => type === "message");
+    const messageRemoveCalls = removeSpy.mock.calls.filter(([type]) => type === "message");
+    expect(messageAddCalls).toHaveLength(2);
+    expect(messageRemoveCalls).toHaveLength(1); // first attach()'s listener removed before the second is added
+
+    // Prove the stale iframe1 listener is really gone, not just "removed
+    // and re-added identically": a message sourced from iframe1 no longer
+    // reaches the handler once iframe2 is the attached one.
+    postFromOverlay(iframe1, handle.token, {
+      type: "field-edit",
+      blockId: "b1",
+      field: "html",
+      kind: "text",
+      value: "from stale iframe",
+    });
+    await vi.advanceTimersByTimeAsync(2000);
+    const postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+    expect(postCalls).toHaveLength(0);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
 });

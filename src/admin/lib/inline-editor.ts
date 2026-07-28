@@ -33,10 +33,6 @@ export type InlineEditorHandle = {
   destroy(): void;
 };
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function fieldKey(blockId: string, field: string): string {
   return `${blockId}\u001f${field}`;
 }
@@ -68,11 +64,29 @@ export function createInlineEditor(opts: {
   let dirty = false;
   const dirtyFields = new Set<string>();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryResolve: (() => void) | null = null;
   let saving = false;
   let queuedFollowUp = false;
   let currentSave: Promise<void> | null = null;
   let readonly = false;
   let destroyed = false;
+
+  // Cancellable version of the retry backoff: destroy() needs to be able to
+  // both stop the timer AND unblock `await` on it, so runSaveCycle's
+  // destroyed-check right after the await actually gets a chance to run
+  // (an uncleared setTimeout would just clear silently and leave the
+  // save cycle's promise dangling forever).
+  function cancellableRetryDelay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      retryResolve = resolve;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        retryResolve = null;
+        resolve();
+      }, ms);
+    });
+  }
 
   function postToIframe(msg: StudioMsg): void {
     iframe?.contentWindow?.postMessage(msg, "*");
@@ -139,8 +153,12 @@ export function createInlineEditor(opts: {
       const res = await fetchImpl<{ page: { blocks: Block[] } }>(
         `/api/sites/${siteId}/pages/${pageId}`,
       );
+      // destroy() may have fired while this re-GET was in flight — don't
+      // mutate local state or postMessage into a torn-down consumer.
+      if (destroyed) return;
       const serverBlocks = res.page.blocks ?? [];
       for (const key of fields) {
+        if (destroyed) return;
         const [blockId, field] = splitFieldKey(key);
         const serverBlock = serverBlocks.find((b) => b.id === blockId);
         if (!serverBlock) continue;
@@ -168,28 +186,53 @@ export function createInlineEditor(opts: {
     saving = true;
     do {
       queuedFollowUp = false;
+      if (destroyed) break;
       events.onSaveStateChange("saving");
       const fields = new Set(dirtyFields);
       dirtyFields.clear();
       dirty = false;
       try {
         await post();
+        if (destroyed) break;
         events.onSaveStateChange("saved");
       } catch (err) {
+        if (destroyed) break;
         if (isBlockValidationReject(err)) {
           await handleValidationReject(fields);
+          if (destroyed) break;
           events.onSaveStateChange("error");
         } else {
           try {
-            await delay(1500);
+            await cancellableRetryDelay(1500);
+            if (destroyed) break;
             await post();
+            if (destroyed) break;
             events.onSaveStateChange("saved");
-          } catch {
-            events.onSaveStateChange("error");
+          } catch (retryErr) {
+            if (destroyed) break;
+            // Minor (c): the retry's own failure might ALSO be a real
+            // block-validation reject (not just a transient error) — check
+            // again rather than assuming "retry failed" always means
+            // generic/transient.
+            if (isBlockValidationReject(retryErr)) {
+              await handleValidationReject(fields);
+              if (destroyed) break;
+              events.onSaveStateChange("error");
+            } else {
+              // Important 2: dirtyFields/dirty were cleared before this
+              // cycle's POST attempt. A terminal (non-validation) failure
+              // must NOT leave that data silently unsaved forever — restore
+              // it so flush() (edit-mode exit) or the next edit resends it.
+              // State stays "error" (not "dirty") — this is bookkeeping,
+              // not a new user edit.
+              for (const key of fields) dirtyFields.add(key);
+              dirty = true;
+              events.onSaveStateChange("error");
+            }
           }
         }
       }
-    } while (queuedFollowUp);
+    } while (queuedFollowUp && !destroyed);
     saving = false;
   }
 
@@ -208,7 +251,10 @@ export function createInlineEditor(opts: {
     const data = e.data as OverlayMsg | undefined;
     if (!data || data.ac !== "edit") return;
     if (data.token !== token) return;
-    if (iframe && e.source !== iframe.contentWindow) return;
+    // Strict guard: without an attached iframe there is no legitimate
+    // source at all — a falsy `iframe` used to let this through instead
+    // of rejecting it.
+    if (!iframe || e.source !== iframe.contentWindow) return;
 
     switch (data.type) {
       case "field-edit": {
@@ -248,6 +294,12 @@ export function createInlineEditor(opts: {
     token,
 
     attach(el: HTMLIFrameElement): void {
+      // Minor (b): re-entrancy guard — a second attach() (e.g. iframe
+      // remount) must not leak a duplicate window listener.
+      if (messageHandler) {
+        window.removeEventListener("message", messageHandler);
+        messageHandler = null;
+      }
       iframe = el;
       messageHandler = (e: MessageEvent) => handleMessage(e);
       window.addEventListener("message", messageHandler);
@@ -308,6 +360,18 @@ export function createInlineEditor(opts: {
       if (debounceTimer) {
         clearTimeout(debounceTimer);
         debounceTimer = null;
+      }
+      // Important 1: stop the retry backoff AND unblock anything awaiting
+      // it, so an in-flight runSaveCycle hits its post-await `destroyed`
+      // check and stops emitting events/postMessages instead of hanging.
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      if (retryResolve) {
+        const resolve = retryResolve;
+        retryResolve = null;
+        resolve();
       }
     },
   };
