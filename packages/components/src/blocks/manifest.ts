@@ -54,6 +54,7 @@ import { faqAccordionEntry } from "./faq-accordion/index.js";
 import { imageEntry } from "./image/index.js";
 import { phoneNumberEntry } from "./phone-number/index.js";
 import { crmFormEntry } from "./crm-form/index.js";
+import { splitHeroEntry } from "./split-hero/index.js";
 
 /**
  * Block manifest — every opinionated block in v0.1. Order is the order
@@ -79,6 +80,8 @@ export const blockManifest: BlockManifestEntry[] = [
   phoneNumberEntry as BlockManifestEntry<any>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   crmFormEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  splitHeroEntry as BlockManifestEntry<any>,
 ];
 
 /**
