@@ -174,6 +174,43 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
     expect(convAfter!.status).toBe("active");
   });
 
+  it("continuation vs fresh-turn race: a continuation job delivered after a fresh user turn already claimed the lock claim-fails cleanly", async () => {
+    // Reviewer fix round 1 (Important): release-before-enqueue opens a
+    // window where a fresh user message can arrive between "release" and
+    // "the continuation job actually gets delivered", claim the turn-lock
+    // itself (status='running', fresh updated_at), and enqueue its own
+    // round-0 job under a DIFFERENT singletonKey (bare conversationId vs.
+    // this continuation's `${conversationId}:c1`) — so both jobs are real,
+    // queued/active work, not deduped against each other. When the
+    // continuation job is then delivered, it must claim-fail exactly like
+    // any other re-delivery (see "job re-delivery" above): no turn run, no
+    // message appended, no status change, no further re-enqueue — it must
+    // NOT clobber the fresh turn that already owns the conversation.
+    const site = await db.seedSite(`agent-turn-race-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    // Simulate: the fresh user turn won the race and is holding the lock.
+    await setConversationStatus(db.getPool(), conv.id, "running");
+
+    const runTurn = vi.fn();
+    const enqueueContinuation = vi.fn();
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 1 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(enqueueContinuation).not.toHaveBeenCalled();
+
+    const messages = await listMessages(db.getPool(), conv.id);
+    expect(messages).toHaveLength(0);
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    // Still 'running' — untouched, still owned by the fresh turn.
+    expect(convAfter!.status).toBe("running");
+  });
+
   it("re-claims the lock for each continuation round and releases fully once a later round completes", async () => {
     const site = await db.seedSite(`agent-turn-multi-${runId}`);
     const conv = await createConversation(db.getPool(), site.id, "t");
