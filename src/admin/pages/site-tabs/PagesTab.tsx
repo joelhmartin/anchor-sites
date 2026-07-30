@@ -28,9 +28,10 @@ function statusTone(status: string): BadgeProps["tone"] {
 
 /**
  * Pages tab (P4-T4.13). Lists a site's pages with a status badge + last-edited
- * time, an Edit affordance routing to the Phase-5 editor placeholder, and an
- * inline new-page form (`POST /api/sites/:siteId/pages`) that refreshes the
- * list on success.
+ * time, an Edit affordance routing to the workspace with this page preselected
+ * (`?page=<id>`, Task B5 — Puck's page editor is gone), and an inline
+ * new-page form (`POST /api/sites/:siteId/pages`) that refreshes the list on
+ * success.
  */
 export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
   const { data, loading, error, reload } = useApi<{ pages: PageRow[] }>(
@@ -295,7 +296,7 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => navigate(`/sites/${slug}/pages/${p.id}`)}
+                        onClick={() => navigate(`/sites/${slug}?page=${p.id}`)}
                       >
                         Edit
                       </Button>

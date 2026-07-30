@@ -31,6 +31,9 @@ describe("template schema (P7-T7.2)", () => {
     const parsed = createTemplateInputSchema.parse({ slug: "starter", name: "Starter" });
     expect(parsed.kind).toBe("site");
     expect(parsed.pages).toEqual([]);
+    expect(parsed.sort_order).toBe(0);
+    expect(parsed.category).toBeUndefined();
+    expect(parsed.cover_image_url).toBeUndefined();
 
     expect(() => createTemplateInputSchema.parse({ slug: "Bad Slug", name: "x" })).toThrow();
     expect(() => createTemplateInputSchema.parse({ slug: "-lead", name: "x" })).toThrow();
@@ -40,5 +43,25 @@ describe("template schema (P7-T7.2)", () => {
     expect(templateKindSchema.parse("site")).toBe("site");
     expect(templateKindSchema.parse("page")).toBe("page");
     expect(() => templateKindSchema.parse("widget")).toThrow();
+  });
+
+  it("createTemplateInputSchema validates cover_image_url as a URL (B4 renders it as an <img src>)", () => {
+    expect(() =>
+      createTemplateInputSchema.parse({ slug: "starter", name: "Starter", cover_image_url: "not-a-url" }),
+    ).toThrow();
+
+    const withUrl = createTemplateInputSchema.parse({
+      slug: "starter",
+      name: "Starter",
+      cover_image_url: "https://example.com/cover.png",
+    });
+    expect(withUrl.cover_image_url).toBe("https://example.com/cover.png");
+
+    const withNull = createTemplateInputSchema.parse({
+      slug: "starter",
+      name: "Starter",
+      cover_image_url: null,
+    });
+    expect(withNull.cover_image_url).toBeNull();
   });
 });

@@ -1,15 +1,27 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { RequireAdmin } from "./auth/RequireAdmin.js";
 import { LoginPage } from "./auth/LoginPage.js";
 import { AdminLayout } from "./AdminLayout.js";
 import { SitesListPage } from "./pages/SitesListPage.js";
-import { NewSiteWizard } from "./pages/NewSiteWizard.js";
+import { NewSitePage } from "./pages/NewSitePage.js";
 import { SiteDetailPage } from "./pages/SiteDetailPage.js";
-import { EditorPage } from "./pages/EditorPage.js";
+import { WorkspacePage } from "./pages/WorkspacePage.js";
 import { PostEditorPage } from "./pages/PostEditorPage.js";
 import { EventEditorPage } from "./pages/EventEditorPage.js";
 import { NotFound } from "./pages/NotFound.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
+
+/**
+ * Task B5 (2026-07-30 lovable-workspace SDD): the Puck page editor route
+ * (`/sites/:slug/pages/:pageId`) is gone — page editing is chat + inline
+ * editing in the workspace. Redirect any old bookmarked/shared link straight
+ * into the workspace with the same page preselected via `?page=` (already
+ * supported by `WorkspacePage` for the PagesTab "preview" deep link).
+ */
+function PageEditRedirect() {
+  const { slug, pageId } = useParams();
+  return <Navigate to={`/sites/${slug}?page=${pageId}`} replace />;
+}
 
 /**
  * Admin SPA route tree (P4-T4.9). Mounted by `src/App.jsx` when running
@@ -24,9 +36,15 @@ export function AdminApp() {
       <Route element={<RequireAdmin />}>
         <Route element={<AdminLayout />}>
           <Route path="/" element={<SitesListPage />} />
-          <Route path="/sites/new" element={<NewSiteWizard />} />
-          <Route path="/sites/:slug" element={<SiteDetailPage />} />
-          <Route path="/sites/:slug/pages/:pageId" element={<EditorPage />} />
+          <Route path="/sites/new" element={<NewSitePage />} />
+          {/* Task B2 (2026-07-30 lovable-workspace SDD): `/sites/:slug` is
+              now the Lovable-style workspace (chat + live preview) — the
+              tab-based management shell moved to `/manage`. AdminLayout
+              detects this route by URL shape (`isWorkspacePath`) to render
+              its fullbleed chrome variant. */}
+          <Route path="/sites/:slug" element={<WorkspacePage />} />
+          <Route path="/sites/:slug/manage" element={<SiteDetailPage />} />
+          <Route path="/sites/:slug/pages/:pageId" element={<PageEditRedirect />} />
           <Route path="/sites/:slug/posts/:postId" element={<PostEditorPage />} />
           <Route path="/sites/:slug/events/:eventId" element={<EventEditorPage />} />
           <Route path="*" element={<NotFound />} />

@@ -42,6 +42,8 @@ d("seed-templates (integration, P7-T7.7)", () => {
     const full = await getTemplate(starter!.id, { pool });
     expect(full!.pages.map((p) => p.slug)).toEqual(["home", "about"]);
     expect(full!.template.brand_tokens).toMatchObject({ "--theme-main": "#0a3d62" });
+    expect(full!.template.category).toBe("Basic");
+    expect(full!.template.sort_order).toBe(999);
   });
 
   it("is idempotent — re-running does not duplicate the template or its pages", async () => {
@@ -53,5 +55,8 @@ d("seed-templates (integration, P7-T7.7)", () => {
 
     const starter = (await listTemplates({ pool, kind: "site" })).find((t) => t.slug === "starter")!;
     expect(starter.pages_count).toBe(2);
+    // UPSERT keeps gallery metadata in sync on re-run (idempotence covers new fields too).
+    expect(starter.category).toBe("Basic");
+    expect(starter.sort_order).toBe(999);
   });
 });

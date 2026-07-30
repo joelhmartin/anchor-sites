@@ -134,6 +134,13 @@ steps:
       - --memory=512Mi
       - --timeout=60s
       - --concurrency=80
+      # Agent turns run as in-process pg-boss background jobs (Phase A,
+      # 2026-07-30). With default request-scoped CPU, an instance with no
+      # in-flight request gets throttled to near-zero — DB keepalives and
+      # Anthropic calls time out mid-build (observed: continuation round
+      # errored, pg-boss "Connection terminated" storms). Always-allocated
+      # CPU keeps background turns alive when no tab is watching.
+      - --no-cpu-throttling
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA

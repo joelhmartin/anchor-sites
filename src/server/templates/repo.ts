@@ -27,6 +27,9 @@ export type TemplateRow = {
   kind: TemplateKind;
   brand_tokens: Record<string, string>;
   status: TemplateStatus;
+  category: string | null;
+  cover_image_url: string | null;
+  sort_order: number;
   created_at: Date;
   updated_at: Date;
 };
@@ -65,7 +68,7 @@ export class TemplateSlugConflictError extends Error {
 }
 
 const TEMPLATE_COLS =
-  "id, slug, name, description, source_site_id, kind, brand_tokens, status, created_at, updated_at";
+  "id, slug, name, description, source_site_id, kind, brand_tokens, status, category, cover_image_url, sort_order, created_at, updated_at";
 const TEMPLATE_PAGE_COLS =
   "id, template_id, slug, title, blocks, seo, sort_order, created_at";
 
@@ -96,8 +99,8 @@ export async function createTemplate(
     }
 
     const tplRes = await client.query<TemplateRow>(
-      `INSERT INTO templates (slug, name, description, source_site_id, kind, brand_tokens)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      `INSERT INTO templates (slug, name, description, source_site_id, kind, brand_tokens, category, cover_image_url, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
        RETURNING ${TEMPLATE_COLS}`,
       [
         parsed.slug,
@@ -106,6 +109,9 @@ export async function createTemplate(
         parsed.source_site_id ?? null,
         parsed.kind,
         JSON.stringify(parsed.brand_tokens ?? {}),
+        parsed.category ?? null,
+        parsed.cover_image_url ?? null,
+        parsed.sort_order ?? 0,
       ],
     );
     const template = tplRes.rows[0];
@@ -140,8 +146,9 @@ export async function createTemplate(
 }
 
 /**
- * List templates (newest first) with a page count. Defaults to active only;
- * pass `status: "archived"` to list archived, or filter by `kind`.
+ * List templates (gallery order: `sort_order` ascending, then `name`) with a
+ * page count. Defaults to active only; pass `status: "archived"` to list
+ * archived, or filter by `kind`.
  */
 export async function listTemplates(
   opts: { pool?: Pool; kind?: TemplateKind; status?: TemplateStatus } = {},
@@ -166,7 +173,7 @@ export async function listTemplates(
        LEFT JOIN template_pages tp ON tp.template_id = t.id
       WHERE ${conds.join(" AND ")}
       GROUP BY t.id
-      ORDER BY t.created_at DESC`,
+      ORDER BY t.sort_order ASC, t.name ASC`,
     params,
   );
   return res.rows;

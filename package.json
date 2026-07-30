@@ -28,7 +28,6 @@
     "@anthropic-ai/sdk": "0.97.1",
     "@google-cloud/storage": "^7.19.0",
     "@hookform/resolvers": "^3.9.0",
-    "@measured/puck": "0.20.2",
     "@radix-ui/react-dialog": "^1.1.15",
     "@tiptap/pm": "3.23.5",
     "@tiptap/react": "3.23.5",

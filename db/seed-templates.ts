@@ -25,6 +25,10 @@ type TemplateSeed = {
   name: string;
   description: string;
   brand_tokens: Record<string, string>;
+  /** Gallery grouping label (e.g. "Basic"). */
+  category: string | null;
+  /** Gallery display order (ascending); the starter sits last (999). */
+  sort_order: number;
   pages: TemplatePageSeed[];
 };
 
@@ -34,6 +38,8 @@ const TEMPLATES: TemplateSeed[] = [
     name: "Starter",
     description: "A clean two-page starting point — hero, intro copy, and a call to action, plus an About page.",
     brand_tokens: { "--theme-main": "#0a3d62", "--theme-accent": "#f6b93b" },
+    category: "Basic",
+    sort_order: 999,
     pages: [
       {
         slug: "home",
@@ -123,14 +129,16 @@ export async function seedTemplates(
     let pageCount = 0;
     for (const tpl of TEMPLATES) {
       const tplRes = await client.query<{ id: string }>(
-        `INSERT INTO templates (slug, name, description, kind, brand_tokens)
-         VALUES ($1, $2, $3, 'site', $4::jsonb)
+        `INSERT INTO templates (slug, name, description, kind, brand_tokens, category, sort_order)
+         VALUES ($1, $2, $3, 'site', $4::jsonb, $5, $6)
          ON CONFLICT (slug) DO UPDATE SET
            name = EXCLUDED.name,
            description = EXCLUDED.description,
-           brand_tokens = EXCLUDED.brand_tokens
+           brand_tokens = EXCLUDED.brand_tokens,
+           category = EXCLUDED.category,
+           sort_order = EXCLUDED.sort_order
          RETURNING id`,
-        [tpl.slug, tpl.name, tpl.description, JSON.stringify(tpl.brand_tokens)],
+        [tpl.slug, tpl.name, tpl.description, JSON.stringify(tpl.brand_tokens), tpl.category, tpl.sort_order],
       );
       const templateId = tplRes.rows[0].id;
 

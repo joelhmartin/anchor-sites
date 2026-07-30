@@ -26,9 +26,9 @@ type PostDetail = {
 /**
  * Blog post editor (P8-T8.13). Resolves slug → site (the Phase-4/5 client
  * pattern), loads the post, edits metadata (title/excerpt/status) + the `body`
- * Block[] via the shared Puck editor, and saves everything in one PUT. Slug is
- * fixed after creation (changing a published URL is a deliberate, rarer action
- * left to a later task). Mirrors EditorPage minus revisions/AI (page features).
+ * Block[] via the shared BlockBodyEditor (TipTap, Task B5), and saves
+ * everything in one PUT. Slug is fixed after creation (changing a published
+ * URL is a deliberate, rarer action left to a later task).
  */
 export function PostEditorPage() {
   const { slug } = useParams();
@@ -108,7 +108,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <Link to={`/sites/${slug}`} className="text-sm text-zinc-500 hover:text-zinc-700">
+          <Link to={`/sites/${slug}/manage`} className="text-sm text-zinc-500 hover:text-zinc-700">
             ← Back to {slug}
           </Link>
           <h1 className="text-lg font-semibold">{title || post.title}</h1>
@@ -162,7 +162,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         (title, excerpt, status, SEO, and body are saved together).
       </p>
 
-      <BlockBodyEditor siteId={siteId} value={post.body ?? []} onPublish={save} />
+      <BlockBodyEditor slug={slug} value={post.body ?? []} onPublish={save} />
     </div>
   );
 }

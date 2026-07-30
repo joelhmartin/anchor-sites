@@ -1,5 +1,5 @@
 import { listBlocks } from "./registry.js";
-import { coreType, type ZodLike } from "../editor/zod-fields.js";
+import { coreType, type ZodLike } from "./zod-introspect.js";
 import type { Block } from "./types.js";
 
 /**

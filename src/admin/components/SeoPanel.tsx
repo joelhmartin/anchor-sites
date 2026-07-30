@@ -1,5 +1,5 @@
 import type { SeoFields } from "../../server/seo/schema.js";
-import { ImagePicker } from "../../editor/custom-fields/image-field.js";
+import { ImagePicker } from "./ImagePicker.js";
 
 /**
  * Reusable SEO editor (P9-T9.7, D-049). Edits a content item's `seo` blob —

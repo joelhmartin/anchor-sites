@@ -2,7 +2,7 @@ import { useState } from "react";
 import { apiFetch } from "../../lib/apiFetch.js";
 import type { SiteDetail } from "../../lib/siteTypes.js";
 import type { SiteSeoDefaults } from "../../../server/seo/schema.js";
-import { ImagePicker } from "../../../editor/custom-fields/image-field.js";
+import { ImagePicker } from "../../components/ImagePicker.js";
 import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
 import { Input } from "../../ui/input.js";

@@ -3,12 +3,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-// Stub Puck (D-036).
-vi.mock("../../editor/index.js", () => ({
-  Puck: ({ data, onPublish }: { data: unknown; onPublish: (d: unknown) => void }) => (
+// Stub BlockBodyEditor (Task B5 — Puck removed): real TipTap/ProseMirror is
+// fragile in jsdom; visual QA is operator-run. Surfaces the `value` it was
+// given and fires `onPublish` with it, plus the `slug` it was passed.
+vi.mock("../components/BlockBodyEditor.js", () => ({
+  BlockBodyEditor: ({
+    slug,
+    value,
+    onPublish,
+  }: {
+    slug: string;
+    value: unknown;
+    onPublish: (v: unknown) => void;
+  }) => (
     <div>
-      <pre data-testid="puck-data">{JSON.stringify(data)}</pre>
-      <button type="button" onClick={() => onPublish(data)}>
+      <pre data-testid="body-value">{JSON.stringify(value)}</pre>
+      <span data-testid="body-slug">{slug}</span>
+      <button type="button" onClick={() => onPublish(value)}>
         Stub publish
       </button>
     </div>
@@ -16,7 +27,6 @@ vi.mock("../../editor/index.js", () => ({
 }));
 
 import { EventEditorPage } from "./EventEditorPage.js";
-import { toPuckData } from "../../editor/puck-adapter.js";
 import { clearAdminToken, setAdminToken } from "../lib/adminToken.js";
 
 const SITE = { id: "s1", slug: "acme", display_name: "Acme", status: "active", created_at: "2026-05-18T00:00:00Z", pages_count: 1 };
@@ -77,11 +87,12 @@ describe("EventEditorPage (P8-T8.13)", () => {
     vi.restoreAllMocks();
   });
 
-  it("loads the event and renders Puck with toPuckData(description) + seeded metadata", async () => {
+  it("loads the event and renders BlockBodyEditor with the description + slug + seeded metadata", async () => {
     mockApi();
     renderAt();
-    const pre = await screen.findByTestId("puck-data");
-    expect(JSON.parse(pre.textContent ?? "null")).toEqual(toPuckData(DESC));
+    const pre = await screen.findByTestId("body-value");
+    expect(JSON.parse(pre.textContent ?? "null")).toEqual(DESC);
+    expect(screen.getByTestId("body-slug").textContent).toBe("acme");
     expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Open House");
     expect((screen.getByLabelText("Location (optional)") as HTMLInputElement).value).toBe("HQ");
   });
@@ -89,7 +100,7 @@ describe("EventEditorPage (P8-T8.13)", () => {
   it("publishing saves metadata + description in one PUT", async () => {
     mockApi();
     renderAt();
-    await screen.findByTestId("puck-data");
+    await screen.findByTestId("body-value");
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Open House 2026" } });
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "published" } });
     fireEvent.click(screen.getByRole("button", { name: "Stub publish" }));
@@ -105,7 +116,7 @@ describe("EventEditorPage (P8-T8.13)", () => {
   it("surfaces a save error", async () => {
     mockApi({ savePut: () => json({ error: "boom" }, 500) });
     renderAt();
-    await screen.findByTestId("puck-data");
+    await screen.findByTestId("body-value");
     fireEvent.click(screen.getByRole("button", { name: "Stub publish" }));
     await screen.findByText("boom");
   });
