@@ -83,6 +83,41 @@ export function parsePositiveIntEnv(value: string | undefined, fallback: number)
   return n;
 }
 
+/**
+ * Task A4 (Lovable-workspace plan). Maps an error thrown by the Anthropic
+ * SDK's `messages.create` call to a short, human-readable label — instead of
+ * the bare amber "internal" the operator once saw when a build died on an
+ * out-of-credits account. Duck-types on `status`/`message` (rather than
+ * `instanceof Anthropic.APIError`) so a plain injected test error
+ * (`{status, message}`) is handled identically to a real SDK exception,
+ * which also carries those two fields (see
+ * node_modules/@anthropic-ai/sdk/error.d.ts — every `APIError` subclass has
+ * a `status` and inherits `message` from `Error`). Exported so loop.test.ts
+ * can cover each mapping directly, without spinning up a rejecting fake
+ * client for every case.
+ */
+export function describeAnthropicError(err: unknown): string {
+  const status =
+    typeof err === "object" && err !== null && "status" in err
+      ? (err as { status?: unknown }).status
+      : undefined;
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null && typeof (err as { message?: unknown }).message === "string"
+        ? ((err as { message: string }).message)
+        : "";
+
+  if (status === 401 || status === 403) return "Anthropic API key rejected";
+  if (status === 400 && /billing|credit/i.test(message)) {
+    return "Anthropic credit balance too low — top up at console.anthropic.com";
+  }
+  if (status === 429) return "Anthropic is rate-limiting — retry shortly";
+  if (status === 529 || /overloaded/i.test(message)) return "Anthropic is overloaded — retry shortly";
+
+  return "The site agent hit an unexpected error and stopped.";
+}
+
 type ToolResultContent = {
   type: "tool_result";
   tool_use_id: string;
@@ -309,10 +344,28 @@ export async function runAgentTurn(input: {
       onEvent({ type: "turn_done", reason: "error", message: text });
       return { endReason: "error", toolCalls };
     }
-    const { message } = await runMessage(
-      { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
-      { client: input.client, env },
-    );
+    let message: Anthropic.Message;
+    try {
+      ({ message } = await runMessage(
+        { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
+        { client: input.client, env },
+      ));
+    } catch (err) {
+      // Task A4: a thrown Anthropic SDK error (auth/billing/rate-limit/
+      // overload) previously propagated straight past this loop to
+      // agent-turn.ts's outer catch, which sets status='error' but persists
+      // NO explanatory text — the bare amber "internal" the operator saw.
+      // Persist a clear, human-readable label through the SAME channel
+      // every other turn-ending error in this loop already uses
+      // (persistAssistantText + setConversationStatus), so it renders in
+      // the transcript and flips on the Resume affordance exactly like the
+      // failure-streak/budget cases above.
+      const text = describeAnthropicError(err);
+      await persistAssistantText(pool, conversationId, text, onEvent);
+      await setConversationStatus(pool, conversationId, "error");
+      onEvent({ type: "turn_done", reason: "error", message: text });
+      return { endReason: "error", toolCalls };
+    }
 
     await addTokenUsage(pool, conversationId, {
       input: message.usage.input_tokens ?? 0,

@@ -4,7 +4,10 @@ import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
   createConversation, appendMessage, listMessages, addTokenUsage, getConversation, getTodayUsage,
 } from "./repo.js";
-import { runAgentTurn, parsePositiveIntEnv, type AgentTurnEvent, type AgentTurnResult } from "./loop.js";
+import {
+  runAgentTurn, parsePositiveIntEnv, describeAnthropicError,
+  type AgentTurnEvent, type AgentTurnResult,
+} from "./loop.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 const db = setupAgentDb();
@@ -76,6 +79,58 @@ describe("parsePositiveIntEnv (item 4)", () => {
   it("accepts a valid positive integer string", () => {
     expect(parsePositiveIntEnv("15", 30)).toBe(15);
     expect(parsePositiveIntEnv("1000000", 30)).toBe(1_000_000);
+  });
+});
+
+// Task A4 (Lovable-workspace plan). Ungated (no DB needed) — pure-function
+// coverage, mirrors parsePositiveIntEnv's describe block above.
+describe("describeAnthropicError (Task A4)", () => {
+  it("maps 401/403 to an API-key-rejected label", () => {
+    expect(describeAnthropicError({ status: 401, message: "invalid x-api-key" })).toBe(
+      "Anthropic API key rejected",
+    );
+    expect(describeAnthropicError({ status: 403, message: "forbidden" })).toBe("Anthropic API key rejected");
+  });
+
+  it("maps a 400 whose message mentions billing/credit to a top-up label", () => {
+    expect(
+      describeAnthropicError({
+        status: 400,
+        message: "Your credit balance is too low to access the Anthropic API",
+      }),
+    ).toBe("Anthropic credit balance too low — top up at console.anthropic.com");
+    expect(describeAnthropicError({ status: 400, message: "billing issue on this account" })).toBe(
+      "Anthropic credit balance too low — top up at console.anthropic.com",
+    );
+  });
+
+  it("leaves an unrelated 400 as the generic fallback message", () => {
+    expect(describeAnthropicError({ status: 400, message: "max_tokens is too large for this model" })).toBe(
+      "The site agent hit an unexpected error and stopped.",
+    );
+  });
+
+  it("maps 429 to a rate-limit label", () => {
+    expect(describeAnthropicError({ status: 429, message: "rate limited" })).toBe(
+      "Anthropic is rate-limiting — retry shortly",
+    );
+  });
+
+  it("maps 529 (or any status with an 'overloaded' message) to an overload label", () => {
+    expect(describeAnthropicError({ status: 529, message: "overloaded_error" })).toBe(
+      "Anthropic is overloaded — retry shortly",
+    );
+    expect(describeAnthropicError({ status: 500, message: "Overloaded" })).toBe(
+      "Anthropic is overloaded — retry shortly",
+    );
+  });
+
+  it("falls back to a generic message for anything else, including non-SDK errors", () => {
+    expect(describeAnthropicError(new Error("boom"))).toBe("The site agent hit an unexpected error and stopped.");
+    expect(describeAnthropicError("not an error object")).toBe(
+      "The site agent hit an unexpected error and stopped.",
+    );
+    expect(describeAnthropicError(undefined)).toBe("The site agent hit an unexpected error and stopped.");
   });
 });
 
@@ -571,5 +626,110 @@ d("runAgentTurn", () => {
     expect(events).toEqual([
       { type: "turn_done", reason: "error", message: "conversation has no user message" },
     ]);
+  });
+
+  // ── Task A4: Anthropic SDK errors surface a clear label, not a bare
+  // status flip — see describeAnthropicError's own unit tests above for the
+  // full mapping matrix; these confirm the loop actually wires it through
+  // persistAssistantText + setConversationStatus + turn_done.
+
+  it("Anthropic auth error (401): persists the API-key-rejected label, sets status error, ends the turn (Task A4)", async () => {
+    const { site, conv } = await seedConvo(`loop-anthropic-401-${runId}`);
+    const err = Object.assign(new Error("invalid x-api-key"), { status: 401 });
+    const create = vi.fn().mockRejectedValueOnce(err);
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const events: AgentTurnEvent[] = [];
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      onEvent: (e) => events.push(e),
+    });
+
+    expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("error");
+
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe("Anthropic API key rejected");
+
+    expect(events).toEqual([
+      { type: "assistant_text", text: "Anthropic API key rejected" },
+      { type: "turn_done", reason: "error", message: "Anthropic API key rejected" },
+    ]);
+  });
+
+  it("Anthropic billing error (400 mentioning credit): persists the top-up label (Task A4)", async () => {
+    const { site, conv } = await seedConvo(`loop-anthropic-billing-${runId}`);
+    const err = Object.assign(new Error("Your credit balance is too low to access the Anthropic API"), {
+      status: 400,
+    });
+    const create = vi.fn().mockRejectedValueOnce(err);
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("error");
+
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe(
+      "Anthropic credit balance too low — top up at console.anthropic.com",
+    );
+  });
+
+  it("Anthropic rate-limit error (429): persists the retry-shortly label (Task A4)", async () => {
+    const { site, conv } = await seedConvo(`loop-anthropic-429-${runId}`);
+    const err = Object.assign(new Error("rate limited"), { status: 429 });
+    const create = vi.fn().mockRejectedValueOnce(err);
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe(
+      "Anthropic is rate-limiting — retry shortly",
+    );
+  });
+
+  it("Anthropic overload error (529): persists the overloaded/retry label (Task A4)", async () => {
+    const { site, conv } = await seedConvo(`loop-anthropic-529-${runId}`);
+    const err = Object.assign(new Error("Overloaded"), { status: 529 });
+    const create = vi.fn().mockRejectedValueOnce(err);
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe(
+      "Anthropic is overloaded — retry shortly",
+    );
+  });
+
+  it("other Anthropic errors: persists the generic fallback label rather than crashing the turn (Task A4)", async () => {
+    const { site, conv } = await seedConvo(`loop-anthropic-other-${runId}`);
+    const err = Object.assign(new Error("something else broke"), { status: 500 });
+    const create = vi.fn().mockRejectedValueOnce(err);
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe(
+      "The site agent hit an unexpected error and stopped.",
+    );
   });
 });

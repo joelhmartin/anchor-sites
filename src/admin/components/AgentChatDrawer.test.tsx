@@ -725,4 +725,57 @@ describe("AgentChatDrawer (P-T11)", () => {
 
     await waitFor(() => expect(screen.getByLabelText("assistant is typing")).toBeTruthy());
   });
+
+  // ── Task A4: Anthropic API failures surface a clear label, not a bare
+  // amber "internal" ──
+
+  it("renders the Anthropic error label as an assistant message and shows Resume once the tail reports status error (Task A4)", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "assistant",
+          content: [
+            { type: "text", text: "Anthropic credit balance too low — top up at console.anthropic.com" },
+          ],
+          created_at: "t2",
+        },
+      },
+      { type: "status", status: "error" },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({ conversations: [] });
+      }
+      if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
+        return json(NEW_CONVERSATION, 201);
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1" && method === "GET") {
+        // Per-turn usage-delta refetch, fired once the tail settles to a
+        // non-"running" status — must reflect the SAME settled status the
+        // tail just reported, or this refetch would clobber it back to
+        // "active" and hide the Resume affordance the test asserts below.
+        return json({ conversation: { ...NEW_CONVERSATION.conversation, status: "error" } });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
+        return queuedMessagesResponse("c1");
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Anthropic credit balance too low — top up at console.anthropic.com")).toBeTruthy(),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy());
+  });
 });
