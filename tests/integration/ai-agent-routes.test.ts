@@ -255,6 +255,25 @@ d("agent HTTP API (integration, Task 10)", () => {
     ).toBe(true);
   });
 
+  it("Fix round 1 (Finding 1 — reviewer) — the 202 response includes user_message_id, the real persisted id of the just-appended user row, so the client can tail from a non-null cursor instead of replacing its whole transcript", async () => {
+    const site = await db.seedSite("agent-routes-user-message-id");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+
+    const res = await auth(
+      request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+    ).send({ message: "keep going" });
+    expect(res.status).toBe(202);
+    expect(typeof res.body.user_message_id).toBe("string");
+
+    const detail = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    const userMessage = detail.body.messages.find((m: { role: string }) => m.role === "user");
+    expect(userMessage).toBeTruthy();
+    expect(res.body.user_message_id).toBe(userMessage.id);
+  });
+
   it("Fix round 1 — run:\"job\" with the DEFAULT enqueue (pg-boss unbooted) 503s instead of lying queued:true", async () => {
     const site = await db.seedSite("agent-routes-default-enqueue-conv");
     const res = await auth(
@@ -312,7 +331,12 @@ d("agent HTTP API (integration, Task 10)", () => {
 
     expect(res.headers["content-type"]).not.toContain("text/event-stream");
     expect(res.status).toBe(202);
-    expect(res.body).toEqual({ queued: true, job_id: "job-id-1", conversation_id: conversationId });
+    expect(res.body).toEqual({
+      queued: true,
+      job_id: "job-id-1",
+      conversation_id: conversationId,
+      user_message_id: expect.any(String),
+    });
 
     // The route persisted the user message itself; nothing else (no
     // assistant reply) is written in-request — that's the job's job.
@@ -550,7 +574,12 @@ d("agent HTTP API (integration, Task 10)", () => {
         request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
       ).send({ message: "keep going" });
       expect(res.status).toBe(202);
-      expect(res.body).toEqual({ queued: true, deduped: true, conversation_id: conversationId });
+      expect(res.body).toEqual({
+        queued: true,
+        deduped: true,
+        conversation_id: conversationId,
+        user_message_id: expect.any(String),
+      });
       expect(hasLiveAgentTurnJobSpy).toHaveBeenCalledWith(conversationId);
 
       // The lock was already released before the (deduped) enqueue attempt —

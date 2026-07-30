@@ -9,7 +9,6 @@
 
 import type { Ref } from "react";
 import type { AgentChangeEvent } from "../../lib/agent-api.js";
-import type { TurnState } from "./chatReducer.js";
 import type { DisplayItem } from "./types.js";
 import { ChangeCard } from "./ChangeCard.js";
 import { ReasoningDisclosure } from "./ReasoningDisclosure.js";
@@ -61,33 +60,23 @@ function SystemLine({ text }: { text: string }) {
   return <p className="my-1.5 px-2 text-center text-xs text-amber-600">{text}</p>;
 }
 
-/** The live, still-streaming turn — tool steps (spinner → check), the
- * in-progress coalesced answer text (plain, NOT markdown — see Markdown.tsx's
- * comment), and the typing pulse. */
-function LiveTurn({ turn }: { turn: TurnState }) {
-  return (
-    <div className="mb-1">
-      {turn.toolSteps.length > 0 && (
-        <div className="mb-1 pl-0.5">
-          {turn.toolSteps.map((step, i) => (
-            <ToolStepRow key={i} step={step} />
-          ))}
-        </div>
-      )}
-      {turn.text && (
-        <div className="flex items-start gap-2">
-          <SparkleIcon className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-          <p className="whitespace-pre-wrap text-sm leading-[1.55] text-zinc-600">{turn.text}</p>
-        </div>
-      )}
-      <TypingPulse />
-    </div>
-  );
-}
-
+/**
+ * Fix round 1 (Finding 2 — reviewer, Task A2): every chat turn now runs as
+ * a background job with no in-request event stream to drive a transient
+ * "live turn" bubble (the old `LiveTurn`/`TurnState` machinery this
+ * replaced — see git history — was already permanently unreachable once
+ * Task A2 landed: `liveTurn` was hardcoded to `null`). Progress instead
+ * comes from the SAME tailed `ai_messages` rows as everything else in
+ * `items`: a tool_use block derives a `"step"` item (spinner) the moment
+ * the tail delivers the assistant message that persisted it; the matching
+ * tool_result flips it to done/error in place (`history.ts`). `busy`
+ * (conversation `status === "running"`) is the one thing that still needs
+ * a dedicated indicator — there's no persisted row for "the model is still
+ * thinking" — so it reuses the same typing pulse the old live turn showed.
+ */
 export function ChatTranscript({
   items,
-  liveTurn,
+  busy,
   siteId,
   slug,
   onSiteChanged,
@@ -95,7 +84,7 @@ export function ChatTranscript({
   onScroll,
 }: {
   items: DisplayItem[];
-  liveTurn: TurnState | null;
+  busy: boolean;
   siteId: string;
   slug: string;
   onSiteChanged: () => void;
@@ -114,6 +103,7 @@ export function ChatTranscript({
         if (item.kind === "user") return <UserBubble key={item.id} text={item.text} />;
         if (item.kind === "assistant") return <AssistantMessage key={item.id} item={item} />;
         if (item.kind === "system") return <SystemLine key={item.id} text={item.text} />;
+        if (item.kind === "step") return <ToolStepRow key={item.id} step={item} />;
         return (
           <ChangeCard
             key={item.id}
@@ -124,7 +114,7 @@ export function ChatTranscript({
           />
         );
       })}
-      {liveTurn && <LiveTurn turn={liveTurn} />}
+      {busy && <TypingPulse />}
     </div>
   );
 }

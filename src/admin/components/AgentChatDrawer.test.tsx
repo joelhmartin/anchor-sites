@@ -9,13 +9,21 @@ import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
  * Task A2 (2026-07-30 lovable-workspace SDD) deleted the inline turn's HTTP
  * path: `send()` now POSTs `{message}` as a plain enqueue-only request
  * (mocked via `global.fetch` below, alongside the conversation create/list
- * routes) and gets back `202 {queued, job_id, conversation_id}` — never an
- * SSE stream. `streamAgentEvents` is exercised ONLY by the `/events` tail,
- * which `send()` starts (with a null cursor — see AgentChatDrawer.tsx's
- * `send()` doc comment) right after every successful POST. These tests
+ * routes) and gets back `202 {queued, job_id, conversation_id,
+ * user_message_id}` — never an SSE stream. `streamAgentEvents` is exercised
+ * ONLY by the `/events` tail, which `send()` starts right after every
+ * successful POST, cursored at the returned `user_message_id` (fix round 1,
+ * Finding 1 — reviewer: NOT a null cursor, which would wholesale-replace
+ * the transcript from just the last-50 rows and silently truncate longer
+ * history — see AgentChatDrawer.tsx's `send()` doc comment). These tests
  * script that tail's `AgentTailEvent`s instead of a live `AgentTurnEvent`
  * stream.
  */
+
+/** The fake `user_message_id` every mocked messages-POST response below
+ * returns, for conversation "c1" — matches the `?after=` cursor `send()`
+ * uses to start its tail. */
+const FAKE_USER_MESSAGE_ID = "m-user-1";
 
 // A tail snapshot's messages fixture reused across several tests: an
 // assistant reply plus a tool-result that resolves to a `page_updated`
@@ -94,9 +102,13 @@ const NEW_CONVERSATION = {
   conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} },
 };
 
-/** The messages route's Task A2 success body: `202 {queued, job_id, conversation_id}`. */
-function queuedMessagesResponse(conversationId: string) {
-  return json({ queued: true, job_id: "job-1", conversation_id: conversationId }, 202);
+/** The messages route's Task A2 success body: `202 {queued, job_id,
+ * conversation_id, user_message_id}` (fix round 1, Finding 1). */
+function queuedMessagesResponse(conversationId: string, userMessageId: string = FAKE_USER_MESSAGE_ID) {
+  return json(
+    { queued: true, job_id: "job-1", conversation_id: conversationId, user_message_id: userMessageId },
+    202,
+  );
 }
 
 describe("AgentChatDrawer (P-T11)", () => {
@@ -116,7 +128,7 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("sends a message, renders the assistant bubble + change card, and clears the textarea", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/events"] = ASSISTANT_AND_CHANGE_EVENTS;
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = ASSISTANT_AND_CHANGE_EVENTS;
     let capturedBody: unknown;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -146,7 +158,7 @@ describe("AgentChatDrawer (P-T11)", () => {
     // Lazily creates the conversation, POSTs (enqueue-only) the message,
     // then tails `/events` for the background job's progress.
     await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(1));
-    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/events");
+    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/events?after=m-user-1");
     expect(capturedBody).toEqual({ message: "Build a homepage" });
 
     await waitFor(() => expect(screen.getByText("Working…")).toBeTruthy());
@@ -156,7 +168,7 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("Revert calls the restore route and fires onSiteChanged", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/events"] = ASSISTANT_AND_CHANGE_EVENTS;
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = ASSISTANT_AND_CHANGE_EVENTS;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -320,6 +332,72 @@ describe("AgentChatDrawer (P-T11)", () => {
     expect(onSiteChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("Fix round 1 (Finding 1 — reviewer) — preserves earlier history across a send instead of truncating it to the tail's fresh-messages window", async () => {
+    // Reopen an existing, already-long conversation: hydration renders
+    // "Ancient history" (this stands in for a turn far enough back that a
+    // null-cursor tail snapshot — capped at the last 50 ai_messages rows —
+    // would no longer include it).
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({
+          conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} }],
+        });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9" && method === "GET") {
+        return json({
+          conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
+          messages: [
+            {
+              id: "m1",
+              conversation_id: "c9",
+              role: "assistant",
+              content: [{ type: "text", text: "Ancient history" }],
+              created_at: "t1",
+            },
+          ],
+        });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9/messages" && method === "POST") {
+        return queuedMessagesResponse("c9", "m-new-user");
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // The post-send tail is scripted to deliver ONLY the new turn's own
+    // reply — deliberately NOT "Ancient history" — so if `send()` ever
+    // regressed to a null cursor (the full-REPLACE path), "Ancient history"
+    // would disappear once this snapshot lands. It must not.
+    eventScripts["/api/sites/s1/agent/conversations/c9/events?after=m-new-user"] = [
+      {
+        type: "message",
+        message: {
+          id: "m3",
+          conversation_id: "c9",
+          role: "assistant",
+          content: [{ type: "text", text: "Fresh reply" }],
+          created_at: "t3",
+        },
+      },
+    ];
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByText("Ancient history")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "keep going" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByText("Fresh reply")).toBeTruthy());
+    // The turn that predates this send is STILL visible — no truncation.
+    expect(screen.getByText("Ancient history")).toBeTruthy();
+    // The tail was cursored at the returned user_message_id, not restarted null.
+    expect(streamAgentEvents.mock.calls[0][0]).toBe(
+      "/api/sites/s1/agent/conversations/c9/events?after=m-new-user",
+    );
+  });
+
   // ── Chat-UI upgrade (ported patterns from anchor-operations' copilot) ──
 
   /** GET .../conversations → none yet; POST .../conversations → NEW_CONVERSATION;
@@ -372,7 +450,7 @@ describe("AgentChatDrawer (P-T11)", () => {
 
     fireEvent.click(screen.getByText("Add a services page"));
     await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(1));
-    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/events");
+    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/events?after=m-user-1");
     expect(
       fetchMock.mock.calls.some((c) => {
         const [input, init] = c as [RequestInfo | URL, RequestInit | undefined];
@@ -556,5 +634,95 @@ describe("AgentChatDrawer (P-T11)", () => {
     await waitFor(() =>
       expect(onStatusChange.mock.calls.some(([status, busy]) => status === "running" && busy === true)).toBe(true),
     );
+  });
+
+  // ── Fix round 1 (Finding 2 — reviewer): mid-turn progress feedback ──
+  //
+  // A background job's only mid-turn signal is what lands in ai_messages as
+  // the tail polls it — no in-request event stream. These assert the tool
+  // rows the tail delivers render as visible steps (not just page-mutating
+  // tools — search_stock_images has no `change` card at all), and that the
+  // conversation's `"running"` status renders a busy/typing indicator.
+
+  it("Fix round 1 (Finding 2 — reviewer) — a tailed tool_call row for a non-page tool renders a visible step", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_search_1", name: "search_stock_images", input: {} }],
+          created_at: "t2",
+        },
+      },
+    ];
+    mockFreshConversationFetch();
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Find some photos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // "search_stock_images" has no page_id in its result, so history.ts's
+    // existing `change`-card derivation would never have shown anything for
+    // it — this step row is the ONLY visible feedback for this tool call.
+    await waitFor(() => expect(screen.getByText("Searching stock photos")).toBeTruthy());
+  });
+
+  it("flips a tailed step from running to done once its matching tool_result row lands, without duplicating it", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_search_1", name: "search_stock_images", input: {} }],
+          created_at: "t2",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          id: "m3",
+          conversation_id: "c1",
+          role: "tool",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_search_1",
+              content: JSON.stringify({ results: [] }),
+              is_error: false,
+            },
+          ],
+          created_at: "t3",
+        },
+      },
+    ];
+    mockFreshConversationFetch();
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Find some photos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByText("Searching stock photos")).toBeTruthy());
+    // Resolved in place (existing item flipped to done), not appended again.
+    expect(screen.getAllByText("Searching stock photos")).toHaveLength(1);
+  });
+
+  it("Fix round 1 (Finding 2 — reviewer) — renders a busy/typing indicator while the conversation status is 'running'", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      { type: "status", status: "running" },
+    ];
+    mockFreshConversationFetch();
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build something" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByLabelText("assistant is typing")).toBeTruthy());
   });
 });

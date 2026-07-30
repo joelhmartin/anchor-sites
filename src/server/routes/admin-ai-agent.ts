@@ -222,8 +222,10 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
       return;
     }
 
+    let userMessageId: string;
     try {
-      await appendMessage(pool, conversationId, "user", [{ type: "text", text: message }]);
+      const appended = await appendMessage(pool, conversationId, "user", [{ type: "text", text: message }]);
+      userMessageId = appended.id;
     } catch (err) {
       await releaseConversationTurn(pool, conversationId, "error").catch(() => undefined);
       throw err;
@@ -235,8 +237,20 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
     // job chain (Task A2). A3 increments it on re-enqueued continuations
     // and varies `singletonKey` per round; not implemented here.
     const jobId = await enqueue({ conversationId, siteId, continuation: 0 });
+    // Fix round 1 (Finding 1 — reviewer): every success/dedupe response
+    // carries the just-appended user message's real, persisted id.
+    // AgentChatDrawer.tsx's `send()` uses it as the tail's `?after=` cursor
+    // instead of restarting with a null cursor — a null cursor hits the
+    // tail's no-cursor branch (`listMessages` capped at the last 50 rows),
+    // which wholesale-REPLACES the transcript and silently drops any turn
+    // further back than that window. A cursor scoped to right before this
+    // turn's own messages MERGES instead (see `handleTailEvent`'s cursored
+    // branch) — no history lost, and (since `afterId` is a strict `>`, not
+    // `>=`) this exact row is never re-delivered either, so there's no
+    // duplicate-bubble risk from the client's own optimistic echo.
+    const success = { user_message_id: userMessageId, ...extraOnSuccess };
     if (jobId) {
-      res.status(202).json({ queued: true, job_id: jobId, ...extraOnSuccess });
+      res.status(202).json({ queued: true, job_id: jobId, ...success });
       return;
     }
 
@@ -248,7 +262,7 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
     // retried client request that actually landed the first time).
     const deduped = await hasLiveAgentTurnJob(conversationId);
     if (deduped) {
-      res.status(202).json({ queued: true, deduped: true, ...extraOnSuccess });
+      res.status(202).json({ queued: true, deduped: true, ...success });
       return;
     }
 

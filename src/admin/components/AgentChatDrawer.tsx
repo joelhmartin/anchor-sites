@@ -7,7 +7,7 @@ import {
   type AiConversation,
   type AiMessage,
 } from "../lib/agent-api.js";
-import { deriveItemsFromMessage } from "./agent-chat/history.js";
+import { deriveItemsFromMessage, deriveItemsFromMessages, deriveToolResultUpdates } from "./agent-chat/history.js";
 import type { DisplayItem } from "./agent-chat/types.js";
 import { ChatTranscript } from "./agent-chat/ChatTranscript.js";
 import { Composer } from "./agent-chat/Composer.js";
@@ -174,20 +174,49 @@ export function AgentChatDrawer({
    * re-trigger site-changed side effects.
    */
   function hydrateFromMessages(messages: AiMessage[]) {
-    setItems(messages.flatMap(deriveItemsFromMessage));
+    // `deriveItemsFromMessages` (not the per-message singular) resolves any
+    // tool_use "step" against its tool_result within this same batch, so a
+    // step from earlier history doesn't get stuck showing "running" forever.
+    setItems(deriveItemsFromMessages(messages));
     seenMessageIdsRef.current = new Set(messages.map((m) => m.id));
     const last = messages[messages.length - 1];
     if (last) lastMessageIdRef.current = last.id;
   }
 
-  /** Append one newly-tailed persisted message, deduped by id. */
+  /**
+   * Append one newly-tailed persisted message, deduped by id.
+   *
+   * Fix round 1 (Finding 2 — reviewer, Task A2): a `role:"tool"` message's
+   * `tool_result`s don't just derive NEW items (the existing `change` cards)
+   * — they also resolve an EARLIER message's `tool_use` "step" item that's
+   * already sitting in `items` at `state:"running"`. `deriveToolResultUpdates`
+   * reports which `toolCallId`s to flip and to what; applied here via a map
+   * over the current items BEFORE appending whatever new items this same
+   * message also derives (a change card, mainly — a message is never both
+   * an assistant tool_use message and a tool tool_result message at once,
+   * so in practice at most one of the two branches below does anything per
+   * call, but there's no reason to assume that structurally).
+   */
   function appendPersistedMessage(message: AiMessage) {
     if (seenMessageIdsRef.current.has(message.id)) return;
     seenMessageIdsRef.current.add(message.id);
     lastMessageIdRef.current = message.id;
+
+    const updates = deriveToolResultUpdates(message);
     const derived = deriveItemsFromMessage(message);
-    if (derived.length === 0) return;
-    setItems((prev) => [...prev, ...derived]);
+    if (updates.length === 0 && derived.length === 0) return;
+
+    setItems((prev) => {
+      const withUpdates =
+        updates.length === 0
+          ? prev
+          : prev.map((item) => {
+              if (item.kind !== "step") return item;
+              const update = updates.find((u) => u.toolCallId === item.toolCallId);
+              return update ? { ...item, state: update.state } : item;
+            });
+      return derived.length > 0 ? [...withUpdates, ...derived] : withUpdates;
+    });
     for (const item of derived) if (item.kind === "change") noteChange(item.change);
   }
 
@@ -335,17 +364,22 @@ export function AgentChatDrawer({
    * runs. `sending` stays true across that whole window — it's cleared by
    * `handleTailEvent` once the tail reports a settled status, or by `stop()`.
    *
-   * The tail is ALWAYS (re)started with a NULL cursor here — mirroring the
-   * old inline route's "promoted" restart (see the removed `handleTurnEvent`
-   * in git history). The user's own message was just optimistically pushed
-   * into `items` as a transient `local-` id, but the SAME message is also
-   * now persisted server-side (with a real id) before the 202 responds — a
-   * non-null cursor (`lastMessageIdRef.current`, still pointing at whatever
-   * came before this send) would hit the cursored MERGE path in
-   * `handleTailEvent` and re-append that persisted row as a SECOND bubble.
-   * A null cursor takes the full-REPLACE path (`hydrateFromMessages`)
-   * instead, rebuilding the transcript from the persisted, authoritative
-   * last-50 — no duplicate possible.
+   * Fix round 1 (Finding 1 — reviewer): the tail is (re)started with the
+   * `user_message_id` the 202 response returns — the real, persisted id of
+   * the message THIS send just appended — NOT a null cursor. A null cursor
+   * hits the tail route's no-cursor branch (`listMessages` capped at the
+   * last 50 rows), which wholesale-REPLACES the transcript
+   * (`hydrateFromMessages`) from just that capped window: fine for a first
+   * send, but a silent, view-only history-truncation bug from the second
+   * send onward in any conversation with >50 persisted rows (closing and
+   * reopening the drawer restores it, since that path re-hydrates from the
+   * DB directly — but the live view drops earlier turns). A cursor scoped
+   * to right before this turn's own messages MERGES instead (the cursored
+   * branch in `handleTailEvent`) — nothing already on screen is discarded.
+   * It also can't re-deliver this exact user message as a duplicate bubble:
+   * the tail's `afterId` filter is a strict `>`, not `>=`, over
+   * `(created_at, id)` (see `listMessages` in repo.ts), so the row this
+   * cursor points at is excluded, not repeated.
    */
   async function send(overrideText?: string) {
     const text = (overrideText ?? draft).trim();
@@ -368,13 +402,20 @@ export function AgentChatDrawer({
         setConversationId(cid);
         setConversation(created.conversation);
       }
-      await apiFetch(`/api/sites/${siteId}/agent/conversations/${cid}/messages`, {
-        method: "POST",
-        body: { message: text },
-        signal: controller.signal,
-      });
+      const posted = await apiFetch<{ user_message_id?: string }>(
+        `/api/sites/${siteId}/agent/conversations/${cid}/messages`,
+        {
+          method: "POST",
+          body: { message: text },
+          signal: controller.signal,
+        },
+      );
       pendingUsageRefreshRef.current = true;
-      startTail(cid, null);
+      // `?? null` is a defensive fallback only — every real 202 carries
+      // `user_message_id` (see admin-ai-agent.ts's `runJobTurn`); falling
+      // back to the (safe, if history-truncating) null-cursor replace path
+      // rather than throwing keeps a malformed/mocked response non-fatal.
+      startTail(cid, posted.user_message_id ?? null);
     } catch (err) {
       const aborted = (err as { name?: string } | null)?.name === "AbortError";
       if (aborted) {
@@ -446,7 +487,7 @@ export function AgentChatDrawer({
 
       <ChatTranscript
         items={items}
-        liveTurn={null}
+        busy={conversation?.status === "running"}
         siteId={siteId}
         slug={slug}
         onSiteChanged={onSiteChanged}

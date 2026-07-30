@@ -1,10 +1,22 @@
 // src/admin/components/agent-chat/history.ts
 //
 // Reconstructs `DisplayItem`s from persisted `AiMessage`s (history hydration
-// / tail replay). Unchanged logic from the original AgentChatDrawer.tsx,
-// just relocated so the drawer file stays a manageable size.
+// / tail replay).
+//
+// Fix round 1 (Finding 2 — reviewer, Task A2): a background job's ONLY
+// mid-turn feedback is what lands in `ai_messages` as the tail polls it —
+// there's no in-request event stream anymore. `deriveItemsFromMessage` now
+// also turns an assistant message's `tool_use` blocks into visible "step"
+// rows (state:"running") for EVERY tool, not just the page-mutating ones
+// that already got a `change` card. `deriveToolResultUpdates` reads the
+// matching `tool_result` message's `tool_use_id`s and reports how to flip
+// each step to `"done"`/`"error"` once it resolves — a separate function
+// because updating an ALREADY-RENDERED item is the caller's job (`setItems`
+// mapping over the existing array), not something a per-message "these are
+// the new items" deriver can express on its own.
 
 import type { AgentChangeEvent, AiMessage } from "../../lib/agent-api.js";
+import { friendlyToolLabel } from "./chatReducer.js";
 import type { DisplayItem } from "./types.js";
 
 /**
@@ -44,10 +56,33 @@ export function deriveItemsFromMessage(m: AiMessage): DisplayItem[] {
   const blocks = Array.isArray(m.content) ? (m.content as Record<string, unknown>[]) : [];
   if (m.role === "user" || m.role === "assistant") {
     const kind = m.role;
-    return blocks
-      .map((b, i) => ({ b, i }))
-      .filter(({ b }) => b?.type === "text" && typeof b.text === "string")
-      .map(({ b, i }) => ({ id: `${m.id}-${i}`, kind, text: b.text as string }) as DisplayItem);
+    const items: DisplayItem[] = [];
+    blocks.forEach((b, i) => {
+      if (b?.type === "text" && typeof b.text === "string") {
+        items.push({ id: `${m.id}-${i}`, kind, text: b.text } as DisplayItem);
+        return;
+      }
+      // Assistant-only: a `tool_use` block is the model asking to run a
+      // tool — the loop persists it verbatim inside the assistant message
+      // (src/server/ai/agent/loop.ts), matched later by its own `id` when
+      // the tool_result message lands (see `deriveToolResultUpdates`).
+      if (
+        kind === "assistant" &&
+        b?.type === "tool_use" &&
+        typeof b.id === "string" &&
+        typeof b.name === "string"
+      ) {
+        items.push({
+          id: `${m.id}-${i}`,
+          kind: "step",
+          toolCallId: b.id,
+          name: b.name,
+          label: friendlyToolLabel(b.name),
+          state: "running",
+        });
+      }
+    });
+    return items;
   }
   if (m.role === "tool") {
     const items: DisplayItem[] = [];
@@ -65,4 +100,45 @@ export function deriveItemsFromMessage(m: AiMessage): DisplayItem[] {
     return items;
   }
   return [];
+}
+
+/**
+ * For a `role:"tool"` message, the `{toolCallId, state}` updates its
+ * `tool_result` blocks apply to already-rendered `"step"` items — matched
+ * by `toolCallId` (the ORIGINAL `tool_use` block's own `id`, which
+ * `tool_result.tool_use_id` refers back to). Callers apply these against
+ * their existing item list (`items.map(...)`); this function only reads
+ * one message, it never mutates anything itself.
+ */
+export function deriveToolResultUpdates(m: AiMessage): { toolCallId: string; state: "done" | "error" }[] {
+  if (m.role !== "tool") return [];
+  const blocks = Array.isArray(m.content) ? (m.content as Record<string, unknown>[]) : [];
+  const updates: { toolCallId: string; state: "done" | "error" }[] = [];
+  for (const b of blocks) {
+    if (b?.type === "tool_result" && typeof b.tool_use_id === "string") {
+      updates.push({ toolCallId: b.tool_use_id, state: b.is_error === true ? "error" : "done" });
+    }
+  }
+  return updates;
+}
+
+/**
+ * Batch form of `deriveItemsFromMessage` + `deriveToolResultUpdates`, for
+ * hydrating/replacing the WHOLE transcript from one ordered message array
+ * at once (`hydrateFromMessages`) — a tool_use step and its resolving
+ * tool_result can both be within the same batch, so this resolves that
+ * correlation in one pass rather than leaving every historical step stuck
+ * at `state:"running"`.
+ */
+export function deriveItemsFromMessages(messages: AiMessage[]): DisplayItem[] {
+  const items = messages.flatMap(deriveItemsFromMessage);
+  for (const m of messages) {
+    for (const update of deriveToolResultUpdates(m)) {
+      const idx = items.findIndex((it) => it.kind === "step" && it.toolCallId === update.toolCallId);
+      if (idx !== -1) {
+        items[idx] = { ...(items[idx] as Extract<DisplayItem, { kind: "step" }>), state: update.state };
+      }
+    }
+  }
+  return items;
 }
