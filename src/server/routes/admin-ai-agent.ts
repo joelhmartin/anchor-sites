@@ -524,10 +524,24 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         res.write(": hb\n\n");
       }, 15_000);
 
-      req.on("close", () => {
+      const stopTimers = () => {
         clearInterval(pollTimer);
         clearInterval(heartbeatTimer);
-      });
+      };
+      // Both listeners, whichever fires first — `req`'s `close` event isn't
+      // reliably emitted for every abrupt client-side teardown (a client
+      // that reads one SSE frame off a raw socket then calls
+      // `req.destroy()`, e.g. tests/integration/ai-agent-routes.test.ts's
+      // `fetchFirstSseEvent`, matches this exactly), whereas `res`'s `close`
+      // event fires whenever the underlying connection is gone regardless of
+      // which side tore it down. Without this second listener, a request
+      // whose `req.close` never fires leaks these two intervals for the
+      // lifetime of the whole test process — each one still doing real DB
+      // queries every 1s/15s — competing with every other test's Postgres
+      // queries and CPU for the rest of the run. `clearInterval` on an
+      // already-cleared id is a safe no-op, so both listeners firing is fine.
+      req.on("close", stopTimers);
+      res.on("close", stopTimers);
     },
   );
 
