@@ -2,7 +2,17 @@ import type { Pool } from "pg";
 import { runAgentTurn } from "../ai/agent/loop.js";
 import { setConversationStatus, claimConversationTurn, releaseConversationTurn } from "../ai/agent/repo.js";
 
-export type AgentTurnInput = { conversationId: string; siteId: string };
+/**
+ * `continuation` (Task A2 — see docs/superpowers/sdd/2026-07-30-lovable-workspace):
+ * a round marker on every AGENT_TURN job payload, starting at 0 for a
+ * conversation's very first job (whether enqueued via the wizard's
+ * create-with-job path or a chat message POST). Optional/unread here —
+ * A3 is what actually increments it for re-enqueued continuations and
+ * varies the enqueue `singletonKey` per round (pg-boss's `stately` policy
+ * drops a second `send()` with the SAME key while one is still
+ * queued/active — see global-constraints.md).
+ */
+export type AgentTurnInput = { conversationId: string; siteId: string; continuation?: number };
 export type AgentTurnDeps = { pool: Pool; runTurn?: typeof runAgentTurn };
 
 /**

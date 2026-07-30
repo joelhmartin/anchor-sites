@@ -4,14 +4,12 @@ import { z } from "zod";
 import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
-import { runAgentTurn } from "../ai/agent/loop.js";
 import {
   createConversation,
   getConversation,
   listConversations,
   appendMessage,
   listMessages,
-  setConversationStatus,
   claimConversationTurn,
   releaseConversationTurn,
 } from "../ai/agent/repo.js";
@@ -27,12 +25,16 @@ import type { AgentTurnInput } from "../jobs/agent-turn.js";
  * design: route shapes, SSE event shapes, and the tail's snapshot/afterId
  * semantics all mirror what the drawer already expects.
  *
- * Two SSE producers:
- *   - `POST .../messages` (run:"inline") streams ONE turn's `AgentTurnEvent`s
- *     live as they're emitted by `runAgentTurn`'s `onEvent` callback.
- *   - `GET .../events` tails a conversation from the DB (for job-run turns,
- *     which have no in-request `onEvent` to stream) — polls `ai_messages`/
- *     `ai_conversations` and re-emits new rows as `AgentTailEvent`s.
+ * Task A2 (2026-07-30 lovable-workspace SDD) removed the inline turn path:
+ * Cloud Run's 60s request timeout means no HTTP request may run an agent
+ * loop in-process (global-constraints.md). Every turn — the first message
+ * in a conversation, a resume, all of it — now enqueues an AGENT_TURN job
+ * and returns immediately. One SSE producer remains:
+ *   - `GET .../events` tails a conversation from the DB (there's no
+ *     in-request `onEvent` to stream for a job-run turn) — polls
+ *     `ai_messages`/`ai_conversations` and re-emits new rows as
+ *     `AgentTailEvent`s. The client (`streamAgentEvents` in agent-api.ts)
+ *     starts this right after a message POST's 202.
  */
 
 // ---------------------------------------------------------------------------
@@ -77,7 +79,6 @@ const createConversationPayload = z.object({
 
 const postMessagePayload = z.object({
   message: z.string().min(1),
-  run: z.enum(["inline", "job"]).default("inline"),
 });
 
 function invalidPayload(res: Response, error: z.ZodError): void {
@@ -92,8 +93,6 @@ function invalidPayload(res: Response, error: z.ZodError): void {
 
 export type AdminAiAgentOptions = {
   pool?: Pool;
-  /** Injectable for tests — the real turn loop is far too slow/expensive to run in an HTTP test. */
-  runTurn?: typeof runAgentTurn;
   /** Injectable for tests. Default: lazy `getBoss().send(AGENT_TURN, input)`, swallowing failures to `null`. */
   enqueue?: (input: AgentTurnInput) => Promise<string | null>;
   /**
@@ -112,7 +111,6 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
   const pool = opts.pool ?? defaultPool;
   const router = Router();
   const admin = requireAdmin();
-  const runTurn = opts.runTurn ?? runAgentTurn;
   const enqueue: (input: AgentTurnInput) => Promise<string | null> =
     opts.enqueue ??
     (async (input) => {
@@ -179,8 +177,9 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
 
   /**
    * Shared body for the two job-enqueuing paths (conversation-create-with-job
-   * below, and the message-POST run:"job" branch further down): claim the
-   * turn lock, append the user message, then enqueue. Writes the response
+   * below, and every message POST further down — Task A2 made ALL message
+   * turns job-only): claim the turn lock, append the user message, then
+   * enqueue. Writes the response
    * itself; callers `return` right after calling this (matches the early-
    * return style used throughout this file).
    *
@@ -232,7 +231,10 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
 
     await releaseConversationTurn(pool, conversationId, "active");
 
-    const jobId = await enqueue({ conversationId, siteId });
+    // `continuation: 0` — this is round 0 of the conversation's AGENT_TURN
+    // job chain (Task A2). A3 increments it on re-enqueued continuations
+    // and varies `singletonKey` per round; not implemented here.
+    const jobId = await enqueue({ conversationId, siteId, continuation: 0 });
     if (jobId) {
       res.status(202).json({ queued: true, job_id: jobId, ...extraOnSuccess });
       return;
@@ -353,11 +355,12 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
 
   // -------------------------------------------------------------------------
   // POST /sites/:siteId/agent/conversations/:conversationId/messages
-  // run:"job"    → append + enqueue, 202 (job tails via GET .../events).
-  // run:"inline" → append, then stream the turn live over SSE. A turn that
-  // hits the route's 45s/15-tool-call caps returns reason:"promoted" — the
-  // done event already told the client, so this enqueues the continuation
-  // job silently and ends the stream. A conversation in status:'error' is
+  //
+  // Task A2: enqueue-only, always. Append the user message + enqueue an
+  // AGENT_TURN job, 202 immediately — no agent turn ever runs inside this
+  // (or any) HTTP request (Cloud Run's 60s timeout — global-constraints.md).
+  // The client tails progress via `GET .../events` (started right after the
+  // 202 — see AgentChatDrawer.tsx). A conversation in status:'error' is
   // allowed through (the new message IS the resume — see docs/ai-agent.md
   // "Resume semantics").
   // -------------------------------------------------------------------------
@@ -372,7 +375,7 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         return;
       }
       const { siteId, conversationId } = req.params;
-      const { message, run } = parsed.data;
+      const { message } = parsed.data;
 
       try {
         const conversation = await getConversation(pool, conversationId, siteId);
@@ -384,101 +387,18 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         // Item 1 (Codex P1 — serialize turns per conversation): a second
         // message POST while a turn is already running for this
         // conversation would otherwise interleave invalid Anthropic history
-        // + conflicting mutations (e.g. the composer being enabled while
-        // the drawer is tailing a job-run build). Claim the turn lock
+        // + conflicting mutations. `runJobTurn` claims the turn lock
         // atomically BEFORE appending the message or doing anything else —
         // a conversation in status:'error' is claimable (matches the
-        // existing "resume on error" semantics documented on this route),
-        // and a `running` conversation whose `updated_at` is stale (>10min,
-        // appendMessage keeps re-arming it for a genuinely active turn)
-        // is claimable too, covering a turn that crashed without releasing.
-        if (run === "job") {
-          // `runJobTurn` does its own claim → append → release → enqueue
-          // (round 2 item 2's reordering) — see its doc comment above.
-          await runJobTurn(res, { conversationId, siteId, message });
-          return;
-        }
-
-        const claimed = await claimConversationTurn(pool, conversationId);
-        if (!claimed) {
-          res.status(409).json({ error: "turn already running" });
-          return;
-        }
-
-        try {
-          await appendMessage(pool, conversationId, "user", [{ type: "text", text: message }]);
-        } catch (err) {
-          // Round 2 fix, item 3 (Minor): don't leak the lock for 10 minutes
-          // on a DB error between claim and append — release immediately,
-          // then let the outer catch below turn this into a normal 500.
-          await releaseConversationTurn(pool, conversationId, "error").catch(() => undefined);
-          throw err;
-        }
-
-        // Fix round 1 (reviewer extra #3): if the client disconnects mid-turn,
-        // `sseSend` already no-ops on a torn-down `res` (see its comment), but
-        // the turn ITSELF must keep running — it's doing real, persisted work
-        // (page writes, revisions) that shouldn't die just because a tab
-        // closed, and a `promoted` turn's continuation job still needs to be
-        // enqueued regardless. `clientGone` only gates the (now-pointless)
-        // SSE writes; it never short-circuits `runTurn` or the enqueue below.
-        let clientGone = false;
-        req.on("close", () => {
-          clientGone = true;
-        });
-
-        sseInit(res);
-        try {
-          const result = await runTurn({
-            pool,
-            conversationId,
-            siteId,
-            onEvent: (e) => {
-              if (!clientGone) sseSend(res, e);
-            },
-            limits: { maxToolCalls: 15, deadlineMs: 45_000 },
-          });
-          if (result.endReason === "deadline") {
-            const jobId = await enqueue({ conversationId, siteId });
-            if (!jobId) {
-              // Important 5: the client already saw `turn_done`
-              // reason:"promoted" (emitted by runTurn's onEvent above) —
-              // without this, a failed enqueue here stalls the conversation
-              // silently: the drawer thinks a background job is coming to
-              // finish the turn, but nothing was ever queued. Tell the
-              // client explicitly (a second turn_done frame, reason:"error")
-              // and flip the conversation to status:"error" so the existing
-              // resume path (a conversation in status:'error' is allowed
-              // through on the next message, per the route's header
-              // comment) picks it back up on retry.
-              console.error("[agent] promoted-turn continuation enqueue returned no id", {
-                conversationId,
-                siteId,
-              });
-              await setConversationStatus(pool, conversationId, "error");
-              if (!clientGone) {
-                sseSend(res, {
-                  type: "turn_done",
-                  reason: "error",
-                  message: "continuation could not be queued — press Resume or send another message",
-                });
-              }
-            }
-          }
-        } catch {
-          await setConversationStatus(pool, conversationId, "error").catch(() => undefined);
-          if (!clientGone) sseSend(res, { type: "turn_done", reason: "error", message: "internal" });
-        } finally {
-          // Item 1: release the turn lock this route claimed above.
-          // CONDITIONAL on still being 'running' — the promoted-enqueue-
-          // failure branch and the catch block above already flipped status
-          // to 'error' for this same turn, and that already-set status must
-          // win over this generic "done" flip (releaseConversationTurn's
-          // `WHERE status = 'running'` guard is what makes this a no-op in
-          // those cases instead of clobbering 'error' back to 'active').
-          await releaseConversationTurn(pool, conversationId, "active").catch(() => undefined);
-          if (!clientGone) res.end();
-        }
+        // existing "resume on error" semantics documented above), and a
+        // `running` conversation whose `updated_at` is stale (>10min,
+        // appendMessage keeps re-arming it for a genuinely active turn) is
+        // claimable too, covering a turn that crashed without releasing.
+        // `runJobTurn` does its own claim → append → release → enqueue
+        // (round 2 item 2's reordering — see its doc comment above) and
+        // writes the response itself; `conversation_id` in the success
+        // payload is what the client's tail keys off of.
+        await runJobTurn(res, { conversationId, siteId, message }, { conversation_id: conversationId });
       } catch (err) {
         next(err);
       }

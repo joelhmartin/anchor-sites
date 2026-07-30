@@ -20,6 +20,17 @@ export type AgentChangeEvent = {
   summary: string;
 };
 
+/**
+ * Task A2 (2026-07-30 lovable-workspace SDD) deleted the inline turn's HTTP
+ * path — no agent turn ever runs inside a request anymore, so the client
+ * never receives a live `AgentTurnEvent` stream. `TurnDoneReason`/
+ * `AgentTurnEvent` stay exported: `chatReducer.ts`'s pure turn-state
+ * reducer (and its own tests) still reference the shape, even though
+ * nothing in this file constructs these events over the wire any longer —
+ * every turn's progress now arrives as persisted `AgentTailEvent`s (below)
+ * via the `GET .../events` tail, which is all `streamAgentEvents` streams
+ * these days.
+ */
 export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "promoted";
 
 export type AgentTurnEvent =
@@ -54,25 +65,28 @@ export type AgentTailEvent =
   | { type: "status"; status: AiConversation["status"] };
 
 /**
- * Streams server-sent events from an agent route (either the inline turn
- * POST or the job-run tail GET) into `opts.onEvent`. Frames look like
- * `data: {...json...}\n\n`, heartbeats look like `: hb\n\n` and are
- * skipped. Resolves when the stream ends (turn completion, tail close, or
- * abort).
+ * Streams server-sent events from the job-run tail GET (`.../events`) into
+ * `opts.onEvent`. Frames look like `data: {...json...}\n\n`, heartbeats look
+ * like `: hb\n\n` and are skipped. Resolves when the stream ends (tail
+ * close, or abort).
+ *
+ * Task A2 (2026-07-30 lovable-workspace SDD) deleted this function's other
+ * caller — the inline turn POST, which used to pass `opts.body` to stream
+ * ONE turn's `AgentTurnEvent`s live. Every chat turn now enqueues a
+ * background job and the client only ever tails via `GET`, so this is
+ * GET-only: no `body`, no method branch.
  */
 export async function streamAgentEvents(
   path: string,
-  opts: { body?: unknown; signal?: AbortSignal; onEvent: (e: Record<string, unknown>) => void },
+  opts: { signal?: AbortSignal; onEvent: (e: Record<string, unknown>) => void },
 ): Promise<void> {
   const token = getAdminToken();
   const res = await fetch(path, {
-    method: opts.body ? "POST" : "GET",
+    method: "GET",
     credentials: "include",
     headers: {
-      "Content-Type": "application/json",
       ...(token ? { "X-Admin-Token": token } : {}),
     },
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
     signal: opts.signal,
   });
 
