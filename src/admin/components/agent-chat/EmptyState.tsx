@@ -22,7 +22,7 @@ export function EmptyState({ onPreset }: { onPreset: (text: string) => void }) {
             key={preset}
             type="button"
             onClick={() => onPreset(preset)}
-            className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-left text-xs text-zinc-700 hover:border-indigo-300 hover:bg-indigo-50/60 hover:text-indigo-700"
+            className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-left text-xs text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
           >
             {preset}
           </button>

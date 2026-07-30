@@ -141,14 +141,19 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     return utils;
   }
 
-  it("Edit toggle turns on inline editing: widens the panel and appends edit=1&bridge= to the iframe src", async () => {
+  it("Edit toggle turns on inline editing: fills the frame (no width cap, in or out of edit mode) and appends edit=1&bridge= to the iframe src", async () => {
     mockPagesApi("s1", [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }]);
     render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
     await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
 
     const editToggle = within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" });
     expect(editToggle.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByTestId("draft-preview-panel").className).toContain("max-w-md");
+    // Task B6 (Lovable-grade visual pass): the panel always fills its
+    // wrapping frame — no more max-w-md/max-w-3xl cap that shrank the
+    // desktop preview to a small box. `WorkspacePage`'s outer frame now
+    // owns the border/shadow/margin; this panel just fills it.
+    expect(screen.getByTestId("draft-preview-panel").className).toContain("h-full");
+    expect(screen.getByTestId("draft-preview-panel").className).not.toContain("max-w");
 
     fireEvent.click(editToggle);
     expect(editToggle.getAttribute("aria-pressed")).toBe("true");
@@ -162,14 +167,45 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     expect(inlineEditorCalls[0]).toMatchObject({ siteId: "s1", pageId: "pg1" });
     const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
     expect(iframe.getAttribute("src")).toContain(`&edit=1&bridge=${inlineEditorHandle.token}`);
-    expect(iframe.className).toContain("h-[70vh]");
-    expect(screen.getByTestId("draft-preview-panel").className).toContain("max-w-3xl");
+    expect(iframe.className).toContain("flex-1");
+    expect(screen.getByTestId("draft-preview-panel").className).not.toContain("max-w");
 
     // Turning it back off flushes and destroys the handle.
     fireEvent.click(editToggle);
     await waitFor(() => expect(inlineEditorHandle.flush).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(inlineEditorHandle.destroy).toHaveBeenCalledTimes(1));
     expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).not.toContain("edit=1");
+  });
+
+  // ── Task B6 (screenshot-driven follow-up): intentional loading/empty
+  // states — the operator's screenshot showed a bare, blank-looking box
+  // where the preview should be while pages were still loading; `return
+  // null` there is indistinguishable from a bug. ──
+
+  it("shows a loading skeleton (not a blank/broken box) while the pages fetch is in flight", async () => {
+    let resolvePages!: (v: Response) => void;
+    global.fetch = vi.fn(
+      () => new Promise<Response>((resolve) => { resolvePages = resolve; }),
+    ) as unknown as typeof fetch;
+
+    render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+
+    expect(screen.getByTestId("draft-preview-panel")).toBeTruthy();
+    expect(screen.getByText("Loading preview…")).toBeTruthy();
+    expect(screen.queryByTitle("Draft preview")).toBeNull();
+
+    resolvePages(json({ pages: [] }));
+    await waitFor(() => expect(screen.getByText(/This page is empty/)).toBeTruthy());
+  });
+
+  it("shows an intentional empty-state message (not a blank/broken box) when the site has no pages to preview", async () => {
+    mockPagesApi("s1", []);
+    render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("This page is empty — ask the agent to fill it.")).toBeTruthy(),
+    );
+    expect(screen.queryByTitle("Draft preview")).toBeNull();
   });
 
   it("attaches the inline editor to the iframe on its load event, exactly once", async () => {

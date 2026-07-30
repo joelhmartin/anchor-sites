@@ -1,37 +1,23 @@
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { signOut } from "./lib/session.js";
 import { cn } from "./ui/cn.js";
-
-/**
- * Task B2 (2026-07-30 lovable-workspace SDD): matches the Lovable-style
- * workspace route (`/sites/:slug`) and nothing else — specifically NOT
- * `/sites/new` (the wizard, a static sibling route) and NOT any route with
- * a further path segment (`/manage`, `/pages/:id`, …), which all keep the
- * padded, width-capped article chrome every other admin page uses.
- *
- * `<Route handle>` + `useMatches` would be the idiomatic way to let a route
- * declare its own layout needs, but `useMatches` only works with a data
- * router (`createBrowserRouter`/`createMemoryRouter`) — this app uses plain
- * `<Routes>`, so `AdminLayout` has no route-tree context to read `handle`
- * from. Matching the URL shape directly is the pragmatic alternative.
- */
-function isWorkspacePath(pathname: string): boolean {
-  return /^\/sites\/(?!new$)[^/]+$/.test(pathname);
-}
+import { StudioWordmark } from "./components/StudioWordmark.js";
 
 /**
  * Admin shell chrome (P4-T4.9): left sidebar + content outlet. Rendered
  * inside `<RequireAdmin>` so it only shows for authenticated sessions.
  *
- * Task B2: the workspace page needs the full viewport height for its
- * chat/preview grid, not the padded, width-capped article column every
- * other admin page uses — `isWorkspacePath` swaps just the `<main>`
- * wrapper for it; sidebar/chrome are unchanged either way.
+ * Task B6 (2026-07-30 lovable-workspace SDD, screenshot-driven follow-up):
+ * the workspace route (`/sites/:slug`) no longer mounts under this layout at
+ * all — the operator's screenshot showed it burning ~220px on this sidebar
+ * for a screen that's supposed to be a full-bleed Lovable-style canvas, so
+ * `AdminApp.tsx` now routes it as a sibling of this layout instead of a
+ * child. That retires the `isWorkspacePath`/`fullBleed` URL-sniffing this
+ * component used to need — every route under here now gets the same padded,
+ * width-capped article chrome.
  */
 export function AdminLayout() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const fullBleed = isWorkspacePath(location.pathname);
 
   async function handleSignOut() {
     await signOut();
@@ -41,9 +27,7 @@ export function AdminLayout() {
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900">
       <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white">
         <div className="px-5 py-4">
-          <Link to="/" className="text-base font-semibold tracking-tight">
-            AnchorCorps <span className="text-indigo-600">Studio</span>
-          </Link>
+          <StudioWordmark />
         </div>
         <nav className="flex-1 px-2">
           <NavLink
@@ -69,17 +53,11 @@ export function AdminLayout() {
           </button>
         </div>
       </aside>
-      {fullBleed ? (
-        <main className="h-screen flex-1 overflow-hidden">
+      <main className="flex-1 overflow-x-hidden">
+        <div className="mx-auto max-w-5xl px-6 py-8">
           <Outlet />
-        </main>
-      ) : (
-        <main className="flex-1 overflow-x-hidden">
-          <div className="mx-auto max-w-5xl px-6 py-8">
-            <Outlet />
-          </div>
-        </main>
-      )}
+        </div>
+      </main>
     </div>
   );
 }

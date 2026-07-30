@@ -6,6 +6,7 @@
 // Tailwind zinc/indigo instead of MUI.
 
 import { Spinner } from "../../ui/spinner.js";
+import { cn } from "../../ui/cn.js";
 import type { ToolStep } from "./chatReducer.js";
 
 /**
@@ -14,10 +15,23 @@ import type { ToolStep } from "./chatReducer.js";
  * call is a permanent, always-visible transcript row (no more collapsed
  * "Worked through N steps" disclosure a failure could hide inside — Task
  * A2 deleted the in-request event stream that fed it).
+ *
+ * Task B6 (2026-07-30 lovable-workspace SDD): a running row gets a thin
+ * animated shimmer (`.agent-chat-step-running`, defined once in
+ * `ChatTranscript.tsx`) — the "collapsed feel" spinner + label was easy to
+ * miss as still-in-progress against a wall of finalized steps; the shimmer
+ * is the ambient "something is happening here" cue Lovable's own tool rows
+ * have. Text stays muted even while running — Lovable's tool trace reads as
+ * background detail, not a second headline.
  */
 export function ToolStepRow({ step }: { step: ToolStep }) {
   return (
-    <div className="flex items-center gap-2 py-[3px]">
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md px-1.5 py-[3px]",
+        step.state === "running" && "agent-chat-step-running",
+      )}
+    >
       <span className="flex w-4 shrink-0 items-center justify-center">
         {step.state === "done" ? (
           <svg viewBox="0 0 20 20" fill="none" className="h-[15px] w-[15px] text-green-600" aria-hidden="true">
@@ -41,7 +55,7 @@ export function ToolStepRow({ step }: { step: ToolStep }) {
           <Spinner className="h-3 w-3 border-[1.5px]" />
         )}
       </span>
-      <span className={step.state === "running" ? "text-xs font-medium text-zinc-900" : "text-xs text-zinc-500"}>
+      <span className={step.state === "running" ? "text-xs text-zinc-600" : "text-xs text-zinc-500"}>
         {step.label}
       </span>
     </div>

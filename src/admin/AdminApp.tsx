@@ -34,15 +34,19 @@ export function AdminApp() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAdmin />}>
+        {/* Task B2 (2026-07-30 lovable-workspace SDD): `/sites/:slug` is the
+            Lovable-style workspace (chat + live preview) — the tab-based
+            management shell moved to `/manage`. Task B6's screenshot-driven
+            follow-up: this route is now a SIBLING of `<AdminLayout>`, not a
+            child of it — the workspace renders full-bleed, with none of the
+            sidebar's ~220px chrome (its own top bar/chat rail carry the
+            wordmark, nav, and sign-out that the sidebar used to). Every
+            other authenticated route still gets the padded, width-capped
+            shell below. */}
+        <Route path="/sites/:slug" element={<WorkspacePage />} />
         <Route element={<AdminLayout />}>
           <Route path="/" element={<SitesListPage />} />
           <Route path="/sites/new" element={<NewSitePage />} />
-          {/* Task B2 (2026-07-30 lovable-workspace SDD): `/sites/:slug` is
-              now the Lovable-style workspace (chat + live preview) — the
-              tab-based management shell moved to `/manage`. AdminLayout
-              detects this route by URL shape (`isWorkspacePath`) to render
-              its fullbleed chrome variant. */}
-          <Route path="/sites/:slug" element={<WorkspacePage />} />
           <Route path="/sites/:slug/manage" element={<SiteDetailPage />} />
           <Route path="/sites/:slug/pages/:pageId" element={<PageEditRedirect />} />
           <Route path="/sites/:slug/posts/:postId" element={<PostEditorPage />} />
