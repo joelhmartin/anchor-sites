@@ -59,6 +59,7 @@ import { featureGridEntry } from "./feature-grid/index.js";
 import { statsBandEntry } from "./stats-band/index.js";
 import { richFooterEntry } from "./rich-footer/index.js";
 import { navBarEntry } from "./nav-bar/index.js";
+import { announcementBarEntry } from "./announcement-bar/index.js";
 
 /**
  * Block manifest — every opinionated block in v0.1. Order is the order
@@ -94,6 +95,8 @@ export const blockManifest: BlockManifestEntry[] = [
   richFooterEntry as BlockManifestEntry<any>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   navBarEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  announcementBarEntry as BlockManifestEntry<any>,
 ];
 
 /**
