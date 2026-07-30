@@ -94,7 +94,11 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const [agentBusy, setAgentBusy] = useState(false);
   const [viewport, setViewport] = useState<Viewport>("desktop");
 
-  const { data: pagesData } = useApi<{ pages: PageOption[] }>(`/api/sites/${siteId}/pages`);
+  const {
+    data: pagesData,
+    error: pagesError,
+    reload: reloadPages,
+  } = useApi<{ pages: PageOption[] }>(`/api/sites/${siteId}/pages`);
   const pages = pagesData?.pages ?? [];
 
   // Default the page switcher to "home" (by slug) or the first page, once
@@ -122,14 +126,35 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     setAgentBusy(busy);
   }
 
-  const { items, draft, setDraft, sending, conversation, error, usageText, send, stop } = useAgentConversation({
+  // Fix round 1 (Important finding 1 — reviewer): a tailed change (e.g. the
+  // agent's `create_page` tool call) can add/remove/rename a page, which
+  // the top-bar page `<select>` has no way to know about unless the pages
+  // list itself refetches. `handleChangeEvent` above already bumps the
+  // preview nonce for the SAME event via `onChangeEvent`, so this is
+  // reload-only — bumping the nonce again here would just double-increment
+  // it for no benefit.
+  function handlePagesMaybeChanged() {
+    reloadPages();
+  }
+
+  // The revert path (`ChangeCard`'s "Revert" button, via `ChatTranscript`'s
+  // `onSiteChanged` prop) isn't a tailed event `handleChangeEvent` already
+  // covers — it needs its own nonce bump to refresh the iframe, alongside
+  // the same pages-list reload (a reverted page could reappear/disappear
+  // from the switcher too).
+  function handleRevertSiteChanged() {
+    reloadPages();
+    setPreviewNonce((n) => n + 1);
+  }
+
+  const { items, draft, setDraft, sending, busy, conversation, error, usageText, send, stop } = useAgentConversation({
     siteId,
     active: true,
     // The workspace is the permanent home for this conversation (not a
     // toggleable drawer) — reconnect to an already-running/erroring turn
     // on load, e.g. after a refresh mid-build.
     autoTail: true,
-    onSiteChanged: () => {},
+    onSiteChanged: handlePagesMaybeChanged,
     onChangeEvent: handleChangeEvent,
     onStatusChange: handleStatusChange,
   });
@@ -183,10 +208,10 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
 
         <ChatTranscript
           items={items}
-          busy={conversation?.status === "running"}
+          busy={busy}
           siteId={siteId}
           slug={slug}
-          onSiteChanged={() => setPreviewNonce((n) => n + 1)}
+          onSiteChanged={handleRevertSiteChanged}
           scrollRef={scrollContainerRef}
           onScroll={handleTranscriptScroll}
         />
@@ -212,19 +237,26 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
 
           <div className="flex items-center gap-2">
-            {pages.length > 0 && (
-              <select
-                aria-label="Page"
-                value={previewPageId ?? ""}
-                onChange={(e) => setPreviewPageId(e.target.value)}
-                className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs"
-              >
-                {pages.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.title}
-                  </option>
-                ))}
-              </select>
+            {pagesError ? (
+              // Minor finding (reviewer): mirror the same red error
+              // treatment the sites list uses instead of the switcher just
+              // silently disappearing.
+              <span className="text-xs text-red-600">Couldn't load pages: {pagesError}</span>
+            ) : (
+              pages.length > 0 && (
+                <select
+                  aria-label="Page"
+                  value={previewPageId ?? ""}
+                  onChange={(e) => setPreviewPageId(e.target.value)}
+                  className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs"
+                >
+                  {pages.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title}
+                    </option>
+                  ))}
+                </select>
+              )
             )}
 
             <div role="group" aria-label="Viewport" className="flex overflow-hidden rounded-md border border-zinc-300">

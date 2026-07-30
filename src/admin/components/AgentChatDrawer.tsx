@@ -47,7 +47,7 @@ export function AgentChatDrawer({
   onChangeEvent,
   onStatusChange,
 }: AgentChatDrawerProps) {
-  const { items, draft, setDraft, sending, conversation, error, usageText, send, stop } = useAgentConversation({
+  const { items, draft, setDraft, sending, busy, conversation, error, usageText, send, stop } = useAgentConversation({
     siteId,
     active: open,
     autoTail,
@@ -129,7 +129,7 @@ export function AgentChatDrawer({
 
       <ChatTranscript
         items={items}
-        busy={conversation?.status === "running"}
+        busy={busy}
         siteId={siteId}
         slug={slug}
         onSiteChanged={onSiteChanged}

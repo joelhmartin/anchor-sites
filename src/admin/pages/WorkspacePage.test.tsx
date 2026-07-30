@@ -47,6 +47,9 @@ type FetchOverrides = {
   pages?: unknown[];
   git?: unknown;
   conversations?: unknown[];
+  /** GET /api/sites/s1/agent/conversations/:id → { conversation, messages } —
+   * only needed when `conversations` seeds an existing one to reconnect to. */
+  conversationDetail?: { conversation: unknown; messages: unknown[] };
 };
 
 function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
@@ -71,6 +74,9 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
     }
     if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
       return json({ queued: true, job_id: "job-1", conversation_id: "c1", user_message_id: "m-user-1" }, 202);
+    }
+    if (overrides.conversationDetail && url.startsWith("/api/sites/s1/agent/conversations/") && method === "GET") {
+      return json(overrides.conversationDetail);
     }
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
@@ -224,5 +230,115 @@ describe("WorkspacePage (Task B2)", () => {
     );
     await waitFor(() => expect(screen.getByText("Building it now…")).toBeTruthy());
     expect(textarea.value).toBe("");
+  });
+
+  // ── Fix round 1 (reviewer) ──
+
+  it("Finding 1 — reloads the page switcher (and keeps its value in sync) when a tailed tool call creates a page", async () => {
+    // A mutable, shared-by-reference pages list: starts with just Home, so
+    // the test can simulate the backend gaining a page mid-conversation by
+    // pushing to the SAME array the fetch mock reads from on every call —
+    // a later GET (triggered by the fix's reload) sees the new page; the
+    // initial GET (on mount) must not.
+    const pagesList: unknown[] = [HOME_PAGE];
+    mockWorkspaceFetch({ pages: pagesList });
+
+    renderAt("/sites/acme");
+    await waitFor(() => {
+      const select = screen.getByLabelText("Page") as HTMLSelectElement;
+      expect(select.value).toBe("pg-home");
+    });
+    expect(screen.queryByRole("option", { name: "About" })).toBeNull();
+
+    // The agent's tool call creates "About" — by the time its tool_result
+    // is tailed back to the client, the page genuinely exists server-side,
+    // so the (mocked) backend's pages list already reflects it.
+    pagesList.push(ABOUT_PAGE);
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "tool",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_1",
+              content: JSON.stringify({ page_id: "pg-about", revision_id: "r1" }),
+              is_error: false,
+            },
+          ],
+          created_at: "t2",
+        },
+      },
+    ];
+
+    const textarea = await screen.findByLabelText("Message");
+    fireEvent.change(textarea, { target: { value: "Add an about page" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // Before the fix, `onSiteChanged` was a no-op: the switcher would never
+    // refetch, "About" would never appear, and `previewPageId` (pinned to
+    // "pg-about" by the SAME event's `onChangeEvent`) would point at an
+    // option that doesn't exist.
+    await waitFor(() => expect(screen.getByRole("option", { name: "About" })).toBeTruthy());
+    const select = screen.getByLabelText("Page") as HTMLSelectElement;
+    expect(select.value).toBe("pg-about");
+  });
+
+  it("Finding 2 — reconnects to an already-running conversation on load: tail starts, busy shows, transcript hydrates", async () => {
+    mockWorkspaceFetch({
+      conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "running", token_usage: {} }],
+      conversationDetail: {
+        conversation: { id: "c9", site_id: "s1", title: "Old", status: "running", token_usage: {} },
+        messages: [
+          { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Build me a homepage" }], created_at: "t1" },
+          { id: "m2", conversation_id: "c9", role: "assistant", content: [{ type: "text", text: "Working on it…" }], created_at: "t2" },
+        ],
+      },
+    });
+
+    renderAt("/sites/acme");
+
+    // Hydrated from persisted history, not just the bare conversation row.
+    await waitFor(() => expect(screen.getByText("Working on it…")).toBeTruthy());
+    expect(screen.getByText("Build me a homepage")).toBeTruthy();
+
+    // Reconnected — the tail is live, cursored at the last hydrated message.
+    await waitFor(() =>
+      expect(streamAgentEvents.mock.calls.some(([path]) => path === "/api/sites/s1/agent/conversations/c9/events?after=m2")).toBe(
+        true,
+      ),
+    );
+
+    // "running" reported busy immediately, from the bootstrap fetch alone —
+    // no tail event needed to show it.
+    expect(screen.getByLabelText("assistant is typing")).toBeTruthy();
+  });
+
+  it("Finding 2 — reconnects to an erroring conversation on load: error state hydrates with the Resume affordance", async () => {
+    mockWorkspaceFetch({
+      conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "error", token_usage: {} }],
+      conversationDetail: {
+        conversation: { id: "c9", site_id: "s1", title: "Old", status: "error", token_usage: {} },
+        messages: [
+          {
+            id: "m1",
+            conversation_id: "c9",
+            role: "assistant",
+            content: [{ type: "text", text: "Anthropic credit balance too low — top up at console.anthropic.com" }],
+            created_at: "t1",
+          },
+        ],
+      },
+    });
+
+    renderAt("/sites/acme");
+
+    await waitFor(() =>
+      expect(screen.getByText("Anthropic credit balance too low — top up at console.anthropic.com")).toBeTruthy(),
+    );
+    expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   });
 });
