@@ -5,6 +5,11 @@ import { homeServices } from "./home-services.js";
 import { restaurant } from "./restaurant.js";
 import { lawFirm } from "./law-firm.js";
 import { fitnessStudio } from "./fitness-studio.js";
+import { creativePortfolio } from "./creative-portfolio.js";
+import { coaching } from "./coaching.js";
+import { nonprofit } from "./nonprofit.js";
+import { localRetail } from "./local-retail.js";
+import { smbLanding } from "./smb-landing.js";
 
 /**
  * The template library registry (Task C4). Each template is authored as one
@@ -19,5 +24,10 @@ export const allTemplates: TemplateSeed[] = [
   restaurant,
   lawFirm,
   fitnessStudio,
+  creativePortfolio,
+  coaching,
+  nonprofit,
+  localRetail,
+  smbLanding,
   starter,
 ];

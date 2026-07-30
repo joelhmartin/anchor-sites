@@ -375,7 +375,7 @@ export const lawFirm: TemplateSeed = {
               },
               {
                 icon: "heart",
-                title: "Marcus Whitfield",
+                title: "Julian Ferreira",
                 body: "Associate — Trusts, Estates & Elder Law. Focused on long-term care and Medicaid planning.",
               },
             ],
@@ -409,11 +409,11 @@ export const lawFirm: TemplateSeed = {
           },
         },
         {
-          id: "attorneys-bio-whitfield",
+          id: "attorneys-bio-ferreira",
           type: "rich-text",
           props: {
             html:
-              "<h2>Marcus Whitfield</h2><h3>Associate, Trusts, Estates &amp; Elder Law</h3><p>Marcus focuses on long-term care planning, Medicaid eligibility, and guardianship proceedings for aging clients and the families supporting them. He works closely with Desmond Voss on trust administration and probate matters, and is often the first attorney families speak with after a loved one's diagnosis changes their planning needs.</p><p>J.D., University of South Carolina School of Law. Admitted to the Georgia Bar. Marcus is a certified guardian ad litem for Chatham County Probate Court.</p>",
+              "<h2>Julian Ferreira</h2><h3>Associate, Trusts, Estates &amp; Elder Law</h3><p>Julian focuses on long-term care planning, Medicaid eligibility, and guardianship proceedings for aging clients and the families supporting them. He works closely with Desmond Voss on trust administration and probate matters, and is often the first attorney families speak with after a loved one's diagnosis changes their planning needs.</p><p>J.D., University of South Carolina School of Law. Admitted to the Georgia Bar. Julian is a certified guardian ad litem for Chatham County Probate Court.</p>",
             max_width: "medium",
           },
         },
@@ -553,13 +553,13 @@ export const lawFirm: TemplateSeed = {
               {
                 quote:
                   "Priya called me back the same night I was hurt and walked me through what to expect. She was straightforward the entire way, even when the news wasn't great.",
-                author: "Devon Okafor",
+                author: "Bianca Solis",
                 role: "Personal Injury Client",
                 avatar: "",
               },
               {
                 quote:
-                  "Marcus helped us navigate my mother's Medicaid application when we didn't know where to start. He explained every form in plain English.",
+                  "Julian helped us navigate my mother's Medicaid application when we didn't know where to start. He explained every form in plain English.",
                 author: "Sandra Kowalczyk",
                 role: "Elder Law Client",
                 avatar: "",
