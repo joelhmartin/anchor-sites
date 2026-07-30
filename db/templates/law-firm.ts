@@ -47,7 +47,7 @@ export const lawFirm: TemplateSeed = {
     "--theme-main": "#1f2d27",
     "--theme-on-main": "#f4ecd8",
     "--theme-accent": "#8a6a3a",
-    "--theme-on-accent": "#1f2d27",
+    "--theme-on-accent": "#ffffff",
     "--theme-surface": "#f4ecd8",
     "--theme-on-surface": "#24211b",
     "--theme-muted": "#e6dcc2",
@@ -386,7 +386,7 @@ export const lawFirm: TemplateSeed = {
           type: "rich-text",
           props: {
             html:
-              "<h2>Katherine Ashford</h2><h3>Founding Partner, Business &amp; Civil Litigation</h3><p>Katherine co-founded Ashford &amp; Voss in 1988 after five years with a Atlanta litigation firm, choosing to build a trial practice in the city she grew up in. She has led trial teams in business disputes ranging from single-location retailers to regional distributors, and is known locally for preparing every case as though it will see a jury.</p><p>J.D., University of Georgia School of Law. Admitted to the Georgia Bar and the U.S. District Court for the Southern District of Georgia. Katherine also chairs the firm's pro bono committee, which handles a rotating docket of veterans' benefits appeals.</p>",
+              "<h2>Katherine Ashford</h2><h3>Founding Partner, Business &amp; Civil Litigation</h3><p>Katherine co-founded Ashford &amp; Voss in 1988 after five years with an Atlanta litigation firm, choosing to build a trial practice in the city she grew up in. She has led trial teams in business disputes ranging from single-location retailers to regional distributors, and is known locally for preparing every case as though it will see a jury.</p><p>J.D., University of Georgia School of Law. Admitted to the Georgia Bar and the U.S. District Court for the Southern District of Georgia. Katherine also chairs the firm's pro bono committee, which handles a rotating docket of veterans' benefits appeals.</p>",
             max_width: "medium",
           },
         },

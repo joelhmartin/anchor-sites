@@ -27,7 +27,7 @@ export const homeServices: TemplateSeed = {
   brand_tokens: {
     "--theme-main": "#0b2545",
     "--theme-on-main": "#ffffff",
-    "--theme-accent": "#f2610c",
+    "--theme-accent": "#c24e0a",
     "--theme-on-accent": "#ffffff",
     "--theme-surface": "#ffffff",
     "--theme-on-surface": "#101828",
@@ -272,6 +272,41 @@ export const homeServices: TemplateSeed = {
           props: {
             html: "<h2>Maintenance plans</h2><p>The Ironclad Comfort Plan bundles a spring AC tune-up, a fall furnace inspection, and a whole-home plumbing check into one annual visit — members also get priority scheduling and 15% off parts on any repair.</p><h2>Licensed for every job</h2><p>Dave Kessler (Master Plumber), Maria Ontiveros (Lead HVAC Technician), and Tyrell Banks (Master Electrician) hold Ohio state licensing in their trades, and every job pulls the required permit before work starts.</p>",
             max_width: "medium",
+          },
+        },
+        {
+          id: "services-faq",
+          type: "faq-accordion",
+          props: {
+            heading: "Frequently Asked Questions",
+            items: [
+              {
+                question: "Do you offer financing for bigger jobs?",
+                answer:
+                  "Yes — approved customers can spread out the cost of larger repairs and installs (water heaters, furnaces, panel upgrades) through 0%-intro financing with no prepayment penalty. Ask your tech for details before the invoice, not after.",
+              },
+              {
+                question: "Are your technicians actually licensed?",
+                answer:
+                  "Every tech carries the license required for their trade. Dave Kessler is a Master Plumber, Maria Ontiveros is our Lead HVAC Technician, and Tyrell Banks is a Master Electrician — and we pull the required permit before work starts on every job, no exceptions.",
+              },
+              {
+                question: "What's covered under warranty?",
+                answer:
+                  "Labor on every repair is backed by our 1-year workmanship warranty — if it fails because of how we fixed it, we come back at no charge. Installed equipment also carries the manufacturer's warranty, which we register on your behalf.",
+              },
+              {
+                question: "Do you serve my neighborhood?",
+                answer:
+                  "We run daily routes across Columbus, Dublin, Westerville, Grove City, Reynoldsburg, and Hilliard, with average dispatch times under 40 minutes. See the Service Area page for the full map, or just call — we take one-off jobs just outside our regular routes too.",
+              },
+              {
+                question: "Is there an extra charge for emergency or after-hours calls?",
+                answer:
+                  "No hidden after-hours markup. Our 24/7 emergency line is answered by a licensed tech every day of the year at the same upfront pricing we quote during business hours.",
+              },
+            ],
+            multiple: false,
           },
         },
         {
