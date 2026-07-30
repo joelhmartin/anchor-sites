@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
 
@@ -90,6 +90,11 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
     if (overrides.conversationDetail && url.startsWith("/api/sites/s1/agent/conversations/") && method === "GET") {
       return json(overrides.conversationDetail);
     }
+    // Task B6 — the top-bar `UserMenu`'s "Sign out" calls the same
+    // `signOut()` helper AdminLayout's sidebar used to (session.ts).
+    if (url === "/api/auth/sign-out" && method === "POST") {
+      return json({});
+    }
     throw new Error(`unexpected fetch: ${method} ${url}`);
   });
   global.fetch = fetchMock as unknown as typeof fetch;
@@ -101,6 +106,9 @@ function renderAt(path: string) {
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/sites/:slug" element={<WorkspacePage />} />
+        {/* Task B6 — UserMenu's "Sign out" navigates here; a stub route
+            keeps that navigation from logging a router "no match" warning. */}
+        <Route path="/login" element={<div>login</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -113,12 +121,14 @@ describe("WorkspacePage (Task B2)", () => {
     setAdminToken("tok");
     eventScripts = {};
     streamAgentEvents.mockClear();
+    window.localStorage.removeItem("ac.workspace.chatWidth");
   });
 
   afterEach(() => {
     cleanup();
     clearAdminToken();
     global.fetch = realFetch;
+    window.localStorage.removeItem("ac.workspace.chatWidth");
     vi.restoreAllMocks();
   });
 
@@ -486,5 +496,78 @@ describe("WorkspacePage (Task B2)", () => {
       expect(screen.getByText("Anthropic credit balance too low — top up at console.anthropic.com")).toBeTruthy(),
     );
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  });
+
+  // ── Task B6 (2026-07-30 lovable-workspace SDD) — resizable chat rail ──
+
+  it("exposes the chat-rail splitter as an accessible separator defaulting to 400px, adjustable by arrow keys and persisted to localStorage", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const splitter = screen.getByRole("separator", { name: "Resize chat panel" });
+    expect(splitter.getAttribute("aria-orientation")).toBe("vertical");
+    expect(splitter.getAttribute("aria-valuemin")).toBe("300");
+    expect(splitter.getAttribute("aria-valuemax")).toBe("640");
+    expect(splitter.getAttribute("aria-valuenow")).toBe("400");
+
+    splitter.focus();
+    fireEvent.keyDown(splitter, { key: "ArrowRight" });
+    expect(splitter.getAttribute("aria-valuenow")).toBe("416");
+    expect(window.localStorage.getItem("ac.workspace.chatWidth")).toBe("416");
+
+    fireEvent.keyDown(splitter, { key: "ArrowLeft" });
+    fireEvent.keyDown(splitter, { key: "ArrowLeft" });
+    expect(splitter.getAttribute("aria-valuenow")).toBe("384");
+
+    // Double-click resets to the 400px default.
+    fireEvent.doubleClick(splitter);
+    expect(splitter.getAttribute("aria-valuenow")).toBe("400");
+    expect(window.localStorage.getItem("ac.workspace.chatWidth")).toBe("400");
+  });
+
+  it("clamps the splitter's keyboard adjustment to [300, 640] via Home/End", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const splitter = screen.getByRole("separator", { name: "Resize chat panel" });
+    fireEvent.keyDown(splitter, { key: "End" });
+    expect(splitter.getAttribute("aria-valuenow")).toBe("640");
+    fireEvent.keyDown(splitter, { key: "Home" });
+    expect(splitter.getAttribute("aria-valuenow")).toBe("300");
+  });
+
+  it("restores a previously chosen chat-rail width from localStorage on mount", async () => {
+    window.localStorage.setItem("ac.workspace.chatWidth", "520");
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    expect(screen.getByRole("separator", { name: "Resize chat panel" }).getAttribute("aria-valuenow")).toBe(
+      "520",
+    );
+  });
+
+  // ── Task B6 (screenshot-driven follow-up) — no more admin sidebar on this
+  // route; the account menu is the only sign-out affordance here now ──
+
+  it("opens the account menu with a Sites link and a Sign out action that calls signOut() and navigates to /login", async () => {
+    const fetchMock = mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    expect(screen.queryByRole("menu", { name: "Account" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+
+    const menu = screen.getByRole("menu", { name: "Account" });
+    const sitesLink = within(menu).getByRole("menuitem", { name: "Sites" });
+    expect(sitesLink.getAttribute("href")).toBe("/");
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Sign out" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/auth/sign-out")).toBe(true),
+    );
   });
 });

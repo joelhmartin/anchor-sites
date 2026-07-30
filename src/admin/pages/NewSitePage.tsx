@@ -71,15 +71,24 @@ function hashHue(input: string): number {
 }
 
 /** Cover image, or (every current template, until Phase C) a tasteful
- * branded placeholder block using the template's initials. */
+ * branded placeholder block using the template's initials. Task B6
+ * (2026-07-30 lovable-workspace SDD): a bigger cover area (h-40, was h-36)
+ * that scales up slightly on the card's hover (`group-hover:scale-*`, the
+ * card itself supplies `group`) — Lovable's own template-gallery hover. */
 function TemplateCover({ name, coverImageUrl }: { name: string; coverImageUrl?: string | null }) {
   if (coverImageUrl) {
-    return <img src={coverImageUrl} alt="" className="h-36 w-full object-cover" />;
+    return (
+      <img
+        src={coverImageUrl}
+        alt=""
+        className="h-40 w-full object-cover transition-transform duration-200 group-hover:scale-[1.04]"
+      />
+    );
   }
   const hue = hashHue(name);
   return (
     <div
-      className="flex h-36 w-full items-center justify-center text-2xl font-semibold text-white"
+      className="flex h-40 w-full items-center justify-center text-2xl font-semibold text-white transition-transform duration-200 group-hover:scale-[1.04]"
       style={{
         background: `linear-gradient(135deg, hsl(${hue} 70% 42%), hsl(${(hue + 40) % 360} 70% 32%))`,
       }}
@@ -221,44 +230,48 @@ export function NewSitePage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-12 px-6 py-10">
+    <div className="mx-auto flex max-w-4xl flex-col gap-16 px-6 py-16">
       <div className="flex flex-col items-center gap-6 text-center">
-        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">What do you want to build?</h1>
-        <p className="max-w-xl text-sm text-zinc-500">
+        <h1 className="text-[2.75rem] font-semibold leading-[1.05] tracking-tight text-zinc-900">
+          What do you want to build?
+        </h1>
+        <p className="max-w-xl text-[15px] text-zinc-500">
           Describe the site — the pages, the audience, the tone — and the agent builds it. Or pick a
           template below and make it yours.
         </p>
 
         <div className="w-full max-w-2xl">
-          <textarea
-            autoFocus
-            rows={4}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the site you want to build…"
-            className="w-full resize-none rounded-xl border border-zinc-300 bg-white p-4 text-base text-zinc-900 shadow-sm placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-          />
+          <div className="rounded-2xl border border-zinc-200 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.04),0_16px_40px_-12px_rgba(0,0,0,0.12)] transition focus-within:border-zinc-300">
+            <textarea
+              autoFocus
+              rows={4}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Describe the site you want to build…"
+              className="w-full resize-none bg-transparent text-base text-zinc-900 placeholder:text-zinc-400 focus-visible:outline-none"
+            />
 
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setDetailsOpen((o) => !o)}
-              className="text-sm font-medium text-zinc-500 hover:text-zinc-700"
-            >
-              {detailsOpen ? "Hide details" : "Details"}
-              <span className="ml-2 text-zinc-400">
-                {effectiveName || "Untitled site"} · {effectiveSlug || "—"}
-              </span>
-            </button>
-            <Button size="lg" onClick={handleSubmit} disabled={!canSubmit}>
-              {busy ? (
-                <span className="flex items-center gap-2">
-                  <Spinner /> {primaryLabel}
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setDetailsOpen((o) => !o)}
+                className="text-xs font-medium text-zinc-400 hover:text-zinc-600"
+              >
+                {detailsOpen ? "Hide details" : "Details"}
+                <span className="ml-2 text-zinc-300">
+                  {effectiveName || "Untitled site"} · {effectiveSlug || "—"}
                 </span>
-              ) : (
-                primaryLabel
-              )}
-            </Button>
+              </button>
+              <Button variant="dark" className="rounded-full px-5" onClick={handleSubmit} disabled={!canSubmit}>
+                {busy ? (
+                  <span className="flex items-center gap-2">
+                    <Spinner /> {primaryLabel}
+                  </span>
+                ) : (
+                  primaryLabel
+                )}
+              </Button>
+            </div>
           </div>
 
           {detailsOpen && (
@@ -304,8 +317,8 @@ export function NewSitePage() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-5">
-        <h2 className="text-lg font-semibold text-zinc-900">Or start from a template</h2>
+      <div className="flex flex-col gap-6">
+        <h2 className="text-lg font-medium text-zinc-900">Start from a template</h2>
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {templates.map((t) => (
             <button
@@ -313,17 +326,17 @@ export function NewSitePage() {
               type="button"
               onClick={() => pickTemplate(t)}
               className={cn(
-                "flex flex-col overflow-hidden rounded-lg border text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-                selectedTemplateId === t.id
-                  ? "border-indigo-500 ring-2 ring-indigo-200"
-                  : "border-zinc-200 bg-white",
+                "group flex flex-col overflow-hidden rounded-lg border bg-white text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-lg",
+                selectedTemplateId === t.id ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-200",
               )}
             >
-              <TemplateCover name={t.name} coverImageUrl={t.cover_image_url} />
+              <div className="overflow-hidden">
+                <TemplateCover name={t.name} coverImageUrl={t.cover_image_url} />
+              </div>
               <div className="flex flex-col gap-2 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-zinc-900">{t.name}</span>
-                  {t.category && <Badge tone="info">{t.category}</Badge>}
+                  {t.category && <Badge tone="neutral">{t.category}</Badge>}
                 </div>
                 {t.description && <p className="line-clamp-2 text-sm text-zinc-500">{t.description}</p>}
               </div>
@@ -334,11 +347,13 @@ export function NewSitePage() {
             type="button"
             onClick={pickBlank}
             className={cn(
-              "flex flex-col overflow-hidden rounded-lg border border-dashed text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-              blankSelected ? "border-indigo-500 ring-2 ring-indigo-200" : "border-zinc-300 bg-zinc-50",
+              "group flex flex-col overflow-hidden rounded-lg border border-dashed bg-zinc-50/60 text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-lg",
+              blankSelected ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-300",
             )}
           >
-            <div className="flex h-36 w-full items-center justify-center text-3xl font-light text-zinc-300">+</div>
+            <div className="flex h-40 w-full items-center justify-center text-3xl font-light text-zinc-300 transition-transform duration-200 group-hover:scale-[1.04]">
+              +
+            </div>
             <div className="flex flex-col gap-2 p-4">
               <span className="font-medium text-zinc-900">Start blank</span>
               <p className="text-sm text-zinc-500">An empty site you'll build page by page.</p>

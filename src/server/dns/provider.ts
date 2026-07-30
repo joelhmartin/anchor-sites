@@ -5,7 +5,7 @@
  * Mirrors the env-driven mode switch in `studio-auth.ts` / `ai/config.ts`.
  */
 
-export type DnsProviderId = "godaddy" | "cloud-dns" | "manual";
+export type DnsProviderId = "godaddy" | "kinsta" | "cloud-dns" | "manual";
 
 /** A single DNS record in absolute (FQDN) terms. `data` is the value
  *  (CNAME target, A address, TXT string). */

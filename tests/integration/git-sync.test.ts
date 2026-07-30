@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import express from "express";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { setupAgentDb } from "../helpers/agent-db.js";
 
 import {
@@ -183,12 +183,19 @@ d("GitHub sync E2E gate (Task 8)", () => {
   const db = setupAgentDb();
 
   // handleGitExport/handleGitImport gate on the REAL resolveGitMode()
-  // (process.env, not injectable) — snapshot + restore so this suite never
-  // leaks GITHUB_CONTENT_TOKEN/REPO/ADMIN_API_TOKEN into other test files
-  // sharing the same worker process.
-  const originalToken = process.env.GITHUB_CONTENT_TOKEN;
-  const originalRepo = process.env.GITHUB_CONTENT_REPO;
-  const originalAdminToken = process.env.ADMIN_API_TOKEN;
+  // (process.env, not injectable) — vi.stubEnv (not raw `process.env`
+  // writes) so vitest's `unstubEnvs` hygiene guarantees these reset before
+  // the next test anywhere in the suite, regardless of how long this file's
+  // own `afterAll` takes. A raw save/restore pattern here depended on
+  // `afterAll` finishing before the next file's hooks ran; when it didn't,
+  // the stale values leaked into whichever request was in flight next (root
+  // cause of the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("GITHUB_CONTENT_TOKEN", "e2e-content-token");
+    vi.stubEnv("GITHUB_CONTENT_REPO", "acme/content");
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
 
   let adminGitApp: express.Express;
   let pagesApp: express.Express;
@@ -198,10 +205,6 @@ d("GitHub sync E2E gate (Task 8)", () => {
 
   beforeAll(async () => {
     await db.runMigrations();
-
-    process.env.GITHUB_CONTENT_TOKEN = "e2e-content-token";
-    process.env.GITHUB_CONTENT_REPO = "acme/content";
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
 
     const pool = db.getPool();
 
@@ -268,12 +271,6 @@ d("GitHub sync E2E gate (Task 8)", () => {
 
   afterAll(async () => {
     await db.teardown();
-    if (originalToken === undefined) delete process.env.GITHUB_CONTENT_TOKEN;
-    else process.env.GITHUB_CONTENT_TOKEN = originalToken;
-    if (originalRepo === undefined) delete process.env.GITHUB_CONTENT_REPO;
-    else process.env.GITHUB_CONTENT_REPO = originalRepo;
-    if (originalAdminToken === undefined) delete process.env.ADMIN_API_TOKEN;
-    else process.env.ADMIN_API_TOKEN = originalAdminToken;
   });
 
   it("runs the full export -> external edit -> webhook -> import -> restore -> reject -> loop-prevention loop", async () => {

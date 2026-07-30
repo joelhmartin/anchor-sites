@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useApi } from "../lib/useApi.js";
 import { getAdminToken } from "../lib/adminToken.js";
 import { cn } from "../ui/cn.js";
+import { Spinner } from "../ui/spinner.js";
 import { createInlineEditor, type InlineEditorHandle } from "../lib/inline-editor.js";
 import { ImagePickerDialog } from "./ImagePickerDialog.js";
 import type { PickedImage } from "./image-sources.js";
@@ -46,7 +47,9 @@ export function SitePreviewPanel({
   previewNonce,
   agentBusy,
 }: SitePreviewPanelProps) {
-  const { data: pagesData } = useApi<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`);
+  const { data: pagesData, loading: pagesLoading } = useApi<{ pages: { id: string }[] }>(
+    `/api/sites/${siteId}/pages`,
+  );
   const firstPageId = pagesData?.pages[0]?.id ?? null;
   const effectivePreviewPageId = previewPageId ?? firstPageId;
 
@@ -214,15 +217,37 @@ export function SitePreviewPanel({
     ? `/api/sites/${siteId}/pages/${displayed.pageId}/preview?${baseQuery}${editQuery}`
     : null;
 
-  if (!previewSrc) return null;
+  // Task B6 (2026-07-30 lovable-workspace SDD, screenshot-driven follow-up):
+  // this used to `return null` while there was no page to preview yet — on
+  // the operator's screenshot that read as a small broken/empty box
+  // floating in the frame. An intentional skeleton (still and 100% the
+  // frame, `data-testid="draft-preview-panel"` so the wrapping frame in
+  // `WorkspacePage` always has something to size against) replaces that
+  // silent gap: "Loading preview…" while the pages fetch is in flight, or a
+  // plain-language nudge once it's settled with nothing to show.
+  if (!previewSrc) {
+    return (
+      <div
+        data-testid="draft-preview-panel"
+        className="flex h-full w-full flex-col items-center justify-center gap-2 bg-zinc-50/60 text-center"
+      >
+        {pagesLoading ? (
+          <>
+            <Spinner />
+            <p className="text-sm text-zinc-400">Loading preview…</p>
+          </>
+        ) : (
+          <p className="max-w-xs text-sm text-zinc-400">
+            This page is empty — ask the agent to fill it.
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div
-      data-testid="draft-preview-panel"
-      className={cn("flex w-full flex-col gap-2", edit ? "max-w-3xl" : "max-w-md")}
-    >
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Draft preview</p>
+    <div data-testid="draft-preview-panel" className="flex h-full w-full flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2">
         <div className="flex items-center gap-2">
           {edit && saveState === "saving" && <span className="text-xs text-zinc-500">Saving…</span>}
           {edit && saveState === "saved" && <span className="text-xs text-zinc-500">Saved · just now</span>}
@@ -236,27 +261,27 @@ export function SitePreviewPanel({
             <span className="text-xs text-amber-600">Save failed — will retry on next edit</span>
           )}
           {agentBusy && <span className="text-xs text-amber-600">{READONLY_BUSY_REASON}</span>}
-          <button
-            type="button"
-            aria-pressed={edit}
-            // Minor (b): only gate ENTERING edit mode on agentBusy — once
-            // already editing, the operator must still be able to click
-            // Edit to exit (which flushes + destroys the handle via
-            // `toggleEdit`'s `if (edit)` branch above). Disabling exit too
-            // trapped the operator in edit mode for the whole duration of
-            // an AI run.
-            disabled={agentBusy && !edit}
-            onClick={toggleEdit}
-            className={cn(
-              "rounded border px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
-              edit
-                ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                : "border-zinc-300 text-zinc-600 hover:bg-zinc-50",
-            )}
-          >
-            Edit
-          </button>
         </div>
+        <button
+          type="button"
+          aria-pressed={edit}
+          // Minor (b): only gate ENTERING edit mode on agentBusy — once
+          // already editing, the operator must still be able to click
+          // Edit to exit (which flushes + destroys the handle via
+          // `toggleEdit`'s `if (edit)` branch above). Disabling exit too
+          // trapped the operator in edit mode for the whole duration of
+          // an AI run.
+          disabled={agentBusy && !edit}
+          onClick={toggleEdit}
+          className={cn(
+            "rounded-md border px-2 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
+            edit
+              ? "border-zinc-900 bg-zinc-900 text-white"
+              : "border-zinc-200 text-zinc-600 hover:bg-zinc-50",
+          )}
+        >
+          Edit
+        </button>
       </div>
       <iframe
         ref={iframeRef}
@@ -272,7 +297,10 @@ export function SitePreviewPanel({
         // origin: scripts still run (blocks that need them keep working),
         // but they can't read/write anything under the admin's real origin.
         sandbox="allow-scripts"
-        className={cn("w-full rounded border border-zinc-200", edit ? "h-[70vh]" : "h-96")}
+        // Task B6: no border/rounding of its own — `WorkspacePage` wraps
+        // this whole panel in the rounded-xl, hairline-bordered, shadowed
+        // frame ("like a browser window on a desk"); this just fills it.
+        className="w-full flex-1 border-0"
       />
 
       <ImagePickerDialog

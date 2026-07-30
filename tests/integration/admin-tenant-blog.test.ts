@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express from "express";
 import { Pool } from "pg";
@@ -38,7 +38,6 @@ d("admin tenant blog API (P8-T8.13)", () => {
       log: () => undefined,
     });
     pool = new Pool({ connectionString: TEST_DB_URL });
-    process.env.ADMIN_API_TOKEN = TOKEN;
     const res = await pool.query<{ id: string }>(
       `INSERT INTO sites (slug, display_name) VALUES ('atblog', 'AT Blog') RETURNING id`,
     );
@@ -46,9 +45,16 @@ d("admin tenant blog API (P8-T8.13)", () => {
     app = buildApp(pool);
   }, 60_000);
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs`
+  // hygiene then guarantees this resets before the next test runs anywhere
+  // in the suite, regardless of how long this file's own `afterAll` takes
+  // (see .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", TOKEN);
+  });
+
   afterAll(async () => {
     await pool.query(`DELETE FROM sites WHERE slug = 'atblog'`).catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
     await pool.end().catch(() => undefined);
   });
 

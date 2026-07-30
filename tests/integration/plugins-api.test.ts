@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express from "express";
 import { Pool } from "pg";
@@ -29,6 +29,15 @@ d("admin plugins API (P7.5-T7.5.6)", () => {
   let siteId: string;
   let app: express.Express;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", TOKEN);
+  });
+
   beforeAll(async () => {
     await migrate({
       databaseUrl: TEST_DB_URL!,
@@ -39,7 +48,6 @@ d("admin plugins API (P7.5-T7.5.6)", () => {
       log: () => undefined,
     });
     pool = new Pool({ connectionString: TEST_DB_URL });
-    process.env.ADMIN_API_TOKEN = TOKEN;
 
     __resetPluginsForTests();
     registerPlugin({
@@ -61,7 +69,6 @@ d("admin plugins API (P7.5-T7.5.6)", () => {
 
   afterAll(async () => {
     await pool.query(`DELETE FROM sites WHERE slug = 'plgapi'`).catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
     __resetPluginsForTests();
     await pool.end().catch(() => undefined);
   });

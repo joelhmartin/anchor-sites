@@ -4,9 +4,10 @@ import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
 import migrate from "node-pg-migrate";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { seed } from "../../db/seed.js";
 import { adminSitesRouter } from "../../src/server/routes/admin-sites.js";
+import { ensureSystemTemplatesSite, SYSTEM_TEMPLATES_SITE_SLUG } from "../../src/server/templates/system-site.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -14,6 +15,15 @@ const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
 const ADMIN_TOKEN = "test-admin-token-sites";
+
+// vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+// then guarantees this resets before the next test anywhere in the suite,
+// regardless of how long any describe's own `afterAll` takes (root cause of
+// the cross-file requireAdmin flake — see
+// .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+beforeEach(() => {
+  vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+});
 
 const runMigrate = (direction: "up" | "down", count: number) =>
   migrate({
@@ -40,13 +50,11 @@ d("admin sites API — GET /api/sites (P4-T4.2)", () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
     await seed(pool);
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401 without admin token", async () => {
@@ -79,6 +87,16 @@ d("admin sites API — GET /api/sites (P4-T4.2)", () => {
     const sorted = [...times].sort((a, b) => b - a);
     expect(times).toEqual(sorted);
   });
+
+  // Task C4 fix round 1: the reserved system site that owns template cover
+  // media exists in `sites` (it needs to, for the FK) but must never show up
+  // where an operator manages real sites.
+  it("excludes the reserved system-templates site from the list", async () => {
+    await ensureSystemTemplatesSite(pool);
+    const r = await request(app).get("/api/sites").set("X-Admin-Token", ADMIN_TOKEN);
+    const slugs = r.body.sites.map((s: { slug: string }) => s.slug);
+    expect(slugs).not.toContain(SYSTEM_TEMPLATES_SITE_SLUG);
+  });
 });
 
 d("admin sites API — detail + pages (P4-T4.3)", () => {
@@ -93,13 +111,11 @@ d("admin sites API — detail + pages (P4-T4.3)", () => {
     muldoonId = (
       await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
     ).rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("GET /api/sites/:id 401 without token", async () => {
@@ -166,14 +182,12 @@ d("admin sites API — media list (P4-T4.4)", () => {
         [muldoonId, `originals/${muldoonId}/m${i}-${Date.now()}.png`, `alt ${i}`, i === 0 ? "ready" : "pending"],
       );
     }
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
     await pool.query(`DELETE FROM media_assets WHERE site_id = $1`, [muldoonId]).catch(() => {});
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401 without token", async () => {
@@ -221,7 +235,6 @@ d("admin sites API — POST /api/sites create (P4-T4.5)", () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
     await seed(pool);
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
@@ -230,7 +243,6 @@ d("admin sites API — POST /api/sites create (P4-T4.5)", () => {
       await pool.query(`DELETE FROM sites WHERE slug = $1`, [slug]).catch(() => {});
     }
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401 without token", async () => {
@@ -310,14 +322,12 @@ d("admin sites API — PATCH site + create page (P4-T4.6)", () => {
       [slug],
     );
     siteId = ins.rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
     await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => {});
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("PATCH 401 without token", async () => {

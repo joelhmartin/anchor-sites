@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
@@ -29,6 +29,15 @@ d("page-level templates API (integration, P7-T7.9)", () => {
   let pageTemplateId: string;
   let siteTemplateId: string;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
@@ -55,7 +64,6 @@ d("page-level templates API (integration, P7-T7.9)", () => {
     const siteTpl = await createTemplate({ slug: "pgtpl-site", name: "A Site", kind: "site", pages: [] }, { pool });
     siteTemplateId = siteTpl.template.id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const a = express();
     a.use(express.json());
     a.use("/api", templatesRouter({ pool, saveRateLimit: { max: 200, windowMs: 60_000 } }));
@@ -66,7 +74,6 @@ d("page-level templates API (integration, P7-T7.9)", () => {
     await pool.query(`DELETE FROM templates WHERE slug LIKE 'pgtpl-%'`).catch(() => undefined);
     await pool.query(`DELETE FROM pages WHERE site_id = $1 AND slug IN ('promo','promo-2','from-pgtpl')`, [muldoonSiteId]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   // ---- save a page as a template ----------------------------------------

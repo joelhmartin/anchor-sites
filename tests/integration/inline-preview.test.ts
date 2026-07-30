@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { setupAgentDb } from "../helpers/agent-db.js";
@@ -35,9 +35,17 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     { id: "r1", type: "rich-text", props: { html: "<p>Body copy</p>" } },
   ];
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await db.runMigrations();
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const a = express();
     a.use(express.json());
     a.use("/api", adminPagesRouter({ pool: db.getPool() }));
@@ -46,7 +54,6 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
 
   afterAll(async () => {
     await db.teardown();
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("?edit=1&bridge=<token> renders block markers + boot script and swaps CSP to a nonce", async () => {

@@ -24,12 +24,17 @@ import {
 } from "./git-export.js";
 import { handleGitImport } from "./git-import.js";
 import type { GitImportInput } from "../routes/git-webhook.js";
+import {
+  handleSiteProvision,
+  type SiteProvisionInput,
+} from "./site-provision.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
 export const AGENT_TURN = "ai.agent-turn";
 export const GIT_EXPORT = "git.export";
 export const GIT_IMPORT = "git.import";
+export const SITE_PROVISION = "site.provision";
 export { CRM_SYNC_JOB };
 
 /**
@@ -237,6 +242,21 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.createQueue(GIT_IMPORT, { policy: "stately" });
   await boss.work<GitImportInput>(GIT_IMPORT, async ([job]) => {
     await handleGitImport(job.data, { pool: defaultPool });
+  });
+
+  // Task D1 (Lovable-workspace): auto-provision a site's canonical
+  // *.sites.anchorcorps.com hostname (Cloud Run mapping + DNS) right after
+  // creation, so the preview URL comes up without an operator visiting the
+  // Domains tab. `stately` + `singletonKey: domainId` (set by the enqueue
+  // call site in sites/create-site.ts) — same rationale as AGENT_TURN/
+  // GIT_EXPORT/GIT_IMPORT above: `standard` policy makes `singletonKey` a
+  // no-op, and a domain row only ever wants one provision attempt
+  // queued/active at a time (a retry after a Webmaster Central fix, or the
+  // manual "Provision" button, should collapse into whichever attempt is
+  // already in flight rather than queuing a second one).
+  await boss.createQueue(SITE_PROVISION, { policy: "stately" });
+  await boss.work<SiteProvisionInput>(SITE_PROVISION, async ([job]) => {
+    await handleSiteProvision(job.data, { pool: defaultPool });
   });
 }
 

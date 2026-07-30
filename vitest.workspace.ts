@@ -47,7 +47,7 @@ export default defineWorkspace([
       ...shared,
       name: "node",
       environment: "node",
-      include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
+      include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}", "db/templates/**/*.test.{ts,tsx}"],
       exclude: [...configDefaults.exclude, ...JSDOM_FILES],
     },
   },

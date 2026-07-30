@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Github, Monitor, RefreshCw, Smartphone } from "lucide-react";
 import { apiFetch } from "../lib/apiFetch.js";
 import { useApi } from "../lib/useApi.js";
 import type { AgentChangeEvent, AiConversation } from "../lib/agent-api.js";
@@ -9,6 +16,8 @@ import { ChatTranscript } from "../components/agent-chat/ChatTranscript.js";
 import { Composer } from "../components/agent-chat/Composer.js";
 import { EmptyState } from "../components/agent-chat/EmptyState.js";
 import { SitePreviewPanel } from "../components/SitePreviewPanel.js";
+import { StudioWordmark } from "../components/StudioWordmark.js";
+import { UserMenu } from "../components/UserMenu.js";
 import { Button } from "../ui/button.js";
 import { Card, CardContent } from "../ui/card.js";
 import { Spinner } from "../ui/spinner.js";
@@ -23,17 +32,57 @@ type GitStatus = { configured: boolean; repo: string | null; state: SiteGitState
 
 type Viewport = "desktop" | "mobile";
 
+// Task B6 (2026-07-30 lovable-workspace SDD) — resizable chat rail (mid-task
+// operator addition): a hand-rolled pointer-capture drag on a splitter
+// between the chat rail and the preview column, persisted so a chosen width
+// survives reloads. No new dependency — plain pointerdown/move/up, the same
+// shape as a native `<input type="range">`'s drag but for a pane width.
+const CHAT_WIDTH_STORAGE_KEY = "ac.workspace.chatWidth";
+const DEFAULT_CHAT_WIDTH = 400;
+const MIN_CHAT_WIDTH = 300;
+const MAX_CHAT_WIDTH = 640;
+const CHAT_WIDTH_STEP = 16;
+
+function clampChatWidth(width: number): number {
+  return Math.min(MAX_CHAT_WIDTH, Math.max(MIN_CHAT_WIDTH, width));
+}
+
+function readStoredChatWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(CHAT_WIDTH_STORAGE_KEY);
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) ? clampChatWidth(parsed) : DEFAULT_CHAT_WIDTH;
+  } catch {
+    return DEFAULT_CHAT_WIDTH;
+  }
+}
+
+function persistChatWidth(width: number): void {
+  try {
+    window.localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    // Private-browsing/storage-disabled shouldn't break resizing — the width
+    // just won't survive a reload.
+  }
+}
+
 /**
- * Lovable-style workspace shell (Task B2, 2026-07-30 lovable-workspace SDD):
- * "rip off Lovable pretty much exactly, but for websites" — a full-screen,
- * two-pane layout with the Studio chat on the left and the live site
- * preview on the right. This is now the primary landing surface for a site
- * (`/sites/:slug`); the tab-based management shell (pages/blog/media/
- * settings/…) moved to `/sites/:slug/manage`.
+ * Lovable-style workspace shell (Task B2, 2026-07-30 lovable-workspace SDD;
+ * Task B6 gave it its Lovable-grade visual pass): "rip off Lovable pretty
+ * much exactly, but for websites" — a full-screen, two-pane layout with the
+ * Studio chat on the left and the live site preview on the right. This is
+ * now the primary landing surface for a site (`/sites/:slug`); the tab-based
+ * management shell (pages/blog/media/settings/…) lives at `/sites/:slug/manage`.
  *
  * The URL routes by slug, but the detail/pages/git endpoints key off the
  * site UUID, so slug → id is resolved from the already-cheap `GET
  * /api/sites` list first, mirroring `SiteDetailPage`.
+ *
+ * Task B6 screenshot-driven follow-up: this route is mounted as a SIBLING of
+ * `<AdminLayout>` in `AdminApp.tsx`, not a child — it owns the full viewport
+ * itself (`h-screen`), with no admin sidebar. The wordmark/nav/sign-out that
+ * sidebar used to provide now live in this page's own chrome (`StudioWordmark`
+ * atop the chat rail, `UserMenu` at the end of the top bar).
  */
 export function WorkspacePage() {
   const { slug } = useParams();
@@ -41,14 +90,14 @@ export function WorkspacePage() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center gap-2 p-8 text-sm text-zinc-500">
+      <div className="flex h-screen items-center gap-2 bg-[#F7F7F8] p-8 text-sm text-zinc-500">
         <Spinner /> Loading site…
       </div>
     );
   }
   if (error) {
     return (
-      <div className="p-8">
+      <div className="h-screen bg-[#F7F7F8] p-8">
         <Card>
           <CardContent className="pt-5 text-sm text-red-600">Couldn't load sites: {error}</CardContent>
         </Card>
@@ -59,7 +108,7 @@ export function WorkspacePage() {
   const row = data?.sites.find((s) => s.slug === slug);
   if (!row) {
     return (
-      <div className="p-8">
+      <div className="h-screen bg-[#F7F7F8] p-8">
         <Card>
           <CardContent className="flex flex-col items-start gap-3 pt-5">
             <p className="text-sm text-zinc-600">No site found for "{slug}".</p>
@@ -94,6 +143,63 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const [previewNonce, setPreviewNonce] = useState(0);
   const [agentBusy, setAgentBusy] = useState(false);
   const [viewport, setViewport] = useState<Viewport>("desktop");
+
+  // Task B6 — resizable chat rail.
+  const [chatWidth, setChatWidth] = useState<number>(() => readStoredChatWidth());
+  const chatWidthRef = useRef(chatWidth);
+  chatWidthRef.current = chatWidth;
+  const draggingRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  function handleSplitterPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    draggingRef.current = true;
+    if (typeof e.currentTarget.setPointerCapture === "function") {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Older browsers/test environments without pointer capture — the
+        // drag still works via the plain pointermove handler below.
+      }
+    }
+    document.body.style.userSelect = "none";
+  }
+
+  function handleSplitterPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!draggingRef.current || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setChatWidth(clampChatWidth(e.clientX - rect.left));
+  }
+
+  function endSplitterDrag(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    if (typeof e.currentTarget.releasePointerCapture === "function") {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // noop
+      }
+    }
+    document.body.style.userSelect = "";
+    persistChatWidth(chatWidthRef.current);
+  }
+
+  function handleSplitterDoubleClick() {
+    setChatWidth(DEFAULT_CHAT_WIDTH);
+    persistChatWidth(DEFAULT_CHAT_WIDTH);
+  }
+
+  function handleSplitterKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    let next: number | null = null;
+    if (e.key === "ArrowLeft") next = clampChatWidth(chatWidth - CHAT_WIDTH_STEP);
+    else if (e.key === "ArrowRight") next = clampChatWidth(chatWidth + CHAT_WIDTH_STEP);
+    else if (e.key === "Home") next = MIN_CHAT_WIDTH;
+    else if (e.key === "End") next = MAX_CHAT_WIDTH;
+    if (next === null) return;
+    e.preventDefault();
+    setChatWidth(next);
+    persistChatWidth(next);
+  }
 
   // Task B3 — one-click publish. `publishOpen` drives the confirmation
   // popover anchored under the top-bar button; `publishResult` swaps that
@@ -274,14 +380,21 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const showEmptyState = items.length === 0;
 
   return (
-    <div className="grid h-full grid-cols-[380px_1fr] bg-zinc-50">
-      <div ref={chatPanelRef} className="flex h-full min-w-0 flex-col border-r border-zinc-200 bg-white">
-        <div className="flex items-center justify-between border-b border-zinc-200 p-4">
-          <h2 className="text-sm font-semibold text-zinc-900">Studio chat</h2>
+    <div
+      ref={containerRef}
+      className="grid h-screen bg-[#F7F7F8]"
+      style={{ gridTemplateColumns: `${chatWidth}px 6px 1fr` }}
+    >
+      <div ref={chatPanelRef} className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white">
+        {/* Task B6 — the wordmark replaces AdminLayout's sidebar (now
+            skipped entirely for this route) as the way back to the sites
+            list, and takes the place of the old "Studio chat" label. */}
+        <div className="shrink-0 px-4 pb-2 pt-4">
+          <StudioWordmark className="text-sm" />
         </div>
 
         {aiError && (
-          <p className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+          <p className="shrink-0 border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
             The site was created, but the initial AI build couldn't be started automatically. Send a
             message below to kick it off.
           </p>
@@ -299,84 +412,108 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
           onScroll={handleTranscriptScroll}
         />
 
-        {error && <p className="px-4 pb-2 text-xs text-red-600">{error}</p>}
+        {error && <p className="shrink-0 px-4 pb-2 text-xs text-red-600">{error}</p>}
 
-        <Composer
-          draft={draft}
-          onDraftChange={setDraft}
-          onSend={() => send()}
-          onStop={stop}
-          sending={sending}
-          resumeVisible={conversation?.status === "error"}
-          onResume={() => send("continue")}
-          usageText={usageText}
-        />
+        <div className="shrink-0">
+          <Composer
+            draft={draft}
+            onDraftChange={setDraft}
+            onSend={() => send()}
+            onStop={stop}
+            sending={sending}
+            resumeVisible={conversation?.status === "error"}
+            onResume={() => send("continue")}
+            usageText={usageText}
+          />
+        </div>
       </div>
 
-      <div className="flex h-full min-w-0 flex-col">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <h1 className="truncate text-sm font-semibold text-zinc-900">{site?.display_name ?? slug}</h1>
-          </div>
+      {/* Task B6 — resizable-rail splitter. A thin hit area (the visible
+          hairline is a 1px bar centered in it) rather than a bare 1px
+          border, so it's actually grabbable. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize chat panel"
+        aria-valuenow={chatWidth}
+        aria-valuemin={MIN_CHAT_WIDTH}
+        aria-valuemax={MAX_CHAT_WIDTH}
+        tabIndex={0}
+        onPointerDown={handleSplitterPointerDown}
+        onPointerMove={handleSplitterPointerMove}
+        onPointerUp={endSplitterDrag}
+        onPointerCancel={endSplitterDrag}
+        onDoubleClick={handleSplitterDoubleClick}
+        onKeyDown={handleSplitterKeyDown}
+        className="group relative flex h-full w-full cursor-col-resize items-stretch justify-center focus-visible:outline-none"
+      >
+        <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-zinc-200 transition-colors group-hover:bg-zinc-300 group-focus-visible:bg-zinc-400" />
+      </div>
 
-          <div className="flex items-center gap-2">
-            {pagesError ? (
-              // Minor finding (reviewer): mirror the same red error
-              // treatment the sites list uses instead of the switcher just
-              // silently disappearing.
-              <span className="text-xs text-red-600">Couldn't load pages: {pagesError}</span>
-            ) : (
-              pages.length > 0 && (
-                <select
-                  aria-label="Page"
-                  value={previewPageId ?? ""}
-                  onChange={(e) => setPreviewPageId(e.target.value)}
-                  className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs"
-                >
-                  {pages.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title}
-                    </option>
-                  ))}
-                </select>
-              )
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        <div className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4">
+          <h1 className="truncate text-sm font-medium text-zinc-900">{site?.display_name ?? slug}</h1>
+
+          <div className="flex items-center gap-1.5">
+            {gitUrl && (
+              <a
+                href={gitUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub"
+                title="View repository"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              >
+                <Github className="h-4 w-4" />
+              </a>
             )}
 
-            <div role="group" aria-label="Viewport" className="flex overflow-hidden rounded-md border border-zinc-300">
+            <div role="group" aria-label="Viewport" className="flex items-center gap-0.5 rounded-md bg-zinc-100 p-0.5">
               <button
                 type="button"
+                aria-label="Desktop"
                 aria-pressed={viewport === "desktop"}
                 onClick={() => setViewport("desktop")}
                 className={cn(
-                  "px-2.5 py-1 text-xs font-medium",
-                  viewport === "desktop" ? "bg-indigo-50 text-indigo-700" : "bg-white text-zinc-600 hover:bg-zinc-50",
+                  "flex h-7 w-7 items-center justify-center rounded",
+                  viewport === "desktop" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700",
                 )}
               >
-                Desktop
+                <Monitor className="h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
+                aria-label="Mobile"
                 aria-pressed={viewport === "mobile"}
                 onClick={() => setViewport("mobile")}
                 className={cn(
-                  "border-l border-zinc-300 px-2.5 py-1 text-xs font-medium",
-                  viewport === "mobile" ? "bg-indigo-50 text-indigo-700" : "bg-white text-zinc-600 hover:bg-zinc-50",
+                  "flex h-7 w-7 items-center justify-center rounded",
+                  viewport === "mobile" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700",
                 )}
               >
-                Mobile
+                <Smartphone className="h-3.5 w-3.5" />
               </button>
             </div>
+
+            <Link
+              to={`/sites/${slug}/manage`}
+              className="rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              Manage
+            </Link>
 
             {/* Task B3 — one-click publish. `publishOpen` anchors a small
                 confirmation popover under the button; disabled while the
                 agent is running (a mid-build publish would ship a half-
                 finished site), while the publish request itself is in
                 flight, or when there's nothing to publish (Fix round 1,
-                Critical finding 1). */}
+                Critical finding 1). Task B6: solid black pill, not the
+                app's default indigo — no blue buttons in this shell. */}
             <div className="relative">
               <Button
                 ref={publishButtonRef}
                 type="button"
+                variant="dark"
                 size="sm"
                 disabled={agentBusy || publishing || draftPageCount === 0}
                 title={
@@ -391,6 +528,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                   setPublishResult(null);
                   setPublishOpen((open) => !open);
                 }}
+                className="rounded-full px-4 shadow-sm transition-transform hover:-translate-y-px disabled:translate-y-0 disabled:shadow-none"
               >
                 {publishing ? "Publishing…" : "Publish"}
               </Button>
@@ -400,7 +538,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                   ref={publishPopoverRef}
                   role="dialog"
                   aria-label="Publish site"
-                  className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-zinc-200 bg-white p-3 shadow-lg"
+                  className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-4 shadow-lg"
                 >
                   {publishResult ? (
                     <div className="flex flex-col gap-2">
@@ -413,7 +551,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                           href={publishResult.live_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                          className="text-xs font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600"
                         >
                           {publishResult.live_url} ↗
                         </a>
@@ -452,6 +590,8 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                           ref={publishConfirmRef}
                           type="button"
                           size="sm"
+                          variant="dark"
+                          className="rounded-full px-4"
                           disabled={publishing || agentBusy || draftPageCount === 0}
                           onClick={handlePublish}
                         >
@@ -464,37 +604,61 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
               )}
             </div>
 
-            {gitUrl && (
-              <a
-                href={gitUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-              >
-                GitHub ↗
-              </a>
-            )}
-
-            <Link
-              to={`/sites/${slug}/manage`}
-              className="text-xs font-medium text-zinc-600 hover:text-zinc-900"
-            >
-              Manage
-            </Link>
+            <UserMenu />
           </div>
         </div>
 
-        <div className="flex flex-1 items-start justify-center overflow-auto bg-zinc-100 p-6">
+        {/* Small control strip above the preview frame — current page name
+            (still the switcher; a quiet bordered pill now, not a bare
+            native `<select>`) and a refresh affordance. The Edit toggle
+            lives on the frame's own top edge (SitePreviewPanel), styled to
+            read as a continuation of this same strip. */}
+        <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-0 pt-4">
+          {pagesError ? (
+            // Minor finding (reviewer): mirror the same red error
+            // treatment the sites list uses instead of the switcher just
+            // silently disappearing.
+            <span className="text-xs text-red-600">Couldn't load pages: {pagesError}</span>
+          ) : (
+            pages.length > 0 && (
+              <select
+                aria-label="Page"
+                value={previewPageId ?? ""}
+                onChange={(e) => setPreviewPageId(e.target.value)}
+                className="h-8 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300"
+              >
+                {pages.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.title}
+                  </option>
+                ))}
+              </select>
+            )
+          )}
+
+          <button
+            type="button"
+            aria-label="Refresh preview"
+            onClick={() => setPreviewNonce((n) => n + 1)}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="flex flex-1 justify-center overflow-auto p-5">
           <div
             data-testid="workspace-preview-frame"
-            className={cn(viewport === "mobile" ? "w-[390px]" : "w-full")}
+            className={cn("flex flex-col", viewport === "mobile" ? "w-[390px]" : "w-full")}
           >
-            <SitePreviewPanel
-              siteId={siteId}
-              previewPageId={previewPageId}
-              previewNonce={previewNonce}
-              agentBusy={agentBusy}
-            />
+            <div className="flex h-full flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_28px_-8px_rgba(0,0,0,0.12)]">
+              <SitePreviewPanel
+                siteId={siteId}
+                previewPageId={previewPageId}
+                previewNonce={previewNonce}
+                agentBusy={agentBusy}
+              />
+            </div>
           </div>
         </div>
       </div>

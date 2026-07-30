@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { setupAgentDb } from "../helpers/agent-db.js";
 import { adminGitRouter } from "../../src/server/routes/admin-git.js";
@@ -44,9 +44,17 @@ d("admin git endpoints (integration, GitHub sync Task 7)", () => {
   // Server-wide git mode "api" — token + repo configured.
   let appConfigured: express.Express;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long any file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await db.runMigrations();
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     enqueueSpy = vi.fn(async () => "job-id-1");
     app = buildApp(db.getPool(), enqueueSpy, {});
     appConfigured = buildApp(db.getPool(), enqueueSpy, {

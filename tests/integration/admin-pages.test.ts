@@ -16,6 +16,15 @@ const d = TEST_DB_URL ? describe : describe.skip;
 
 const ADMIN_TOKEN = "test-admin-token";
 
+// vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+// then guarantees this resets before the next test anywhere in the suite,
+// regardless of how long any describe's own `afterAll` takes (root cause of
+// the cross-file requireAdmin flake — see
+// .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+beforeEach(() => {
+  vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+});
+
 const runMigrate = (direction: "up" | "down", count: number) =>
   migrate({
     databaseUrl: TEST_DB_URL!,
@@ -72,7 +81,6 @@ d("admin pages API (integration)", () => {
     muldoonSiteId = r.rows[0].id;
     muldoonPageId = r.rows[0].page_id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
@@ -85,7 +93,6 @@ d("admin pages API (integration)", () => {
       .query(`UPDATE pages SET brand_tokens_override = NULL WHERE id = $1`, [muldoonPageId])
       .catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   beforeEach(async () => {
@@ -510,7 +517,6 @@ d("admin pages — bulk publish (Task B3)", () => {
     siteId = r.rows[0].id;
     homePageId = r.rows[0].page_id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
@@ -520,7 +526,6 @@ d("admin pages — bulk publish (Task B3)", () => {
     ]).catch(() => undefined);
     await pool.query(`UPDATE pages SET status = 'published' WHERE id = $1`, [homePageId]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   beforeEach(async () => {
@@ -681,7 +686,6 @@ d("admin pages rate limiting (integration)", () => {
     siteId = r.rows[0].id;
     pageId = r.rows[0].page_id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const a = express();
     a.use(express.json({ limit: "1mb" }));
     a.use(
@@ -697,7 +701,6 @@ d("admin pages rate limiting (integration)", () => {
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("returns 429 after exceeding the configured budget", async () => {
@@ -737,7 +740,6 @@ d("admin pages — git.export publish trigger (T4)", () => {
     siteId = r.rows[0].id;
     pageId = r.rows[0].page_id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     // Enabled ("api") mode — the route's resolveGitMode() check reads real
     // env, so these tests need it non-disabled to reach the getGitState gate.
     process.env.GITHUB_CONTENT_TOKEN = "tok123";
@@ -748,7 +750,6 @@ d("admin pages — git.export publish trigger (T4)", () => {
     await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]).catch(() => undefined);
     await pool.query(`UPDATE pages SET status = 'draft' WHERE id = $1`, [pageId]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
     if (originalToken === undefined) delete process.env.GITHUB_CONTENT_TOKEN;
     else process.env.GITHUB_CONTENT_TOKEN = originalToken;
     if (originalRepo === undefined) delete process.env.GITHUB_CONTENT_REPO;

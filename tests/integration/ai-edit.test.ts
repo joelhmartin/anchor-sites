@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
@@ -37,7 +37,17 @@ d("AI-edit endpoint (integration, dry-run)", () => {
   // A dedicated throwaway page for the apply test, so persisting AI edits never
   // pollutes the seeded muldoon home that page-render.test.ts asserts on.
   let applyPageId: string;
-  const prevKey = process.env.ANTHROPIC_API_KEY;
+
+  // vi.stubEnv, not raw `process.env` writes — vitest's `unstubEnvs` hygiene
+  // then guarantees both reset before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+    // Force the AI service into deterministic dry-run (no spend, no network).
+    vi.stubEnv("ANTHROPIC_API_KEY", "dry-run");
+  });
 
   beforeAll(async () => {
     await migrate({
@@ -65,9 +75,6 @@ d("AI-edit endpoint (integration, dry-run)", () => {
     );
     applyPageId = ap.rows[0].id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
-    // Force the AI service into deterministic dry-run (no spend, no network).
-    process.env.ANTHROPIC_API_KEY = "dry-run";
     app = buildApp(pool);
   }, 60_000);
 
@@ -75,9 +82,6 @@ d("AI-edit endpoint (integration, dry-run)", () => {
     // Drop the throwaway page (CASCADE removes its revisions) — zero footprint.
     await pool.query(`DELETE FROM pages WHERE id = $1`, [applyPageId]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
-    if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = prevKey;
   });
 
   it("401 without an admin token", async () => {

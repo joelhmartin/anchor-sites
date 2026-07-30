@@ -12,6 +12,12 @@ const buttonVariants = cva(
         outline: "border border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-50",
         ghost: "bg-transparent text-zinc-700 hover:bg-zinc-100",
         danger: "bg-red-600 text-white hover:bg-red-700",
+        // Task B6 (2026-07-30 lovable-workspace SDD) — Lovable-grade visual
+        // pass: the workspace shell's primary action (Publish) is a solid
+        // black pill, not the app's default indigo — this variant is that
+        // "no blue buttons in the shell" affordance, reusable anywhere else
+        // that needs the same high-contrast neutral treatment.
+        dark: "bg-zinc-900 text-white hover:bg-zinc-800",
       },
       size: {
         sm: "h-8 px-3",

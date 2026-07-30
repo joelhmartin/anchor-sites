@@ -14,7 +14,7 @@
  * opinionated blocks consume them inside the package only.
  */
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 export { blockManifest, registerAll } from "./blocks/manifest.js";
 export type { BlockManifestEntry, RegisterBlockFn } from "./blocks/manifest.js";
