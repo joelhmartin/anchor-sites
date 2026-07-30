@@ -52,7 +52,7 @@ const saveAsTemplatePayload = z.object({
   /** Gallery grouping label (e.g. "Basic"). Optional — defaults to null. */
   category: z.string().max(100).nullable().optional(),
   /** Gallery card thumbnail URL. Optional — defaults to null. */
-  cover_image_url: z.string().max(2000).nullable().optional(),
+  cover_image_url: z.string().url().max(2000).nullable().optional(),
   /** Gallery display order (ascending). Optional — defaults to 0. */
   sort_order: z.number().int().optional(),
 });
@@ -72,7 +72,7 @@ const savePageAsTemplatePayload = z.object({
   /** Gallery grouping label (e.g. "Basic"). Optional — defaults to null. */
   category: z.string().max(100).nullable().optional(),
   /** Gallery card thumbnail URL. Optional — defaults to null. */
-  cover_image_url: z.string().max(2000).nullable().optional(),
+  cover_image_url: z.string().url().max(2000).nullable().optional(),
   /** Gallery display order (ascending). Optional — defaults to 0. */
   sort_order: z.number().int().optional(),
 });
@@ -457,7 +457,8 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
-  // GET /api/templates — list templates (newest first) with pages_count.
+  // GET /api/templates — list templates (gallery order: sort_order asc, then
+  // name) with pages_count.
   // Optional filters: ?kind=site|page, ?status=active|archived (default active).
   // (P7-T7.4)
   // -------------------------------------------------------------------------

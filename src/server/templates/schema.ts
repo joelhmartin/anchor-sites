@@ -47,7 +47,7 @@ export const createTemplateInputSchema = z.object({
   /** Gallery grouping label (e.g. "Basic"). Nullable — omit for un-grouped templates. */
   category: z.string().max(100).nullable().optional(),
   /** Gallery card thumbnail URL. Nullable — omit when no cover image exists yet. */
-  cover_image_url: z.string().max(2000).nullable().optional(),
+  cover_image_url: z.string().url().max(2000).nullable().optional(),
   /** Gallery display order (ascending); defaults to 0. */
   sort_order: z.number().int().default(0),
 });

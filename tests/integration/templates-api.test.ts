@@ -188,6 +188,21 @@ d("save-as-template API (integration, P7-T7.3)", () => {
     expect(res.body.template.sort_order).toBe(3);
   });
 
+  it("400s save-as-template when cover_image_url is not a valid URL", async () => {
+    const res = await auth(
+      request(app).post(`/api/sites/${muldoonSiteId}/save-as-template`),
+    ).send({ name: "Bad Cover", slug: "apitest-bad-cover", cover_image_url: "not-a-url" });
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts a null cover_image_url on save-as-template", async () => {
+    const res = await auth(
+      request(app).post(`/api/sites/${muldoonSiteId}/save-as-template`),
+    ).send({ name: "Null Cover", slug: "apitest-null-cover", cover_image_url: null });
+    expect(res.status).toBe(201);
+    expect(res.body.template.cover_image_url).toBeNull();
+  });
+
   it("GET /api/templates/:id returns the template + ordered pages; 404 when unknown", async () => {
     const idRes = await pool.query<{ id: string }>(`SELECT id FROM templates WHERE slug = 'my-starter'`);
     const id = idRes.rows[0].id;
