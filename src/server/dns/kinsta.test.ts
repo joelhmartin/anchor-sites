@@ -91,6 +91,60 @@ describe("KinstaDnsProvider domain-id resolution + cache", () => {
       new KinstaDnsProvider(CFG).ensureRecord("anchorcorps.com", record),
     ).rejects.toThrow(/no domain found/);
   });
+
+  it("fix round 1, item 3: evicts a stale cached domain_id on a 404 from dns-records and retries once against a freshly resolved id", async () => {
+    // Simulates the domain entry being deleted + re-added on Kinsta's side
+    // (new domain_id, same zone name) AFTER we've already cached the old id.
+    let domainsListCalls = 0;
+    let abcRecordsGetCalls = 0;
+    const fetchMock = mockFetch((url, init) => {
+      if (url.includes("/domains?company=")) {
+        domainsListCalls += 1;
+        const id = domainsListCalls === 1 ? "domain-abc" : "domain-xyz";
+        return {
+          status: 200,
+          body: { company: { domains: [{ id, name: "anchorcorps.com", site_id: null, is_active: true }] } },
+        };
+      }
+      if (url.includes("/domains/domain-abc/dns-records")) {
+        if (init?.method === "POST") {
+          return { status: 202, body: { operation_id: "op-1", message: "ok", status: 202 } };
+        }
+        abcRecordsGetCalls += 1;
+        // First ensureRecord call's list succeeds (empty zone); the SECOND
+        // call's list 404s — the cached domain_id has gone stale.
+        if (abcRecordsGetCalls === 1) return { status: 200, body: { domain: { dns_records: [] } } };
+        return { status: 404, body: { message: "domain not found" } };
+      }
+      if (url.includes("/domains/domain-xyz/dns-records")) {
+        if (init?.method === "POST") {
+          return { status: 202, body: { operation_id: "op-2", message: "ok", status: 202 } };
+        }
+        return { status: 200, body: { domain: { dns_records: [] } } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new KinstaDnsProvider(CFG);
+
+    // Call 1: resolves + caches domain-abc, creates the record against it.
+    const first = await provider.ensureRecord("anchorcorps.com", record);
+    expect(first).toBe("created");
+    expect(domainsListCalls).toBe(1);
+
+    // Call 2: cached domain-abc is used first (no new domains-list call
+    // yet), its dns-records list 404s, so it's evicted and re-resolved —
+    // landing on domain-xyz — and the write goes to domain-xyz's path.
+    const second = await provider.ensureRecord("anchorcorps.com", record);
+    expect(second).toBe("created");
+    expect(domainsListCalls).toBe(2);
+
+    const postCalls = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit)?.method === "POST");
+    expect(postCalls).toHaveLength(2);
+    expect(postCalls[0][0]).toBe("https://api.kinsta.test/v2/domains/domain-abc/dns-records");
+    expect(postCalls[1][0]).toBe("https://api.kinsta.test/v2/domains/domain-xyz/dns-records");
+  });
 });
 
 describe("KinstaDnsProvider.ensureRecord", () => {
@@ -114,6 +168,50 @@ describe("KinstaDnsProvider.ensureRecord", () => {
       resource_records: [{ value: "ghs.googlehosted.com" }],
     });
     expect((post[1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer k" });
+  });
+
+  it("fix round 1, item 2: a zone-wide wildcard record does NOT satisfy a literal per-site hostname — issues a CREATE", async () => {
+    // Locks in actual behavior: findRecord matches by exact (type, name), so
+    // `*.sites.anchorcorps.com` in the zone is a completely different `name`
+    // from `foo.sites.anchorcorps.com` — they never match, even though the
+    // wildcard would resolve the hostname in DNS itself. Every new site's
+    // first provision run therefore issues a real POST, not a no-op.
+    const wildcardOnlyZone = {
+      status: 200,
+      body: {
+        domain: {
+          dns_records: [
+            {
+              type: "CNAME",
+              name: "*.sites.anchorcorps.com",
+              ttl: 3600,
+              resource_records: [{ value: "ghs.googlehosted.com" }],
+            },
+          ],
+        },
+      },
+    };
+    const fetchMock = mockFetch((url, init) => {
+      if (url.includes("/domains?company=")) return { status: 200, body: domainsListBody };
+      if (init?.method === "POST") return { status: 202, body: { operation_id: "op-w", message: "ok", status: 202 } };
+      return wildcardOnlyZone;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new KinstaDnsProvider(CFG).ensureRecord("anchorcorps.com", {
+      name: "foo.sites.anchorcorps.com.",
+      type: "CNAME",
+      data: "ghs.googlehosted.com.",
+    });
+
+    expect(result).toBe("created");
+    const post = fetchMock.mock.calls.find((c) => (c[1] as RequestInit)?.method === "POST")!;
+    expect(JSON.parse((post[1] as RequestInit).body as string)).toEqual({
+      type: "CNAME",
+      name: "foo.sites.anchorcorps.com",
+      ttl: 3600,
+      resource_records: [{ value: "ghs.googlehosted.com" }],
+    });
   });
 
   it("returns 'exists' and does not write when the record already has the wanted value", async () => {

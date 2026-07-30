@@ -97,8 +97,12 @@ export class KinstaDnsProvider implements DnsProvider {
     return { status: res.status, body: body as T };
   }
 
+  private cacheKey(zone: string): string {
+    return `${this.cfg.baseUrl}|${this.cfg.companyId}|${stripDot(zone).toLowerCase()}`;
+  }
+
   private async resolveDomainId(zone: string): Promise<string> {
-    const key = `${this.cfg.baseUrl}|${this.cfg.companyId}|${stripDot(zone).toLowerCase()}`;
+    const key = this.cacheKey(zone);
     const cached = domainIdCache.get(key);
     if (cached) return cached;
 
@@ -128,6 +132,31 @@ export class KinstaDnsProvider implements DnsProvider {
     return body.domain?.dns_records ?? [];
   }
 
+  /**
+   * Resolve `zone`'s domain_id and list its records, with ONE evict-and-retry
+   * if the cached id turns out to be stale. The cache (above) never expires
+   * on its own once a lookup succeeds (fix round 1, item 3) — if the Kinsta
+   * domain entry is deleted and re-added on their side (new domain_id for
+   * the same zone name), every subsequent call would 404 forever until this
+   * process restarts. A 404 from `dns-records` for a domain_id that used to
+   * be valid is exactly that signal, so we evict it and re-resolve once
+   * before giving up. Returns the domainId actually used so callers write
+   * against the right one, not the possibly-stale one they started with.
+   */
+  private async resolveAndListRecords(
+    zone: string,
+  ): Promise<{ domainId: string; records: KinstaDnsRecord[] }> {
+    const domainId = await this.resolveDomainId(zone);
+    try {
+      return { domainId, records: await this.listRecords(domainId) };
+    } catch (err) {
+      if (!(err instanceof Error) || !/^Kinsta 404\b/.test(err.message)) throw err;
+      domainIdCache.delete(this.cacheKey(zone));
+      const freshId = await this.resolveDomainId(zone);
+      return { domainId: freshId, records: await this.listRecords(freshId) };
+    }
+  }
+
   private findRecord(records: KinstaDnsRecord[], type: string, name: string): KinstaDnsRecord | undefined {
     const wantName = stripDot(name).toLowerCase();
     return records.find(
@@ -136,12 +165,12 @@ export class KinstaDnsProvider implements DnsProvider {
   }
 
   async ensureRecord(zone: string, record: DnsRecord): Promise<EnsureResult> {
-    const domainId = await this.resolveDomainId(zone);
     const type = record.type.toUpperCase();
     const name = stripDot(record.name);
     const data = normalizeData(record.type, record.data);
 
-    const existing = this.findRecord(await this.listRecords(domainId), type, name);
+    const { domainId, records } = await this.resolveAndListRecords(zone);
+    const existing = this.findRecord(records, type, name);
 
     if (!existing) {
       await this.req(`/domains/${encodeURIComponent(domainId)}/dns-records`, {
@@ -167,19 +196,19 @@ export class KinstaDnsProvider implements DnsProvider {
   }
 
   async verifyRecord(zone: string, record: DnsRecord): Promise<boolean> {
-    const domainId = await this.resolveDomainId(zone);
     const type = record.type.toUpperCase();
     const data = normalizeData(record.type, record.data);
-    const existing = this.findRecord(await this.listRecords(domainId), type, record.name);
+    const { records } = await this.resolveAndListRecords(zone);
+    const existing = this.findRecord(records, type, record.name);
     if (!existing) return false;
     return existing.resource_records.some((rr) => normalizeData(type, rr.value) === data);
   }
 
   async removeRecord(zone: string, record: DnsRecord): Promise<void> {
-    const domainId = await this.resolveDomainId(zone);
     const type = record.type.toUpperCase();
     const name = stripDot(record.name);
-    const existing = this.findRecord(await this.listRecords(domainId), type, name);
+    const { domainId, records } = await this.resolveAndListRecords(zone);
+    const existing = this.findRecord(records, type, name);
     if (!existing) return; // idempotent — nothing to remove
 
     await this.req(`/domains/${encodeURIComponent(domainId)}/dns-records`, {

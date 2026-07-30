@@ -92,10 +92,25 @@ export async function createSiteWithDomains(
         { siteId, domainId: canonicalDomainId } satisfies SiteProvisionInput,
         { singletonKey: canonicalDomainId, retryLimit: 5, retryDelay: 60, retryBackoff: true },
       )
-      .catch(() => undefined);
-  } catch {
+      .catch((err) => {
+        // Fix round 1, item 1: this used to swallow the failure with zero
+        // trace — a domain row stuck at verification_status='pending'
+        // forever with nothing in the logs to explain why. Mirrors the CRM
+        // enqueue's console.error below.
+        // eslint-disable-next-line no-console
+        console.error(
+          `[provision] enqueue failed for site ${siteId} (domain ${canonicalDomainId}):`,
+          err,
+        );
+      });
+  } catch (err) {
     // Boss not started (JOBS_ENABLED=false or not yet booted) — skip; the
     // operator can trigger provisioning manually from the Domains tab.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[provision] enqueue failed for site ${siteId} (domain ${canonicalDomainId}):`,
+      err,
+    );
   }
 
   // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site creation.

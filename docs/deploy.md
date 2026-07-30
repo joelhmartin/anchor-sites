@@ -267,11 +267,16 @@ Until that's done:
   times (`retryLimit: 5`, backoff) before giving up — so once the operator
   completes the one-time verification, the next automatic retry (or a
   manual "Provision" click) succeeds without any code change.
-- The DNS step is unaffected either way: the wildcard CNAME
-  `*.sites.anchorcorps.com → ghs.googlehosted.com.` already exists in the
-  Kinsta zone, so `KinstaDnsProvider.ensureRecord` is a no-op ("exists") for
-  every `*.sites` hostname regardless of the Cloud Run mapping's state — it
-  still upserts idempotently, just with nothing new to write.
+- The DNS step is unaffected either way, but **not** because it's a no-op:
+  `KinstaDnsProvider.ensureRecord` matches records by exact `(type, name)`,
+  so a literal per-site hostname (e.g. `acme.sites.anchorcorps.com`) never
+  matches the zone's `*.sites.anchorcorps.com` wildcard record — every new
+  site's DNS step issues a **real `POST`** creating its own literal CNAME,
+  which then coexists with the wildcard. This is idempotent per-site
+  (re-running for the same site finds its own record and no-ops), but a
+  creation burst (more than Kinsta's 5 req/min resource-creation limit) can
+  hit a 429/rate-limit error — that's exactly the case the job's
+  `retryLimit: 5` / 60s backoff exists to self-heal, not a real failure.
 
 ### Kinsta DNS provider (Task D1) — auto-provisioning on site create
 
