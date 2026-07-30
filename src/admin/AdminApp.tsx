@@ -3,7 +3,7 @@ import { RequireAdmin } from "./auth/RequireAdmin.js";
 import { LoginPage } from "./auth/LoginPage.js";
 import { AdminLayout } from "./AdminLayout.js";
 import { SitesListPage } from "./pages/SitesListPage.js";
-import { NewSiteWizard } from "./pages/NewSiteWizard.js";
+import { NewSitePage } from "./pages/NewSitePage.js";
 import { SiteDetailPage } from "./pages/SiteDetailPage.js";
 import { WorkspacePage } from "./pages/WorkspacePage.js";
 import { EditorPage } from "./pages/EditorPage.js";
@@ -25,7 +25,7 @@ export function AdminApp() {
       <Route element={<RequireAdmin />}>
         <Route element={<AdminLayout />}>
           <Route path="/" element={<SitesListPage />} />
-          <Route path="/sites/new" element={<NewSiteWizard />} />
+          <Route path="/sites/new" element={<NewSitePage />} />
           {/* Task B2 (2026-07-30 lovable-workspace SDD): `/sites/:slug` is
               now the Lovable-style workspace (chat + live preview) — the
               tab-based management shell moved to `/manage`. AdminLayout
