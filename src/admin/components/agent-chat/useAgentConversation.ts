@@ -1,0 +1,417 @@
+// src/admin/components/agent-chat/useAgentConversation.ts
+//
+// Task B2 (2026-07-30 lovable-workspace SDD): the conversation/tail state
+// machine that used to live entirely inside `AgentChatDrawer` — bootstrap
+// (list → newest active/error/running, or lazily create on first send),
+// history hydration, the `/events` tail (snapshot replace-or-merge depending
+// on whether a cursor was sent, tool-result → step resolution, status →
+// busy), send/stop, and the per-turn token-usage delta. Extracted so BOTH
+// the drawer (unchanged behavior — see `AgentChatDrawer.tsx`) and the new
+// workspace's always-on chat panel (`WorkspacePage.tsx`) can drive the same
+// logic instead of duplicating several hundred lines of it.
+//
+// What did NOT move here (stays host-specific, in each component that uses
+// this hook): scroll-position pinning, and the drawer's modal-only concerns
+// (Escape-to-close, focus trap/restore) — those are UI-integration details
+// of the HOST, not of the conversation itself.
+
+import { useEffect, useRef, useState } from "react";
+import { ApiError, apiFetch } from "../../lib/apiFetch.js";
+import {
+  streamAgentEvents,
+  type AgentChangeEvent,
+  type AgentTailEvent,
+  type AiConversation,
+  type AiMessage,
+} from "../../lib/agent-api.js";
+import { deriveItemsFromMessage, deriveItemsFromMessages, deriveToolResultUpdates } from "./history.js";
+import type { DisplayItem } from "./types.js";
+
+export type UseAgentConversationOptions = {
+  siteId: string;
+  /** Whether this hook instance should be bootstrapping/tailing at all —
+   * the drawer passes its `open` prop; a permanently-visible host (the
+   * workspace panel) passes `true`. */
+  active: boolean;
+  /** Reconnect (hydrate + start tailing) an already-running/erroring
+   * conversation found on bootstrap, not just on an explicit `send()`. */
+  autoTail?: boolean;
+  onSiteChanged: () => void;
+  onChangeEvent?: (c: AgentChangeEvent) => void;
+  onStatusChange?: (status: AiConversation["status"] | null, busy: boolean) => void;
+};
+
+export type UseAgentConversationResult = {
+  items: DisplayItem[];
+  draft: string;
+  setDraft: (v: string) => void;
+  sending: boolean;
+  busy: boolean;
+  error: string | null;
+  conversation: AiConversation | null;
+  /** Formatted footer text, e.g. "123 tokens today · +45 this turn". */
+  usageText: string;
+  send: (overrideText?: string) => Promise<void>;
+  stop: () => void;
+};
+
+function todayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function useAgentConversation({
+  siteId,
+  active,
+  autoTail,
+  onSiteChanged,
+  onChangeEvent,
+  onStatusChange,
+}: UseAgentConversationOptions): UseAgentConversationResult {
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<AiConversation | null>(null);
+  const [items, setItems] = useState<DisplayItem[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastTurnDelta, setLastTurnDelta] = useState<{ input: number; output: number } | null>(null);
+
+  const idCounter = useRef(0);
+  // Id of the newest PERSISTED message we've already displayed (from a
+  // history hydration or a tailed `message` event) — used both as the
+  // `after=` cursor for starting a tail and, via `seenMessageIdsRef`, to
+  // dedupe messages a tail might re-deliver.
+  const lastMessageIdRef = useRef<string | null>(null);
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
+  const tailAbortRef = useRef<AbortController | null>(null);
+  const sendAbortRef = useRef<AbortController | null>(null);
+  // A `send()` marks this true right before starting its tail, and clears it
+  // the first time that tail reports a settled (non-"running") status —
+  // that's the signal to fetch the per-turn token-usage delta (only for a
+  // turn THIS hook instance kicked off, not e.g. an unrelated autoTail
+  // observing someone else's job).
+  const pendingUsageRefreshRef = useRef(false);
+  const usageBeforeRef = useRef<{ input: number; output: number }>({ input: 0, output: 0 });
+
+  function nextId(): string {
+    idCounter.current += 1;
+    return `local-${idCounter.current}`;
+  }
+
+  function noteChange(change: AgentChangeEvent) {
+    onSiteChanged();
+    onChangeEvent?.(change);
+  }
+
+  // Reports status/busy on every change to `conversation` or `sending` so a
+  // caller (site-detail's inline editor readonly guard, the workspace's
+  // preview-readonly guard) can gate itself while a turn is actively
+  // running. `onStatusChange` is intentionally left out of the dep array —
+  // it's typically a fresh closure each render, and re-invoking on identity
+  // change alone (with unchanged status/busy) would just be redundant work.
+  useEffect(() => {
+    const status = conversation?.status ?? null;
+    const busy = sending || status === "running";
+    onStatusChange?.(status, busy);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation?.status, sending]);
+
+  /**
+   * Replace the transcript with the authoritative persisted history. Used
+   * for (a) hydrating an existing conversation's history on activation/
+   * reactivation, and (b) a tail's initial `snapshot` on a never-hydrated
+   * conversation (the client has no message ids to scope `after=` to until
+   * it has hydrated at least once). Does NOT fire `onSiteChanged`/
+   * `onChangeEvent` — a replay of history being (re)opened to read
+   * shouldn't re-trigger site-changed side effects.
+   */
+  function hydrateFromMessages(messages: AiMessage[]) {
+    // `deriveItemsFromMessages` (not the per-message singular) resolves any
+    // tool_use "step" against its tool_result within this same batch, so a
+    // step from earlier history doesn't get stuck showing "running" forever.
+    setItems(deriveItemsFromMessages(messages));
+    seenMessageIdsRef.current = new Set(messages.map((m) => m.id));
+    const last = messages[messages.length - 1];
+    if (last) lastMessageIdRef.current = last.id;
+  }
+
+  /**
+   * Append one newly-tailed persisted message, deduped by id.
+   *
+   * A `role:"tool"` message's `tool_result`s don't just derive NEW items
+   * (the existing `change` cards) — they also resolve an EARLIER message's
+   * `tool_use` "step" item that's already sitting in `items` at
+   * `state:"running"`. `deriveToolResultUpdates` reports which
+   * `toolCallId`s to flip and to what; applied here via a map over the
+   * current items BEFORE appending whatever new items this same message
+   * also derives (a change card, mainly — a message is never both an
+   * assistant tool_use message and a tool tool_result message at once, so
+   * in practice at most one of the two branches below does anything per
+   * call, but there's no reason to assume that structurally).
+   */
+  function appendPersistedMessage(message: AiMessage) {
+    if (seenMessageIdsRef.current.has(message.id)) return;
+    seenMessageIdsRef.current.add(message.id);
+    lastMessageIdRef.current = message.id;
+
+    const updates = deriveToolResultUpdates(message);
+    const derived = deriveItemsFromMessage(message);
+    if (updates.length === 0 && derived.length === 0) return;
+
+    setItems((prev) => {
+      const withUpdates =
+        updates.length === 0
+          ? prev
+          : prev.map((item) => {
+              if (item.kind !== "step") return item;
+              const update = updates.find((u) => u.toolCallId === item.toolCallId);
+              return update ? { ...item, state: update.state } : item;
+            });
+      return derived.length > 0 ? [...withUpdates, ...derived] : withUpdates;
+    });
+    for (const item of derived) if (item.kind === "change") noteChange(item.change);
+  }
+
+  function startTail(id: string, afterId: string | null) {
+    tailAbortRef.current?.abort();
+    const controller = new AbortController();
+    tailAbortRef.current = controller;
+    const qs = afterId ? `?after=${afterId}` : "";
+    streamAgentEvents(`/api/sites/${siteId}/agent/conversations/${id}/events${qs}`, {
+      signal: controller.signal,
+      // `afterId` is captured per-call: the server's `snapshot` payload
+      // shape depends on whether `after=` was sent (only messages newer
+      // than it; else the last 50), so the handler needs to know which one
+      // it's looking at.
+      onEvent: (e) => handleTailEvent(e as AgentTailEvent, afterId, id),
+    }).catch(() => {
+      // aborted (host deactivated/unmounted) or connection dropped — best-effort tail
+    });
+  }
+
+  /** Best-effort per-turn token-usage delta for a turn THIS hook instance
+   * kicked off — see `pendingUsageRefreshRef`'s doc comment. */
+  async function maybeRefreshUsageDelta(id: string) {
+    try {
+      const detail = await apiFetch<{ conversation: AiConversation }>(
+        `/api/sites/${siteId}/agent/conversations/${id}`,
+      );
+      setConversation(detail.conversation);
+      const usageAfter = detail.conversation.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+      const before = usageBeforeRef.current;
+      const delta = { input: usageAfter.input - before.input, output: usageAfter.output - before.output };
+      if (delta.input + delta.output > 0) setLastTurnDelta(delta);
+    } catch {
+      // best-effort — the footer just won't show a delta this turn
+    }
+  }
+
+  function handleTailEvent(e: AgentTailEvent, cursor: string | null, id: string) {
+    if (e.type === "snapshot") {
+      setConversation(e.conversation);
+      if (cursor === null) {
+        // No cursor was sent → the server's snapshot is the full recent
+        // history (last 50) — replace wholesale rather than dedup-merge
+        // (see `hydrateFromMessages`).
+        hydrateFromMessages(e.messages);
+      } else {
+        // A cursor was sent → the server already scoped the snapshot to
+        // messages newer than it. Merging (id-deduped, appended) instead
+        // of replacing avoids wiping transcript already hydrated before
+        // this tail started (e.g. reactivating on an existing conversation
+        // with `autoTail` — history was hydrated from the conversation-
+        // detail fetch, then the tail's own snapshot must ADD to it, not
+        // erase it).
+        for (const m of e.messages) appendPersistedMessage(m);
+      }
+    } else if (e.type === "message") {
+      appendPersistedMessage(e.message);
+    } else if (e.type === "status") {
+      setConversation((prev) => (prev ? { ...prev, status: e.status } : prev));
+      if (e.status === "running") return;
+      // The job has settled ("active" or "error") — a tailed `status`
+      // event settling is this hook's "turn is done" signal: re-enable the
+      // composer, and — only for a turn THIS instance's `send()` kicked
+      // off — fetch the usage delta.
+      setSending(false);
+      if (pendingUsageRefreshRef.current) {
+        pendingUsageRefreshRef.current = false;
+        void maybeRefreshUsageDelta(id);
+      }
+    }
+  }
+
+  // Load (or note) the site's conversation on activation. If one already
+  // exists, hydrate the transcript from its persisted history (GET
+  // .../:id → { conversation, messages }) BEFORE wiring up any live sends,
+  // so reactivating doesn't show a blank transcript. `autoTail` then
+  // additionally starts a live tail from that hydrated point on.
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch<{ conversations: AiConversation[] }>(
+          `/api/sites/${siteId}/agent/conversations`,
+        );
+        if (cancelled) return;
+        // "running" means a job-run turn is actively in flight for this
+        // conversation — reactivating must still reconnect to it (hydrate
+        // + autoTail), not silently ignore it because neither "active" nor
+        // "error" matched.
+        const existing = res.conversations.find(
+          (c) => c.status === "active" || c.status === "error" || c.status === "running",
+        );
+        if (existing) {
+          setConversationId(existing.id);
+          setConversation(existing);
+          try {
+            const detail = await apiFetch<{ conversation: AiConversation; messages: AiMessage[] }>(
+              `/api/sites/${siteId}/agent/conversations/${existing.id}`,
+            );
+            if (cancelled) return;
+            setConversation(detail.conversation);
+            hydrateFromMessages(detail.messages);
+          } catch {
+            // history hydration is best-effort — sends still work regardless
+          }
+          if (cancelled) return;
+          if (autoTail) startTail(existing.id, lastMessageIdRef.current);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof ApiError ? err.message : "Couldn't load the conversation.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, siteId]);
+
+  // Abort any in-flight tail AND any in-flight turn when the host
+  // deactivates or unmounts.
+  useEffect(() => {
+    if (!active) {
+      tailAbortRef.current?.abort();
+      sendAbortRef.current?.abort();
+    }
+    return () => {
+      tailAbortRef.current?.abort();
+      sendAbortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  /**
+   * The messages POST is enqueue-only — no agent turn ever runs inside an
+   * HTTP request (global-constraints.md, Cloud Run's 60s timeout).
+   * `send()` just posts the message, gets back `202 {queued,
+   * conversation_id}` (or a 409 if a turn's already running), and starts/
+   * refreshes the `/events` tail so the transcript fills in from persisted
+   * messages as the background job runs. `sending` stays true across that
+   * whole window — it's cleared by `handleTailEvent` once the tail reports
+   * a settled status, or by `stop()`.
+   *
+   * The tail is (re)started with the `user_message_id` the 202 response
+   * returns — the real, persisted id of the message THIS send just
+   * appended — NOT a null cursor. A null cursor hits the tail route's
+   * no-cursor branch (capped at the last 50 rows), which wholesale-
+   * REPLACES the transcript from just that capped window: fine for a first
+   * send, but a silent, view-only history-truncation bug from the second
+   * send onward in any conversation with >50 persisted rows. A cursor
+   * scoped to right before this turn's own messages MERGES instead —
+   * nothing already on screen is discarded.
+   */
+  async function send(overrideText?: string) {
+    const text = (overrideText ?? draft).trim();
+    if (!text || sending) return;
+    setSending(true);
+    setError(null);
+    setDraft("");
+    setItems((prev) => [...prev, { id: nextId(), kind: "user", text }]);
+    const controller = new AbortController();
+    sendAbortRef.current = controller;
+    usageBeforeRef.current = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+    try {
+      let cid = conversationId;
+      if (!cid) {
+        const created = await apiFetch<{ conversation: AiConversation }>(
+          `/api/sites/${siteId}/agent/conversations`,
+          { method: "POST" },
+        );
+        cid = created.conversation.id;
+        setConversationId(cid);
+        setConversation(created.conversation);
+      }
+      const posted = await apiFetch<{ user_message_id?: string }>(
+        `/api/sites/${siteId}/agent/conversations/${cid}/messages`,
+        {
+          method: "POST",
+          body: { message: text },
+          signal: controller.signal,
+        },
+      );
+      pendingUsageRefreshRef.current = true;
+      // `?? null` is a defensive fallback only — every real 202 carries
+      // `user_message_id`; falling back to the (safe, if history-
+      // truncating) null-cursor replace path rather than throwing keeps a
+      // malformed/mocked response non-fatal.
+      startTail(cid, posted.user_message_id ?? null);
+    } catch (err) {
+      const aborted = (err as { name?: string } | null)?.name === "AbortError";
+      if (aborted) {
+        // `stop()` (or deactivation) already aborted this and — for an
+        // explicit Stop click — already appended "Stopped." and reset
+        // `sending` synchronously; nothing left to do once the aborted
+        // fetch itself rejects.
+        return;
+      } else if (err instanceof ApiError && err.status === 409) {
+        // Serialized-turn guard: the route rejects a second concurrent
+        // turn with 409 rather than interleaving it into the running one.
+        // The composer re-enables itself via this catch returning normally
+        // into `finally` below.
+        setItems((prev) => [
+          ...prev,
+          { id: nextId(), kind: "system", text: "A build is already running — wait for it to finish." },
+        ]);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Message failed to send.");
+      }
+      setSending(false);
+    } finally {
+      sendAbortRef.current = null;
+    }
+  }
+
+  /**
+   * Detaches from the in-flight turn — aborts the enqueue POST if it's
+   * still in flight, and (the common case, since that POST resolves almost
+   * immediately) aborts the live `/events` tail. The background job keeps
+   * running; this just stops this hook instance from following it.
+   */
+  function stop() {
+    if (!sending) return;
+    sendAbortRef.current?.abort();
+    tailAbortRef.current?.abort();
+    pendingUsageRefreshRef.current = false;
+    setSending(false);
+    setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Stopped." }]);
+  }
+
+  const usage = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+  const totalToday = usage.input + usage.output;
+  const deltaTotal = lastTurnDelta ? lastTurnDelta.input + lastTurnDelta.output : null;
+  const usageText = deltaTotal ? `${totalToday} tokens today · +${deltaTotal} this turn` : `${totalToday} tokens today`;
+
+  return {
+    items,
+    draft,
+    setDraft,
+    sending,
+    busy: conversation?.status === "running",
+    error,
+    conversation,
+    usageText,
+    send,
+    stop,
+  };
+}

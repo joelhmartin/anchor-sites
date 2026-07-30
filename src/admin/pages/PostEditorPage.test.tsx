@@ -110,6 +110,6 @@ describe("PostEditorPage (P8-T8.13)", () => {
     mockApi();
     renderAt();
     const link = await screen.findByRole("link", { name: /Back to acme/ });
-    expect(link.getAttribute("href")).toBe("/sites/acme");
+    expect(link.getAttribute("href")).toBe("/sites/acme/manage");
   });
 });

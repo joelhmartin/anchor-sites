@@ -76,7 +76,10 @@ export function NewSiteWizard() {
         method: "POST",
         body: { slug, display_name: displayName.trim(), default_brand_tokens: tokens },
       });
-      navigate(`/sites/${slug}`);
+      // Task B2 (2026-07-30 lovable-workspace SDD): a blank site has no AI
+      // conversation to land in — go straight to the tab-based management
+      // shell (Pages tab) rather than an empty Lovable-style workspace.
+      navigate(`/sites/${slug}/manage`);
     } catch (err) {
       handleConflict(err);
     } finally {
@@ -113,7 +116,9 @@ export function NewSiteWizard() {
       });
       setMaterializing(true);
       await waitForPages(res.site.id);
-      navigate(`/sites/${slug}`);
+      // Task B2: same reasoning as the blank-site flow above — land on the
+      // populated Pages tab, not the workspace.
+      navigate(`/sites/${slug}/manage`);
     } catch (err) {
       handleConflict(err);
     } finally {

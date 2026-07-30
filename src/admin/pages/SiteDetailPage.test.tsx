@@ -4,18 +4,6 @@ import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SiteDetailPage } from "./SiteDetailPage.js";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
-import type { AgentChatDrawerProps } from "../components/AgentChatDrawer.js";
-
-// Stub the Studio chat drawer (Task 11) so this suite can assert the props
-// Task 12 threads into it (open/autoTail/onChangeEvent) without dealing with
-// its own conversation-loading fetches.
-const { drawerCalls } = vi.hoisted(() => ({ drawerCalls: [] as AgentChatDrawerProps[] }));
-vi.mock("../components/AgentChatDrawer.js", () => ({
-  AgentChatDrawer: (props: AgentChatDrawerProps) => {
-    drawerCalls.push(props);
-    return props.open ? <div data-testid="agent-drawer-stub">Studio chat stub (open)</div> : null;
-  },
-}));
 
 const SITE = {
   id: "s1",
@@ -57,11 +45,10 @@ function renderAt(slug: string, search = "") {
   );
 }
 
-describe("SiteDetailPage (P4-T4.12)", () => {
+describe("SiteDetailPage (P4-T4.12) — management shell (served at /manage since Task B2)", () => {
   const realFetch = global.fetch;
   beforeEach(() => {
     setAdminToken("tok");
-    drawerCalls.length = 0;
   });
   afterEach(() => {
     cleanup();
@@ -113,62 +100,14 @@ describe("SiteDetailPage (P4-T4.12)", () => {
     await waitFor(() => expect(screen.getByText(/No site found for/)).toBeTruthy());
   });
 
-  it("shows a banner when the wizard hands off with ai_error=1 (item 8 — conversation/job POST failed after site creation)", async () => {
-    mockApi([SITE], SITE);
-    renderAt("acme", "?ai=1&ai_error=1");
-    await waitFor(() =>
-      expect(screen.getByText(/initial AI build couldn.t be started automatically/)).toBeTruthy(),
-    );
-  });
-
-  it("does not show the ai_error banner on a normal ?ai=1 hand-off", async () => {
-    mockApi([SITE], SITE);
-    renderAt("acme", "?ai=1");
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
-    expect(screen.queryByText(/initial AI build couldn.t be started automatically/)).toBeNull();
-  });
-
-  it("opens the Studio drawer on ?ai=1 (wizard hand-off) with autoTail on", async () => {
-    mockApi([SITE], SITE);
-    renderAt("acme", "?ai=1");
-    await waitFor(() => expect(drawerCalls.length).toBeGreaterThan(0));
-    const last = drawerCalls[drawerCalls.length - 1];
-    expect(last.open).toBe(true);
-    expect(last.autoTail).toBe(true);
-    expect(last.siteId).toBe("s1");
-    expect(last.slug).toBe("acme");
-  });
-
-  it("toggles the Studio drawer via the AI header button (aria-pressed)", async () => {
-    mockApi([SITE], SITE);
-    renderAt("acme");
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
-
-    const aiButton = screen.getByRole("button", { name: "AI" });
-    expect(aiButton.getAttribute("aria-pressed")).toBe("false");
-    expect(drawerCalls[drawerCalls.length - 1]?.open).toBe(false);
-
-    fireEvent.click(aiButton);
-    expect(aiButton.getAttribute("aria-pressed")).toBe("true");
-    await waitFor(() => expect(drawerCalls[drawerCalls.length - 1]?.open).toBe(true));
-  });
-
-  it("only fetches the site's pages list when the AI drawer is open (doesn't duplicate PagesTab's own fetch)", async () => {
+  it("does not mount any AI chat/preview affordance — that moved to WorkspacePage (Task B2)", async () => {
     mockApi([SITE], SITE, [
       { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
     ]);
-    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     renderAt("acme");
     await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
-
-    const pagesCalls = () => fetchMock.mock.calls.filter(([u]) => String(u) === "/api/sites/s1/pages").length;
-    // Pages is the default active tab, so PagesTab's own fetch already fired —
-    // that's the only reason this is 1, not 0. The drawer/preview must not
-    // add a second, redundant call while it's closed.
-    expect(pagesCalls()).toBe(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "AI" }));
-    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
-    expect(pagesCalls()).toBe(2);
+    expect(screen.queryByRole("button", { name: "AI" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Studio chat" })).toBeNull();
+    expect(screen.queryByTitle("Draft preview")).toBeNull();
   });
 });

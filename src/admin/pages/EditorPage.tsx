@@ -356,7 +356,7 @@ function EditorView({ siteId, slug }: { siteId: string; slug: string }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <Link to={`/sites/${slug}`} className="text-sm text-zinc-500 hover:text-zinc-700">
+          <Link to={`/sites/${slug}/manage`} className="text-sm text-zinc-500 hover:text-zinc-700">
             ← Back to {slug}
           </Link>
           <h1 className="text-lg font-semibold">{page.title}</h1>

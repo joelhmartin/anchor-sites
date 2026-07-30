@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
-import type { AgentChangeEvent, AiConversation } from "../lib/agent-api.js";
 import type { SiteDetail, SiteListRow, SiteStatus } from "../lib/siteTypes.js";
 import { Badge } from "../ui/badge.js";
 import { Card, CardContent } from "../ui/card.js";
@@ -19,8 +18,6 @@ import { SeoSettingsTab } from "./site-tabs/SeoSettingsTab.js";
 import { DomainsTab } from "./site-tabs/DomainsTab.js";
 import { CrmTab } from "./site-tabs/CrmTab.js";
 import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog.js";
-import { AgentChatDrawer } from "../components/AgentChatDrawer.js";
-import { SitePreviewPanel } from "../components/SitePreviewPanel.js";
 
 const statusTone: Record<SiteStatus, "success" | "neutral" | "warning"> = {
   active: "success",
@@ -43,11 +40,13 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 /**
- * Site detail shell (P4-T4.12). The URL routes by slug, but the detail/pages/
- * media endpoints key off the site UUID, so we resolve slug → id from the
- * already-cheap `GET /api/sites` list, then render `<SiteDetailView>` which
- * loads the full detail by id. Each tab mounts only when active, so its list
- * fetch is lazy (4.13–4.15 fill in the tab bodies).
+ * Site management shell (P4-T4.12; served at `/sites/:slug/manage` since
+ * Task B2, 2026-07-30 lovable-workspace SDD — `/sites/:slug` itself is now
+ * the Lovable-style workspace, `WorkspacePage.tsx`). The URL routes by slug,
+ * but the detail/pages/media endpoints key off the site UUID, so we resolve
+ * slug → id from the already-cheap `GET /api/sites` list, then render
+ * `<SiteDetailView>` which loads the full detail by id. Each tab mounts only
+ * when active, so its list fetch is lazy (4.13–4.15 fill in the tab bodies).
  */
 export function SiteDetailPage() {
   const { slug } = useParams();
@@ -87,40 +86,8 @@ export function SiteDetailPage() {
 
 function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   const [tab, setTab] = useState<TabKey>("pages");
-  const { data, loading, error, reload } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
+  const { data, loading, error } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = data?.site;
-
-  // P12-T12 "Start with AI": the wizard's AI path lands here with `?ai=1` to
-  // pop the Studio drawer open and start tailing the job-run conversation it
-  // just kicked off. `previewPageId`/`previewNonce` live here (fed by the
-  // drawer's onChangeEvent, which fires regardless of whether the preview
-  // column is mounted) but the pages-list fallback fetch itself lives in
-  // <SitePreviewPanel>, which only mounts while the drawer is open — otherwise
-  // every site-detail load would issue the same GET the (lazily-mounted)
-  // Pages tab already makes.
-  const [searchParams] = useSearchParams();
-  const [aiOpen, setAiOpen] = useState(searchParams.get("ai") === "1");
-  const [previewPageId, setPreviewPageId] = useState<string | null>(null);
-  const [previewNonce, setPreviewNonce] = useState(0);
-  // Bot-review fix wave item 8: the wizard's AI path lands here with
-  // `ai_error=1` when the site was created but kicking off the initial
-  // build's conversation/job failed — the drawer opens empty (no
-  // conversation exists yet), which would otherwise look unexplained.
-  const aiError = searchParams.get("ai_error") === "1";
-
-  // Task 11 agent-busy guard: lifted from the drawer's onStatusChange so
-  // <SitePreviewPanel> can force its inline editor readonly while the agent is
-  // actively working the site — editing over the AI's own writes would race.
-  const [agentBusy, setAgentBusy] = useState(false);
-
-  function handleChangeEvent(c: AgentChangeEvent) {
-    if (c.page_id) setPreviewPageId(c.page_id);
-    setPreviewNonce((n) => n + 1);
-  }
-
-  function handleStatusChange(_status: AiConversation["status"] | null, busy: boolean) {
-    setAgentBusy(busy);
-  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -135,16 +102,6 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
           <div className="flex items-center gap-3">
             {site && <SaveAsTemplateDialog siteId={site.id} siteName={site.display_name} />}
-            {site && (
-              <button
-                type="button"
-                onClick={() => setAiOpen((v) => !v)}
-                aria-pressed={aiOpen}
-                className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-              >
-                AI
-              </button>
-            )}
             <a
               href={liveSiteUrl(slug)}
               target="_blank"
@@ -157,15 +114,6 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>
       </div>
-
-      {aiError && (
-        <Card>
-          <CardContent className="pt-5 text-sm text-amber-700">
-            The site was created, but the initial AI build couldn’t be started automatically. Send a
-            message in Studio chat to kick it off.
-          </CardContent>
-        </Card>
-      )}
 
       {loading && (
         <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -199,40 +147,18 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             ))}
           </div>
 
-          <div className="flex gap-4">
-            <div role="tabpanel" className="min-w-0 flex-1">
-              {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
-              {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
-              {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
-              {tab === "members" && <MembersTab siteId={site.id} />}
-              {tab === "media" && <MediaTab siteId={site.id} />}
-              {tab === "plugins" && <PluginsTab siteId={site.id} />}
-              {tab === "domains" && <DomainsTab siteId={site.id} />}
-              {tab === "integrations" && <CrmTab site={site} />}
-              {tab === "seo" && <SeoSettingsTab site={site} />}
-              {tab === "settings" && <SettingsTab site={site} />}
-            </div>
-
-            {aiOpen && (
-              <SitePreviewPanel
-                siteId={siteId}
-                previewPageId={previewPageId}
-                previewNonce={previewNonce}
-                agentBusy={agentBusy}
-              />
-            )}
+          <div role="tabpanel" className="min-w-0 flex-1">
+            {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
+            {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
+            {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
+            {tab === "members" && <MembersTab siteId={site.id} />}
+            {tab === "media" && <MediaTab siteId={site.id} />}
+            {tab === "plugins" && <PluginsTab siteId={site.id} />}
+            {tab === "domains" && <DomainsTab siteId={site.id} />}
+            {tab === "integrations" && <CrmTab site={site} />}
+            {tab === "seo" && <SeoSettingsTab site={site} />}
+            {tab === "settings" && <SettingsTab site={site} />}
           </div>
-
-          <AgentChatDrawer
-            siteId={site.id}
-            slug={slug}
-            open={aiOpen}
-            onClose={() => setAiOpen(false)}
-            onSiteChanged={reload}
-            autoTail={searchParams.get("ai") === "1"}
-            onChangeEvent={handleChangeEvent}
-            onStatusChange={handleStatusChange}
-          />
         </>
       )}
     </div>

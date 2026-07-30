@@ -199,7 +199,7 @@ describe("EditorPage (P5-T5.5)", () => {
     mockApi();
     renderAt();
     const link = await screen.findByRole("link", { name: /Back to acme/ });
-    expect(link.getAttribute("href")).toBe("/sites/acme");
+    expect(link.getAttribute("href")).toBe("/sites/acme/manage");
   });
 
   it("toggles publish status and persists it via the save endpoint (P5-T5.10)", async () => {

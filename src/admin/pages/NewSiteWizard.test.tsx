@@ -39,14 +39,17 @@ function routeFetch(
 }
 type TemplateOpt = { id: string; name: string; pages_count: number };
 
-/** Renders at /new (the wizard) with a stubbed /sites/:slug destination so
- * navigation can be asserted the same way PagesTab.test.tsx probes routes. */
+/** Renders at /new (the wizard) with stubbed /sites/:slug and
+ * /sites/:slug/manage destinations so navigation can be asserted the same
+ * way PagesTab.test.tsx probes routes. `location.pathname` distinguishes
+ * which of the two the wizard actually landed on (Task B2 — blank/template
+ * flows now land on /manage, AI flows land on the plain workspace route). */
 function RouteProbe() {
   const { slug } = useParams();
   const location = useLocation();
   return (
     <div>
-      site route reached: {slug} search={location.search}
+      site route reached: {slug} path={location.pathname} search={location.search}
     </div>
   );
 }
@@ -57,6 +60,7 @@ function renderWizard() {
       <Routes>
         <Route path="/new" element={<NewSiteWizard />} />
         <Route path="/sites/:slug" element={<RouteProbe />} />
+        <Route path="/sites/:slug/manage" element={<RouteProbe />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -116,6 +120,12 @@ describe("NewSiteWizard (P4-T4.11 + P7-T7.8)", () => {
     expect(body.slug).toBe("muldoon-dental");
     expect(body.display_name).toBe("Muldoon Dental");
     expect(body.default_brand_tokens["--theme-main"]).toMatch(/^#[0-9a-f]{6}$/i);
+
+    // Task B2: a blank site has no AI conversation to land in — goes
+    // straight to the tab-based management shell, not the workspace.
+    await waitFor(() =>
+      expect(screen.getByText(/path=\/sites\/muldoon-dental\/manage/)).toBeTruthy(),
+    );
   });
 
   it("blank site: surfaces a duplicate-slug 409 inline instead of navigating", async () => {
@@ -150,6 +160,9 @@ describe("NewSiteWizard (P4-T4.11 + P7-T7.8)", () => {
     expect(body).toMatchObject({ slug: "acme-co", display_name: "Acme Co", template_id: "tpl-starter" });
     // It also polls site detail (pages_count) before navigating.
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === "/api/sites/s9")).toBe(true));
+    // Task B2: same reasoning as the blank-site flow — lands on the
+    // populated Pages tab (/manage), not the workspace.
+    await waitFor(() => expect(screen.getByText(/path=\/sites\/acme-co\/manage/)).toBeTruthy());
   });
 
   it("template: surfaces a duplicate-slug 409 inline", async () => {
