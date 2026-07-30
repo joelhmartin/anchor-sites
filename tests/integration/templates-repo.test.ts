@@ -74,6 +74,59 @@ d("templates repository (integration)", () => {
     expect(pages[0].blocks).toHaveLength(2);
   });
 
+  it("round-trips gallery metadata (category, cover_image_url, sort_order)", async () => {
+    const { template } = await createTemplate(
+      {
+        slug: "tpltest-gallery-meta",
+        name: "Gallery Meta",
+        category: "Basic",
+        cover_image_url: "https://example.com/cover.png",
+        sort_order: 5,
+        pages: [],
+      },
+      { pool },
+    );
+    expect(template.category).toBe("Basic");
+    expect(template.cover_image_url).toBe("https://example.com/cover.png");
+    expect(template.sort_order).toBe(5);
+
+    const fetched = await getTemplate(template.id, { pool });
+    expect(fetched!.template.category).toBe("Basic");
+    expect(fetched!.template.cover_image_url).toBe("https://example.com/cover.png");
+    expect(fetched!.template.sort_order).toBe(5);
+  });
+
+  it("defaults gallery metadata to null category/cover_image_url and sort_order 0", async () => {
+    const { template } = await createTemplate(
+      { slug: "tpltest-gallery-defaults", name: "Gallery Defaults", pages: [] },
+      { pool },
+    );
+    expect(template.category).toBeNull();
+    expect(template.cover_image_url).toBeNull();
+    expect(template.sort_order).toBe(0);
+  });
+
+  it("listTemplates orders by sort_order ascending, then name", async () => {
+    await createTemplate(
+      { slug: "tpltest-order-z", name: "Zeta", sort_order: 1, pages: [] },
+      { pool },
+    );
+    await createTemplate(
+      { slug: "tpltest-order-a", name: "Alpha", sort_order: 1, pages: [] },
+      { pool },
+    );
+    await createTemplate(
+      { slug: "tpltest-order-first", name: "Omega", sort_order: 0, pages: [] },
+      { pool },
+    );
+    const list = await listTemplates({ pool, kind: "site" });
+    const ordered = list
+      .filter((t) => t.slug.startsWith("tpltest-order-"))
+      .map((t) => t.slug);
+    // sort_order 0 first (Omega), then sort_order 1 group ordered by name (Alpha, Zeta).
+    expect(ordered).toEqual(["tpltest-order-first", "tpltest-order-a", "tpltest-order-z"]);
+  });
+
   it("getTemplate returns the template + pages ordered by sort_order", async () => {
     const created = await createTemplate(
       {

@@ -31,6 +31,9 @@ describe("template schema (P7-T7.2)", () => {
     const parsed = createTemplateInputSchema.parse({ slug: "starter", name: "Starter" });
     expect(parsed.kind).toBe("site");
     expect(parsed.pages).toEqual([]);
+    expect(parsed.sort_order).toBe(0);
+    expect(parsed.category).toBeUndefined();
+    expect(parsed.cover_image_url).toBeUndefined();
 
     expect(() => createTemplateInputSchema.parse({ slug: "Bad Slug", name: "x" })).toThrow();
     expect(() => createTemplateInputSchema.parse({ slug: "-lead", name: "x" })).toThrow();

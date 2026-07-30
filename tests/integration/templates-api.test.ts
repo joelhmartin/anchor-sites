@@ -166,6 +166,26 @@ d("save-as-template API (integration, P7-T7.3)", () => {
     const starter = res.body.templates.find((t: { slug: string }) => t.slug === "my-starter");
     expect(starter).toBeDefined();
     expect(starter.pages_count).toBe(2);
+    // Gallery metadata shape — present even when unset (default null/0).
+    expect(starter).toHaveProperty("category");
+    expect(starter).toHaveProperty("cover_image_url");
+    expect(starter.sort_order).toBe(0);
+  });
+
+  it("captures gallery metadata (category, cover_image_url, sort_order) when provided", async () => {
+    const res = await auth(
+      request(app).post(`/api/sites/${muldoonSiteId}/save-as-template`),
+    ).send({
+      name: "Gallery Meta",
+      slug: "apitest-gallery-meta",
+      category: "Basic",
+      cover_image_url: "https://example.com/cover.png",
+      sort_order: 3,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.template.category).toBe("Basic");
+    expect(res.body.template.cover_image_url).toBe("https://example.com/cover.png");
+    expect(res.body.template.sort_order).toBe(3);
   });
 
   it("GET /api/templates/:id returns the template + ordered pages; 404 when unknown", async () => {

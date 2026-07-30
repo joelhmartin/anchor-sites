@@ -49,6 +49,12 @@ const saveAsTemplatePayload = z.object({
   page_ids: z.array(z.string().uuid()).optional(),
   /** Capture the site's default brand tokens into the template (default true). */
   include_brand_tokens: z.boolean().default(true),
+  /** Gallery grouping label (e.g. "Basic"). Optional — defaults to null. */
+  category: z.string().max(100).nullable().optional(),
+  /** Gallery card thumbnail URL. Optional — defaults to null. */
+  cover_image_url: z.string().max(2000).nullable().optional(),
+  /** Gallery display order (ascending). Optional — defaults to 0. */
+  sort_order: z.number().int().optional(),
 });
 
 type SourcePageRow = {
@@ -63,6 +69,12 @@ const savePageAsTemplatePayload = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(2000).optional(),
   slug: z.string().regex(SLUG_RE, "slug must be lowercase a-z, 0-9, hyphen; no leading/trailing hyphen").optional(),
+  /** Gallery grouping label (e.g. "Basic"). Optional — defaults to null. */
+  category: z.string().max(100).nullable().optional(),
+  /** Gallery card thumbnail URL. Optional — defaults to null. */
+  cover_image_url: z.string().max(2000).nullable().optional(),
+  /** Gallery display order (ascending). Optional — defaults to 0. */
+  sort_order: z.number().int().optional(),
 });
 
 const pageFromTemplatePayload = z.object({
@@ -131,7 +143,7 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
         return;
       }
       const { siteId } = req.params;
-      const { name, description, include_brand_tokens } = parsed.data;
+      const { name, description, include_brand_tokens, category, cover_image_url, sort_order } = parsed.data;
       const slug = parsed.data.slug ?? slugifyName(name);
 
       try {
@@ -180,6 +192,9 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
             kind: "site",
             source_site_id: siteId,
             brand_tokens: include_brand_tokens ? siteRes.rows[0].default_brand_tokens : {},
+            category: category ?? null,
+            cover_image_url: cover_image_url ?? null,
+            sort_order: sort_order ?? 0,
             pages: pages.map((p) => ({
               slug: p.slug,
               title: p.title,
@@ -225,7 +240,7 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
         return;
       }
       const { siteId, pageId } = req.params;
-      const { name, description } = parsed.data;
+      const { name, description, category, cover_image_url, sort_order } = parsed.data;
       const slug = parsed.data.slug ?? slugifyName(name);
 
       try {
@@ -246,6 +261,9 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
             description,
             kind: "page",
             source_site_id: siteId,
+            category: category ?? null,
+            cover_image_url: cover_image_url ?? null,
+            sort_order: sort_order ?? 0,
             pages: [{ slug: page.slug, title: page.title, blocks: page.blocks ?? [], seo: page.seo ?? {} }],
           },
           { pool },
