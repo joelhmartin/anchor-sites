@@ -4,48 +4,45 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
-import type { AgentTurnEvent } from "../lib/agent-api.js";
 
-// Fixed event sequence Task 11's brief scripts for the "send" path: an
-// assistant text block, a tool_result carrying a page_updated change, then
-// turn_done end_turn. `streamAgentEvents` is mocked to synchronously replay
-// it — no real SSE parsing under test here (that's `agent-api.ts`'s job).
-const SCRIPTED_EVENTS: AgentTurnEvent[] = [
-  { type: "assistant_text", text: "Working…" },
+/**
+ * Task A2 (2026-07-30 lovable-workspace SDD) deleted the inline turn's HTTP
+ * path: `send()` now POSTs `{message}` as a plain enqueue-only request
+ * (mocked via `global.fetch` below, alongside the conversation create/list
+ * routes) and gets back `202 {queued, job_id, conversation_id,
+ * user_message_id}` — never an SSE stream. `streamAgentEvents` is exercised
+ * ONLY by the `/events` tail, which `send()` starts right after every
+ * successful POST, cursored at the returned `user_message_id` (fix round 1,
+ * Finding 1 — reviewer: NOT a null cursor, which would wholesale-replace
+ * the transcript from just the last-50 rows and silently truncate longer
+ * history — see AgentChatDrawer.tsx's `send()` doc comment). These tests
+ * script that tail's `AgentTailEvent`s instead of a live `AgentTurnEvent`
+ * stream.
+ */
+
+/** The fake `user_message_id` every mocked messages-POST response below
+ * returns, for conversation "c1" — matches the `?after=` cursor `send()`
+ * uses to start its tail. */
+const FAKE_USER_MESSAGE_ID = "m-user-1";
+
+// A tail snapshot's messages fixture reused across several tests: an
+// assistant reply plus a tool-result that resolves to a `page_updated`
+// change card — delivered as individual `message` tail events, the way a
+// job-run turn's progress actually lands.
+const ASSISTANT_AND_CHANGE_EVENTS = [
   {
-    type: "tool_result",
-    name: "update_page",
-    ok: true,
-    change: { kind: "page_updated", page_id: "p1", revision_id: "r1", summary: "1 updated" },
+    type: "message",
+    message: {
+      id: "m2",
+      conversation_id: "c1",
+      role: "assistant",
+      content: [{ type: "text", text: "Working…" }],
+      created_at: "t2",
+    },
   },
-  { type: "turn_done", reason: "end_turn" },
-];
-
-// Same turn, but promoted to a background job mid-turn (deadline hit after
-// the first tool call) — the client must then tail `/events` to keep
-// filling in, WITHOUT re-rendering what it already showed live.
-const PROMOTED_EVENTS: AgentTurnEvent[] = [
-  { type: "assistant_text", text: "Working…" },
   {
-    type: "tool_result",
-    name: "update_page",
-    ok: true,
-    change: { kind: "page_updated", page_id: "p1", revision_id: "r1", summary: "1 updated" },
-  },
-  { type: "turn_done", reason: "promoted" },
-];
-
-// The tail's initial `snapshot` on a fresh (never-hydrated) conversation
-// necessarily replays the WHOLE persisted history, including everything
-// this turn already rendered live above — this is exactly what the
-// "hydrate = replace" fix must dedupe against.
-const PROMOTED_SNAPSHOT = {
-  type: "snapshot",
-  conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} },
-  messages: [
-    { id: "m1", conversation_id: "c1", role: "user", content: [{ type: "text", text: "Build a homepage" }], created_at: "t1" },
-    { id: "m2", conversation_id: "c1", role: "assistant", content: [{ type: "text", text: "Working…" }], created_at: "t2" },
-    {
+    type: "message",
+    message: {
       id: "m3",
       conversation_id: "c1",
       role: "tool",
@@ -59,12 +56,11 @@ const PROMOTED_SNAPSHOT = {
       ],
       created_at: "t3",
     },
-  ],
-};
+  },
+];
 
-// `eventScripts` maps a `streamAgentEvents` path to the events it should
-// synchronously replay — lets each test drive both the inline "messages"
-// stream and, when relevant, the tailed "events" stream distinctly.
+// `eventScripts` maps a `streamAgentEvents` path to the tail events it
+// should synchronously replay.
 let eventScripts: Record<string, unknown[]>;
 
 const streamAgentEvents = vi.fn(
@@ -106,6 +102,15 @@ const NEW_CONVERSATION = {
   conversation: { id: "c1", site_id: "s1", title: "New conversation", status: "active", token_usage: {} },
 };
 
+/** The messages route's Task A2 success body: `202 {queued, job_id,
+ * conversation_id, user_message_id}` (fix round 1, Finding 1). */
+function queuedMessagesResponse(conversationId: string, userMessageId: string = FAKE_USER_MESSAGE_ID) {
+  return json(
+    { queued: true, job_id: "job-1", conversation_id: conversationId, user_message_id: userMessageId },
+    202,
+  );
+}
+
 describe("AgentChatDrawer (P-T11)", () => {
   const realFetch = global.fetch;
 
@@ -123,7 +128,8 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("sends a message, renders the assistant bubble + change card, and clears the textarea", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = SCRIPTED_EVENTS;
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = ASSISTANT_AND_CHANGE_EVENTS;
+    let capturedBody: unknown;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -132,6 +138,10 @@ describe("AgentChatDrawer (P-T11)", () => {
       }
       if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
         return json(NEW_CONVERSATION, 201);
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
+        capturedBody = init?.body ? JSON.parse(init.body as string) : undefined;
+        return queuedMessagesResponse("c1");
       }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
@@ -145,10 +155,11 @@ describe("AgentChatDrawer (P-T11)", () => {
     fireEvent.change(textarea, { target: { value: "Build a homepage" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    // Lazily creates the conversation, then streams the scripted turn.
+    // Lazily creates the conversation, POSTs (enqueue-only) the message,
+    // then tails `/events` for the background job's progress.
     await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(1));
-    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/messages");
-    expect((streamAgentEvents.mock.calls[0][1] as { body?: unknown }).body).toEqual({ message: "Build a homepage" });
+    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/events?after=m-user-1");
+    expect(capturedBody).toEqual({ message: "Build a homepage" });
 
     await waitFor(() => expect(screen.getByText("Working…")).toBeTruthy());
     expect(screen.getByText("1 updated")).toBeTruthy();
@@ -157,7 +168,7 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("Revert calls the restore route and fires onSiteChanged", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = SCRIPTED_EVENTS;
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = ASSISTANT_AND_CHANGE_EVENTS;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -166,6 +177,9 @@ describe("AgentChatDrawer (P-T11)", () => {
       }
       if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
         return json(NEW_CONVERSATION, 201);
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
+        return queuedMessagesResponse("c1");
       }
       if (url === "/api/sites/s1/pages/p1/revisions/r1/restore" && method === "POST") {
         return json({ restored_from: "r1", revision: { id: "r2", created_at: "2026-07-27T00:00:00Z" } });
@@ -181,7 +195,7 @@ describe("AgentChatDrawer (P-T11)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Revert" })).toBeTruthy());
-    // onSiteChanged already fired once for the streamed change event.
+    // onSiteChanged already fired once for the tailed change.
     expect(onSiteChanged).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Revert" }));
@@ -192,43 +206,6 @@ describe("AgentChatDrawer (P-T11)", () => {
       ),
     );
     await waitFor(() => expect(onSiteChanged).toHaveBeenCalledTimes(2));
-  });
-
-  it("does not duplicate bubbles/cards when a turn is promoted mid-turn and the tail replays history (fix round 1, finding 1)", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = PROMOTED_EVENTS;
-    eventScripts["/api/sites/s1/agent/conversations/c1/events"] = [PROMOTED_SNAPSHOT];
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
-        return json({ conversations: [] });
-      }
-      if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
-        return json(NEW_CONVERSATION, 201);
-      }
-      throw new Error(`unexpected fetch: ${method} ${url}`);
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    const { onSiteChanged } = renderDrawer();
-
-    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-    // The promotion triggers a second streamAgentEvents call (the tail).
-    await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(2));
-    expect(streamAgentEvents.mock.calls[1][0]).toBe("/api/sites/s1/agent/conversations/c1/events");
-
-    // The tail's snapshot replays the SAME turn already shown live — must
-    // render exactly once, not twice.
-    await waitFor(() => expect(screen.getAllByText("Working…")).toHaveLength(1));
-    expect(screen.getAllByText("1 updated")).toHaveLength(1);
-    expect(screen.getAllByText("Build a homepage")).toHaveLength(1);
-
-    // The live tool_result already fired onSiteChanged once; the replayed
-    // history must not fire it again.
-    expect(onSiteChanged).toHaveBeenCalledTimes(1);
   });
 
   it("hydrates the transcript from persisted history when reopening on an existing conversation (fix round 1, finding 2)", async () => {
@@ -355,73 +332,11 @@ describe("AgentChatDrawer (P-T11)", () => {
     expect(onSiteChanged).toHaveBeenCalledTimes(1);
   });
 
-  it("does not duplicate on a promoted send after hydration, despite a stale non-null cursor (fix round 3)", async () => {
-    // Reopen: an existing conversation with history — hydration sets
-    // lastMessageIdRef to "m2" (non-null). This is the exact precondition
-    // the round-3 regression needs: a promotion happening AFTER a prior
-    // hydration, so a naive `startTail(cid, lastMessageIdRef.current)`
-    // would use a non-null cursor and hit the MERGE path instead of REPLACE.
-    eventScripts["/api/sites/s1/agent/conversations/c9/messages"] = [
-      { type: "assistant_text", text: "On it…" },
-      {
-        type: "tool_result",
-        name: "update_page",
-        ok: true,
-        change: { kind: "page_updated", page_id: "p9", revision_id: "r11", summary: "5 updated" },
-      },
-      { type: "turn_done", reason: "promoted" },
-    ];
-    // The tail must be restarted with a NULL cursor (no `?after=`) — so its
-    // snapshot is the full last-50 set, including the pre-existing history
-    // AND this turn's own persisted messages (which are also already on
-    // screen as transient live items). Only registering this event script
-    // under the no-query path (not `.../events?after=m2`) also proves the
-    // fix: if the code regressed to a non-null cursor, this snapshot would
-    // never fire and the assertions below would see only the live items.
-    eventScripts["/api/sites/s1/agent/conversations/c9/events"] = [
-      {
-        type: "snapshot",
-        conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
-        messages: [
-          { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
-          {
-            id: "m2",
-            conversation_id: "c9",
-            role: "assistant",
-            content: [{ type: "text", text: "Hi there" }],
-            created_at: "t2",
-          },
-          {
-            id: "m3",
-            conversation_id: "c9",
-            role: "user",
-            content: [{ type: "text", text: "Build a homepage" }],
-            created_at: "t3",
-          },
-          {
-            id: "m4",
-            conversation_id: "c9",
-            role: "assistant",
-            content: [{ type: "text", text: "On it…" }],
-            created_at: "t4",
-          },
-          {
-            id: "m5",
-            conversation_id: "c9",
-            role: "tool",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: "t3",
-                content: JSON.stringify({ page_id: "p9", revision_id: "r11", diff: { summary: "5 updated" } }),
-                is_error: false,
-              },
-            ],
-            created_at: "t5",
-          },
-        ],
-      },
-    ];
+  it("Fix round 1 (Finding 1 — reviewer) — preserves earlier history across a send instead of truncating it to the tail's fresh-messages window", async () => {
+    // Reopen an existing, already-long conversation: hydration renders
+    // "Ancient history" (this stands in for a turn far enough back that a
+    // null-cursor tail snapshot — capped at the last 50 ai_messages rows —
+    // would no longer include it).
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -434,58 +349,59 @@ describe("AgentChatDrawer (P-T11)", () => {
         return json({
           conversation: { id: "c9", site_id: "s1", title: "Old", status: "active", token_usage: {} },
           messages: [
-            { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Hello" }], created_at: "t1" },
             {
-              id: "m2",
+              id: "m1",
               conversation_id: "c9",
               role: "assistant",
-              content: [{ type: "text", text: "Hi there" }],
-              created_at: "t2",
+              content: [{ type: "text", text: "Ancient history" }],
+              created_at: "t1",
             },
           ],
         });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c9/messages" && method === "POST") {
+        return queuedMessagesResponse("c9", "m-new-user");
       }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const { onSiteChanged } = renderDrawer();
+    // The post-send tail is scripted to deliver ONLY the new turn's own
+    // reply — deliberately NOT "Ancient history" — so if `send()` ever
+    // regressed to a null cursor (the full-REPLACE path), "Ancient history"
+    // would disappear once this snapshot lands. It must not.
+    eventScripts["/api/sites/s1/agent/conversations/c9/events?after=m-new-user"] = [
+      {
+        type: "message",
+        message: {
+          id: "m3",
+          conversation_id: "c9",
+          role: "assistant",
+          content: [{ type: "text", text: "Fresh reply" }],
+          created_at: "t3",
+        },
+      },
+    ];
 
-    // History hydrates first (lastMessageIdRef becomes "m2").
-    await waitFor(() => expect(screen.getByText("Hi there")).toBeTruthy());
+    renderDrawer();
+    await waitFor(() => expect(screen.getByText("Ancient history")).toBeTruthy());
 
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "keep going" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    // Live turn events render first ("On it…" + the change card).
-    await waitFor(() => expect(screen.getByText("On it…")).toBeTruthy());
-
-    // Promotion restarts the tail — assert it used a NULL cursor.
-    await waitFor(() =>
-      expect(
-        streamAgentEvents.mock.calls.some((c) => c[0] === "/api/sites/s1/agent/conversations/c9/events"),
-      ).toBe(true),
+    await waitFor(() => expect(screen.getByText("Fresh reply")).toBeTruthy());
+    // The turn that predates this send is STILL visible — no truncation.
+    expect(screen.getByText("Ancient history")).toBeTruthy();
+    // The tail was cursored at the returned user_message_id, not restarted null.
+    expect(streamAgentEvents.mock.calls[0][0]).toBe(
+      "/api/sites/s1/agent/conversations/c9/events?after=m-new-user",
     );
-    expect(
-      streamAgentEvents.mock.calls.some((c) => c[0] === "/api/sites/s1/agent/conversations/c9/events?after=m2"),
-    ).toBe(false);
-
-    // The null-cursor snapshot's full set (history + this turn) replaces
-    // the transcript — every bubble/card renders exactly once, not twice.
-    await waitFor(() => expect(screen.getAllByText("5 updated")).toHaveLength(1));
-    expect(screen.getAllByText("Hello")).toHaveLength(1);
-    expect(screen.getAllByText("Hi there")).toHaveLength(1);
-    expect(screen.getAllByText("Build a homepage")).toHaveLength(1);
-    expect(screen.getAllByText("On it…")).toHaveLength(1);
-
-    // The live tool_result already fired onSiteChanged once; the replayed
-    // snapshot (a replace, not a merge) must not fire it again.
-    expect(onSiteChanged).toHaveBeenCalledTimes(1);
   });
 
   // ── Chat-UI upgrade (ported patterns from anchor-operations' copilot) ──
 
-  /** GET .../conversations → none yet; POST .../conversations → NEW_CONVERSATION. */
+  /** GET .../conversations → none yet; POST .../conversations → NEW_CONVERSATION;
+   * POST .../c1/messages → Task A2's `202 {queued, job_id, conversation_id}`. */
   function mockFreshConversationFetch() {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -497,9 +413,13 @@ describe("AgentChatDrawer (P-T11)", () => {
         return json(NEW_CONVERSATION, 201);
       }
       if (url === "/api/sites/s1/agent/conversations/c1" && method === "GET") {
-        // Best-effort per-turn token-delta refetch — not under test here,
-        // just needs to resolve so it doesn't reject as "unexpected fetch".
+        // Best-effort per-turn token-delta refetch (fires once the tail
+        // reports a settled status) — not under test here, just needs to
+        // resolve so it doesn't reject as "unexpected fetch".
         return json({ conversation: NEW_CONVERSATION.conversation });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
+        return queuedMessagesResponse("c1");
       }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
@@ -507,93 +427,7 @@ describe("AgentChatDrawer (P-T11)", () => {
     return fetchMock;
   }
 
-  it("renders a running tool-step row mid-turn (with a typing pulse), before the turn finishes (item 1 + 3)", async () => {
-    // The mocked `streamAgentEvents` here never resolves — like a real SSE
-    // connection that's still open — so we can drive `onEvent` by hand and
-    // inspect the transient live-turn state without racing `send()`'s own
-    // completion (which clears the live turn once the stream ends).
-    let onEventCb: ((e: Record<string, unknown>) => void) | undefined;
-    streamAgentEvents.mockImplementationOnce(
-      (_path: string, opts: { onEvent: (e: Record<string, unknown>) => void }) => {
-        onEventCb = opts.onEvent;
-        return new Promise<void>(() => {});
-      },
-    );
-    mockFreshConversationFetch();
-
-    renderDrawer();
-    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-    await waitFor(() => expect(onEventCb).toBeTruthy());
-    act(() => onEventCb!({ type: "tool_call", name: "get_site_overview", input: {} }));
-
-    await waitFor(() => expect(screen.getByText("Reviewing the site")).toBeTruthy());
-    expect(screen.getByLabelText("assistant is typing")).toBeTruthy();
-    // Still in flight — Stop, not Send.
-    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
-  });
-
-  it("collapses tool steps into a 'Worked through N steps' disclosure once the turn finishes (item 1)", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = [
-      { type: "tool_call", name: "get_site_overview", input: {} },
-      { type: "tool_result", name: "get_site_overview", ok: true },
-      { type: "assistant_text", text: "Here's an overview." },
-      { type: "turn_done", reason: "end_turn" },
-    ];
-    mockFreshConversationFetch();
-
-    renderDrawer();
-    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-    await waitFor(() => expect(screen.getByText("Here's an overview.")).toBeTruthy());
-    const toggle = screen.getByRole("button", { name: /Worked through 1 step/ });
-    expect(toggle).toBeTruthy();
-    // Collapsed by default — the raw step label isn't in the DOM yet.
-    expect(screen.queryByText("Reviewing the site")).toBeNull();
-
-    fireEvent.click(toggle);
-    expect(screen.getByText("Reviewing the site")).toBeTruthy();
-  });
-
-  it("coalesces consecutive assistant_text events into a single assistant bubble (item 6)", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = [
-      { type: "assistant_text", text: "Building your " },
-      { type: "assistant_text", text: "homepage now." },
-      { type: "turn_done", reason: "end_turn" },
-    ];
-    mockFreshConversationFetch();
-
-    renderDrawer();
-    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-    await waitFor(() => expect(screen.getByText("Building your homepage now.")).toBeTruthy());
-    expect(screen.getAllByText("Building your homepage now.")).toHaveLength(1);
-  });
-
-  it("renders a centered amber system line for a turn_done budget reason (item 8)", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = [
-      { type: "assistant_text", text: "Partial answer." },
-      { type: "turn_done", reason: "budget" },
-    ];
-    mockFreshConversationFetch();
-
-    renderDrawer();
-    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-
-    await waitFor(() => expect(screen.getByText("Partial answer.")).toBeTruthy());
-    expect(screen.getByText("Paused — this turn hit its budget.")).toBeTruthy();
-  });
-
   it("Enter sends the message and clears the textarea; Shift+Enter does not send (item 5)", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = [{ type: "turn_done", reason: "end_turn" }];
     mockFreshConversationFetch();
 
     renderDrawer();
@@ -609,17 +443,24 @@ describe("AgentChatDrawer (P-T11)", () => {
   });
 
   it("shows preset chips in the empty state that call send() when clicked (item 9)", async () => {
-    eventScripts["/api/sites/s1/agent/conversations/c1/messages"] = [{ type: "turn_done", reason: "end_turn" }];
-    mockFreshConversationFetch();
+    const fetchMock = mockFreshConversationFetch();
 
     renderDrawer();
     await waitFor(() => expect(screen.getByText("Add a services page")).toBeTruthy());
 
     fireEvent.click(screen.getByText("Add a services page"));
     await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(1));
-    expect((streamAgentEvents.mock.calls[0][1] as { body?: unknown }).body).toEqual({
-      message: "Add a services page",
-    });
+    expect(streamAgentEvents.mock.calls[0][0]).toBe("/api/sites/s1/agent/conversations/c1/events?after=m-user-1");
+    expect(
+      fetchMock.mock.calls.some((c) => {
+        const [input, init] = c as [RequestInfo | URL, RequestInit | undefined];
+        return (
+          String(input) === "/api/sites/s1/agent/conversations/c1/messages" &&
+          init?.body != null &&
+          JSON.parse(init.body as string).message === "Add a services page"
+        );
+      }),
+    ).toBe(true);
     // The empty-state CHIP is gone once the conversation has content (the
     // same text now legitimately appears once more, as the user bubble).
     expect(screen.queryByRole("button", { name: "Add a services page" })).toBeNull();
@@ -628,12 +469,11 @@ describe("AgentChatDrawer (P-T11)", () => {
 
   it("Stop aborts the in-flight turn and renders a centered 'Stopped.' line (item 4)", async () => {
     let capturedSignal: AbortSignal | undefined;
-    let rejectTurn: (e: unknown) => void = () => {};
     streamAgentEvents.mockImplementationOnce(
       (_path: string, opts: { signal?: AbortSignal; onEvent: (e: Record<string, unknown>) => void }) =>
-        new Promise<void>((_resolve, reject) => {
+        new Promise<void>(() => {
+          // Never resolves — like a real tail connection that's still open.
           capturedSignal = opts.signal;
-          rejectTurn = reject;
         }),
     );
     mockFreshConversationFetch();
@@ -643,15 +483,13 @@ describe("AgentChatDrawer (P-T11)", () => {
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    const stopButton = await screen.findByRole("button", { name: "Stop" });
+    // Wait for the tail to actually start before stopping it.
+    await waitFor(() => expect(streamAgentEvents).toHaveBeenCalledTimes(1));
+    const stopButton = screen.getByRole("button", { name: "Stop" });
     fireEvent.click(stopButton);
 
     expect(capturedSignal?.aborted).toBe(true);
-
-    const abortError = new DOMException("Aborted", "AbortError");
-    rejectTurn(abortError);
-
-    await waitFor(() => expect(screen.getByText("Stopped.")).toBeTruthy());
+    expect(screen.getByText("Stopped.")).toBeTruthy();
     // Send is available again — the turn is no longer "in flight".
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
@@ -702,13 +540,12 @@ describe("AgentChatDrawer (P-T11)", () => {
       if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
         return json(NEW_CONVERSATION, 201);
       }
+      if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
+        return json({ error: "turn already running" }, 409);
+      }
       throw new Error(`unexpected fetch: ${method} ${url}`);
     });
     global.fetch = fetchMock as unknown as typeof fetch;
-    streamAgentEvents.mockImplementationOnce(async () => {
-      const { ApiError } = await import("../lib/apiFetch.js");
-      throw new ApiError("agent stream request failed (409)", 409, { error: "turn already running" });
-    });
 
     renderDrawer();
     await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
@@ -719,19 +556,18 @@ describe("AgentChatDrawer (P-T11)", () => {
       expect(screen.getByText("A build is already running — wait for it to finish.")).toBeTruthy(),
     );
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+    // A 409 never gets far enough to start a tail.
+    expect(streamAgentEvents).not.toHaveBeenCalled();
   });
 
   // ── Task 11: onStatusChange (site-detail agent-busy guard) ──
 
-  it("reports busy via onStatusChange while a turn is in flight, and settles after turn_done", async () => {
+  it("reports busy via onStatusChange while a turn is in flight, and settles once the tail reports a non-running status", async () => {
     let onEventCb: ((e: Record<string, unknown>) => void) | undefined;
-    let resolveStream: (() => void) | undefined;
     streamAgentEvents.mockImplementationOnce(
       (_path: string, opts: { onEvent: (e: Record<string, unknown>) => void }) => {
         onEventCb = opts.onEvent;
-        return new Promise<void>((resolve) => {
-          resolveStream = resolve;
-        });
+        return new Promise<void>(() => {});
       },
     );
     mockFreshConversationFetch();
@@ -751,12 +587,9 @@ describe("AgentChatDrawer (P-T11)", () => {
       expect(onStatusChange.mock.calls.some(([status, busy]) => status === "active" && busy === true)).toBe(true),
     );
 
-    // Mirrors a real stream: turn_done fires first, then the SSE connection closes.
-    act(() => onEventCb!({ type: "turn_done", reason: "end_turn" }));
-    await act(async () => {
-      resolveStream?.();
-      await Promise.resolve();
-    });
+    // No more in-request `turn_done` to watch for (Task A2) — a tailed
+    // `status` event settling back to "active" is what clears busy now.
+    act(() => onEventCb!({ type: "status", status: "active" }));
 
     await waitFor(() =>
       expect(onStatusChange.mock.calls[onStatusChange.mock.calls.length - 1]).toEqual(["active", false]),
@@ -801,5 +634,148 @@ describe("AgentChatDrawer (P-T11)", () => {
     await waitFor(() =>
       expect(onStatusChange.mock.calls.some(([status, busy]) => status === "running" && busy === true)).toBe(true),
     );
+  });
+
+  // ── Fix round 1 (Finding 2 — reviewer): mid-turn progress feedback ──
+  //
+  // A background job's only mid-turn signal is what lands in ai_messages as
+  // the tail polls it — no in-request event stream. These assert the tool
+  // rows the tail delivers render as visible steps (not just page-mutating
+  // tools — search_stock_images has no `change` card at all), and that the
+  // conversation's `"running"` status renders a busy/typing indicator.
+
+  it("Fix round 1 (Finding 2 — reviewer) — a tailed tool_call row for a non-page tool renders a visible step", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_search_1", name: "search_stock_images", input: {} }],
+          created_at: "t2",
+        },
+      },
+    ];
+    mockFreshConversationFetch();
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Find some photos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // "search_stock_images" has no page_id in its result, so history.ts's
+    // existing `change`-card derivation would never have shown anything for
+    // it — this step row is the ONLY visible feedback for this tool call.
+    await waitFor(() => expect(screen.getByText("Searching stock photos")).toBeTruthy());
+  });
+
+  it("flips a tailed step from running to done once its matching tool_result row lands, without duplicating it", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_search_1", name: "search_stock_images", input: {} }],
+          created_at: "t2",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          id: "m3",
+          conversation_id: "c1",
+          role: "tool",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_search_1",
+              content: JSON.stringify({ results: [] }),
+              is_error: false,
+            },
+          ],
+          created_at: "t3",
+        },
+      },
+    ];
+    mockFreshConversationFetch();
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Find some photos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByText("Searching stock photos")).toBeTruthy());
+    // Resolved in place (existing item flipped to done), not appended again.
+    expect(screen.getAllByText("Searching stock photos")).toHaveLength(1);
+  });
+
+  it("Fix round 1 (Finding 2 — reviewer) — renders a busy/typing indicator while the conversation status is 'running'", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      { type: "status", status: "running" },
+    ];
+    mockFreshConversationFetch();
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build something" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByLabelText("assistant is typing")).toBeTruthy());
+  });
+
+  // ── Task A4: Anthropic API failures surface a clear label, not a bare
+  // amber "internal" ──
+
+  it("renders the Anthropic error label as an assistant message and shows Resume once the tail reports status error (Task A4)", async () => {
+    eventScripts["/api/sites/s1/agent/conversations/c1/events?after=m-user-1"] = [
+      {
+        type: "message",
+        message: {
+          id: "m2",
+          conversation_id: "c1",
+          role: "assistant",
+          content: [
+            { type: "text", text: "Anthropic credit balance too low — top up at console.anthropic.com" },
+          ],
+          created_at: "t2",
+        },
+      },
+      { type: "status", status: "error" },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({ conversations: [] });
+      }
+      if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
+        return json(NEW_CONVERSATION, 201);
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1" && method === "GET") {
+        // Per-turn usage-delta refetch, fired once the tail settles to a
+        // non-"running" status — must reflect the SAME settled status the
+        // tail just reported, or this refetch would clobber it back to
+        // "active" and hide the Resume affordance the test asserts below.
+        return json({ conversation: { ...NEW_CONVERSATION.conversation, status: "error" } });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
+        return queuedMessagesResponse("c1");
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderDrawer();
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Build a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Anthropic credit balance too low — top up at console.anthropic.com")).toBeTruthy(),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy());
   });
 });

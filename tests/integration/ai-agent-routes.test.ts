@@ -9,21 +9,12 @@ import { setupAgentDb } from "../helpers/agent-db.js";
 import { adminAiAgentRouter, sseSend } from "../../src/server/routes/admin-ai-agent.js";
 import { adminPagesRouter } from "../../src/server/routes/admin-pages.js";
 import { appendMessage, setConversationStatus, getConversation } from "../../src/server/ai/agent/repo.js";
-import type { AgentTurnEvent } from "../../src/server/ai/agent/loop.js";
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
 
 const ADMIN_TOKEN = "test-admin-token";
 const auth = (r: request.Test) => r.set("X-Admin-Token", ADMIN_TOKEN);
-
-// Reads a text/event-stream response body fully (supertest's default JSON
-// parser chokes on `data: {...}\n\n` framing) — pattern from the task brief.
-const sseParser = (res: request.Response, cb: (err: Error | null, body: string) => void) => {
-  let data = "";
-  res.on("data", (c: Buffer) => (data += c.toString("utf8")));
-  res.on("end", () => cb(null, data));
-};
 
 /**
  * Fix round 1 (reviewer extra #2): grabs just the FIRST SSE frame off a raw
@@ -95,7 +86,6 @@ d("agent HTTP API (integration, Task 10)", () => {
   // enqueue's catch path is what's under test.
   let noEnqueueApp: express.Express;
   let enqueueSpy: ReturnType<typeof vi.fn>;
-  let runTurnSpy: ReturnType<typeof vi.fn>;
   // Round 2 fix, item 1: injectable so a null `enqueue()` result can be
   // driven down either the "queue is down" (503) or "pg-boss deduped it"
   // (202 deduped:true) path without touching the real pgboss schema.
@@ -108,11 +98,6 @@ d("agent HTTP API (integration, Task 10)", () => {
     process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
 
     enqueueSpy = vi.fn(async () => "job-id-1");
-    runTurnSpy = vi.fn(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
-      input.onEvent?.({ type: "assistant_text", text: "hello from the stub turn" });
-      input.onEvent?.({ type: "turn_done", reason: "end_turn" });
-      return { reason: "end_turn" as const, toolCalls: 0 };
-    });
     hasLiveAgentTurnJobSpy = vi.fn(async () => false);
 
     const a = express();
@@ -121,7 +106,6 @@ d("agent HTTP API (integration, Task 10)", () => {
       "/api",
       adminAiAgentRouter({
         pool: db.getPool(),
-        runTurn: runTurnSpy,
         enqueue: enqueueSpy,
         hasLiveAgentTurnJob: hasLiveAgentTurnJobSpy,
         messageRateLimit: { max: 200, windowMs: 60_000 },
@@ -136,7 +120,6 @@ d("agent HTTP API (integration, Task 10)", () => {
       "/api",
       adminAiAgentRouter({
         pool: db.getPool(),
-        runTurn: runTurnSpy,
         messageRateLimit: { max: 200, windowMs: 60_000 },
       }),
     );
@@ -238,10 +221,11 @@ d("agent HTTP API (integration, Task 10)", () => {
     expect(enqueueSpy).toHaveBeenCalledWith({
       conversationId: res.body.conversation.id,
       siteId: site.id,
+      continuation: 0,
     });
   });
 
-  it("run:\"job\" on a message POST enqueues and returns 202 with job_id", async () => {
+  it("Task A2 — a message POST enqueues an AGENT_TURN job (payload {conversationId, siteId, continuation: 0}), persists the user message, and returns 202 {queued, job_id, conversation_id} — no agent turn runs in-request", async () => {
     const site = await db.seedSite("agent-routes-msg-job");
     const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
     const conversationId = created.body.conversation.id;
@@ -249,12 +233,45 @@ d("agent HTTP API (integration, Task 10)", () => {
     enqueueSpy.mockClear();
     const res = await auth(
       request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-    ).send({ message: "keep going", run: "job" });
+    ).send({ message: "keep going" });
     expect(res.status).toBe(202);
+    expect(res.headers["content-type"]).toContain("application/json");
     expect(res.body.queued).toBe(true);
     expect(res.body.job_id).toBe("job-id-1");
+    expect(res.body.conversation_id).toBe(conversationId);
     expect(enqueueSpy).toHaveBeenCalledTimes(1);
-    expect(enqueueSpy).toHaveBeenCalledWith({ conversationId, siteId: site.id });
+    expect(enqueueSpy).toHaveBeenCalledWith({ conversationId, siteId: site.id, continuation: 0 });
+
+    // The user message was persisted by the route itself, before enqueueing.
+    const detail = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    expect(
+      detail.body.messages.some(
+        (m: { role: string; content: unknown }) =>
+          m.role === "user" &&
+          JSON.stringify(m.content).includes("keep going"),
+      ),
+    ).toBe(true);
+  });
+
+  it("Fix round 1 (Finding 1 — reviewer) — the 202 response includes user_message_id, the real persisted id of the just-appended user row, so the client can tail from a non-null cursor instead of replacing its whole transcript", async () => {
+    const site = await db.seedSite("agent-routes-user-message-id");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+
+    const res = await auth(
+      request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
+    ).send({ message: "keep going" });
+    expect(res.status).toBe(202);
+    expect(typeof res.body.user_message_id).toBe("string");
+
+    const detail = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    const userMessage = detail.body.messages.find((m: { role: string }) => m.role === "user");
+    expect(userMessage).toBeTruthy();
+    expect(res.body.user_message_id).toBe(userMessage.id);
   });
 
   it("Fix round 1 — run:\"job\" with the DEFAULT enqueue (pg-boss unbooted) 503s instead of lying queued:true", async () => {
@@ -279,7 +296,7 @@ d("agent HTTP API (integration, Task 10)", () => {
 
     const res = await auth(
       request(noEnqueueApp).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-    ).send({ message: "keep going", run: "job" });
+    ).send({ message: "keep going" });
     expect(res.status).toBe(503);
     expect(res.body.error).toBe("job queue unavailable");
 
@@ -303,112 +320,30 @@ d("agent HTTP API (integration, Task 10)", () => {
     expect(res.body.error).toBe("conversation not found");
   });
 
-  it("inline message POST streams SSE with the injected turn's events, ending in turn_done", async () => {
-    const site = await db.seedSite("agent-routes-inline");
+  it("Task A2 — a message POST never streams SSE and never runs an agent turn in-request; it's always 202 JSON, job tailed via GET .../events", async () => {
+    const site = await db.seedSite("agent-routes-no-inline");
     const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
     const conversationId = created.body.conversation.id;
 
     const res = await auth(
-      request(app)
-        .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
-        .buffer(true)
-        .parse(sseParser),
+      request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
     ).send({ message: "hello agent" });
 
-    expect(res.headers["content-type"]).toContain("text/event-stream");
-    expect(res.headers["cache-control"]).toContain("no-transform");
-    expect(res.body).toContain("hello from the stub turn");
-    expect(res.body).toContain("turn_done");
-    expect(res.body).toContain("end_turn");
+    expect(res.headers["content-type"]).not.toContain("text/event-stream");
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({
+      queued: true,
+      job_id: "job-id-1",
+      conversation_id: conversationId,
+      user_message_id: expect.any(String),
+    });
 
-    // The user message + the (stub-emitted) assistant text should both be
-    // persisted — onEvent alone doesn't persist; that's the loop's job in
-    // real usage, but the ROUTE itself must have appended the user message.
+    // The route persisted the user message itself; nothing else (no
+    // assistant reply) is written in-request — that's the job's job.
     const detail = await auth(
       request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
     );
-    expect(detail.body.messages.some((m: { role: string }) => m.role === "user")).toBe(true);
-  });
-
-  it("a promoted turn enqueues the continuation job exactly once and reports promoted", async () => {
-    const site = await db.seedSite("agent-routes-promoted");
-    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
-    const conversationId = created.body.conversation.id;
-
-    runTurnSpy.mockImplementationOnce(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
-      input.onEvent?.({ type: "turn_done", reason: "promoted" });
-      return { reason: "promoted" as const, toolCalls: 15 };
-    });
-    enqueueSpy.mockClear();
-
-    const res = await auth(
-      request(app)
-        .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
-        .buffer(true)
-        .parse(sseParser),
-    ).send({ message: "do a big build" });
-
-    expect(res.body).toContain("promoted");
-    expect(enqueueSpy).toHaveBeenCalledTimes(1);
-    expect(enqueueSpy).toHaveBeenCalledWith({ conversationId, siteId: site.id });
-  });
-
-  it("Important 5 — a promoted turn whose continuation enqueue fails reports a second turn_done error frame and marks the conversation status:error instead of stalling silently", async () => {
-    const site = await db.seedSite("agent-routes-promoted-enqueue-fails");
-    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
-    const conversationId = created.body.conversation.id;
-
-    runTurnSpy.mockImplementationOnce(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
-      input.onEvent?.({ type: "turn_done", reason: "promoted" });
-      return { reason: "promoted" as const, toolCalls: 15 };
-    });
-    enqueueSpy.mockImplementationOnce(async () => null);
-
-    const res = await auth(
-      request(app)
-        .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
-        .buffer(true)
-        .parse(sseParser),
-    ).send({ message: "do a big build" });
-
-    // Both turn_done frames land: the loop's own "promoted" (already told
-    // the client a continuation was expected) and the route's follow-up
-    // "error" once the enqueue for that continuation came back empty.
-    expect(res.body).toContain("promoted");
-    expect(res.body).toContain("continuation could not be queued");
-
-    const detail = await auth(
-      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
-    );
-    expect(detail.body.conversation.status).toBe("error");
-  });
-
-  it("catches a throwing turn and streams a turn_done error frame instead of crashing", async () => {
-    const site = await db.seedSite("agent-routes-turn-throws");
-    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
-    const conversationId = created.body.conversation.id;
-
-    runTurnSpy.mockImplementationOnce(async () => {
-      throw new Error("boom");
-    });
-
-    const res = await auth(
-      request(app)
-        .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
-        .buffer(true)
-        .parse(sseParser),
-    ).send({ message: "this will throw" });
-
-    expect(res.body).toContain("turn_done");
-    expect(res.body).toContain("\"reason\":\"error\"");
-
-    // Minor 6: symmetry with the job path (agent-turn.ts) — an inline model
-    // call that throws must also leave the conversation in status:"error",
-    // not "active", so the existing resume-on-error path picks it back up.
-    const detail = await auth(
-      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
-    );
-    expect(detail.body.conversation.status).toBe("error");
+    expect(detail.body.messages.map((m: { role: string }) => m.role)).toEqual(["user"]);
   });
 
   describe("GET .../events snapshot semantics (fix round 1, reviewer extra #2)", () => {
@@ -533,7 +468,7 @@ d("agent HTTP API (integration, Task 10)", () => {
       expect(detail.body.messages).toEqual([]);
     });
 
-    it("409s a run:\"job\" message POST while the conversation is already 'running'", async () => {
+    it("409s a message POST while the conversation is already 'running', without ever calling enqueue", async () => {
       const site = await db.seedSite("agent-routes-turn-lock-msg-job");
       const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
       const conversationId = created.body.conversation.id;
@@ -542,7 +477,7 @@ d("agent HTTP API (integration, Task 10)", () => {
       enqueueSpy.mockClear();
       const res = await auth(
         request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "hi", run: "job" });
+      ).send({ message: "hi" });
       expect(res.status).toBe(409);
       expect(res.body.error).toBe("turn already running");
       expect(enqueueSpy).not.toHaveBeenCalled();
@@ -559,42 +494,23 @@ d("agent HTTP API (integration, Task 10)", () => {
       );
 
       const res = await auth(
-        request(app)
-          .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
-          .buffer(true)
-          .parse(sseParser),
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
       ).send({ message: "hello again" });
-      expect(res.headers["content-type"]).toContain("text/event-stream");
-      expect(res.body).toContain("turn_done");
+      expect(res.status).toBe(202);
+      expect(res.body.queued).toBe(true);
 
       const convAfter = await getConversation(db.getPool(), conversationId, site.id);
       expect(convAfter!.status).toBe("active");
     });
 
-    it("an inline turn releases the lock back to 'active' when it finishes normally", async () => {
-      const site = await db.seedSite("agent-routes-turn-lock-release");
-      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
-      const conversationId = created.body.conversation.id;
-
-      await auth(
-        request(app)
-          .post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`)
-          .buffer(true)
-          .parse(sseParser),
-      ).send({ message: "hello agent" });
-
-      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
-      expect(convAfter!.status).toBe("active");
-    });
-
-    it("a run:\"job\" message POST releases the route's claim so the conversation isn't stuck 'running' before the job even starts", async () => {
+    it("a message POST releases the route's claim so the conversation isn't stuck 'running' before the job even starts", async () => {
       const site = await db.seedSite("agent-routes-turn-lock-job-release");
       const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
       const conversationId = created.body.conversation.id;
 
       const res = await auth(
         request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "keep going", run: "job" });
+      ).send({ message: "keep going" });
       expect(res.status).toBe(202);
 
       const convAfter = await getConversation(db.getPool(), conversationId, site.id);
@@ -623,7 +539,7 @@ d("agent HTTP API (integration, Task 10)", () => {
 
       const res = await auth(
         request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "keep going", run: "job" });
+      ).send({ message: "keep going" });
       expect(res.status).toBe(202);
       expect(statusAtEnqueueTime).toBe("active");
     });
@@ -656,9 +572,14 @@ d("agent HTTP API (integration, Task 10)", () => {
 
       const res = await auth(
         request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "keep going", run: "job" });
+      ).send({ message: "keep going" });
       expect(res.status).toBe(202);
-      expect(res.body).toEqual({ queued: true, deduped: true });
+      expect(res.body).toEqual({
+        queued: true,
+        deduped: true,
+        conversation_id: conversationId,
+        user_message_id: expect.any(String),
+      });
       expect(hasLiveAgentTurnJobSpy).toHaveBeenCalledWith(conversationId);
 
       // The lock was already released before the (deduped) enqueue attempt —
@@ -678,7 +599,7 @@ d("agent HTTP API (integration, Task 10)", () => {
 
       const res = await auth(
         request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "keep going", run: "job" });
+      ).send({ message: "keep going" });
       expect(res.status).toBe(503);
       expect(res.body).toEqual({ error: "job queue unavailable" });
     });
@@ -715,7 +636,6 @@ d("agent HTTP API (integration, Task 10)", () => {
         "/api",
         adminAiAgentRouter({
           pool: failingPool as unknown as Pool,
-          runTurn: runTurnSpy,
           enqueue: enqueueSpy,
           hasLiveAgentTurnJob: hasLiveAgentTurnJobSpy,
           messageRateLimit: { max: 200, windowMs: 60_000 },
@@ -724,50 +644,10 @@ d("agent HTTP API (integration, Task 10)", () => {
 
       const res = await auth(
         request(failingApp).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "keep going", run: "job" });
+      ).send({ message: "keep going" });
       expect(res.status).toBe(500);
 
       // The lock was released to 'error', not left stuck at 'running'.
-      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
-      expect(convAfter!.status).toBe("error");
-    });
-
-    it("the same exception-safety applies to the inline path's claim→append too", async () => {
-      const site = await db.seedSite("agent-routes-turn-lock-exception-inline");
-      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
-      const conversationId = created.body.conversation.id;
-
-      const realPool = db.getPool();
-      const failingPool = {
-        query: (...args: unknown[]) => (realPool.query as (...a: unknown[]) => unknown)(...args),
-        connect: async () => ({
-          query: async (sql: string) => {
-            if (sql.startsWith("INSERT INTO ai_messages")) {
-              throw new Error("boom (simulated append failure)");
-            }
-            return { rows: [], rowCount: 0 };
-          },
-          release: () => undefined,
-        }),
-      };
-      const failingApp = express();
-      failingApp.use(express.json());
-      failingApp.use(
-        "/api",
-        adminAiAgentRouter({
-          pool: failingPool as unknown as Pool,
-          runTurn: runTurnSpy,
-          enqueue: enqueueSpy,
-          hasLiveAgentTurnJob: hasLiveAgentTurnJobSpy,
-          messageRateLimit: { max: 200, windowMs: 60_000 },
-        }),
-      );
-
-      const res = await auth(
-        request(failingApp).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/messages`),
-      ).send({ message: "hello" }); // no run:"job" -> inline path
-      expect(res.status).toBe(500);
-
       const convAfter = await getConversation(db.getPool(), conversationId, site.id);
       expect(convAfter!.status).toBe("error");
     });

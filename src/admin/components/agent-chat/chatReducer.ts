@@ -15,7 +15,13 @@
 
 import type { AgentTurnEvent } from "../../lib/agent-api.js";
 
-export type ToolStepState = "running" | "done";
+// Fix round 1 (Finding 2 — reviewer, Task A2): "error" added so a tailed
+// tool_result with `is_error:true` (history.ts's `deriveToolResultUpdates`)
+// can render distinctly from a clean success, now that these rows are
+// permanent, always-visible transcript steps (Task A2 — no more in-request
+// event stream, no more collapsed "Worked through N steps" disclosure to
+// fold a failure into unremarked).
+export type ToolStepState = "running" | "done" | "error";
 
 export type ToolStep = {
   name: string;

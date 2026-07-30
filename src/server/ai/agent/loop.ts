@@ -29,6 +29,22 @@ import "../../../blocks/index.js";
 
 export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "promoted";
 
+/**
+ * Task A1 (Lovable-workspace plan). The resolved value of `runAgentTurn` —
+ * distinct from `AgentTurnEvent`'s streamed `turn_done.reason` (still a
+ * `TurnDoneReason`, unchanged): this is what the CALLER gets back once the
+ * awaited promise settles, so job/route code can react to how a turn ended
+ * without re-deriving it from the event stream. Maps 1:1 from the internal
+ * `TurnDoneReason` values at every return site: end_turn->completed,
+ * max_tools->tool_limit, budget->token_budget, promoted->deadline (a
+ * mid-turn deadline is what triggers "promoted" hand-off to a background
+ * job), error->error.
+ */
+export type AgentTurnResult = {
+  endReason: "completed" | "tool_limit" | "deadline" | "token_budget" | "error";
+  toolCalls: number;
+};
+
 export type AgentTurnEvent =
   | { type: "assistant_text"; text: string }
   | { type: "tool_call"; name: string; input: unknown }
@@ -65,6 +81,41 @@ export function parsePositiveIntEnv(value: string | undefined, fallback: number)
   const n = Number(value);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
   return n;
+}
+
+/**
+ * Task A4 (Lovable-workspace plan). Maps an error thrown by the Anthropic
+ * SDK's `messages.create` call to a short, human-readable label — instead of
+ * the bare amber "internal" the operator once saw when a build died on an
+ * out-of-credits account. Duck-types on `status`/`message` (rather than
+ * `instanceof Anthropic.APIError`) so a plain injected test error
+ * (`{status, message}`) is handled identically to a real SDK exception,
+ * which also carries those two fields (see
+ * node_modules/@anthropic-ai/sdk/error.d.ts — every `APIError` subclass has
+ * a `status` and inherits `message` from `Error`). Exported so loop.test.ts
+ * can cover each mapping directly, without spinning up a rejecting fake
+ * client for every case.
+ */
+export function describeAnthropicError(err: unknown): string {
+  const status =
+    typeof err === "object" && err !== null && "status" in err
+      ? (err as { status?: unknown }).status
+      : undefined;
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null && typeof (err as { message?: unknown }).message === "string"
+        ? ((err as { message: string }).message)
+        : "";
+
+  if (status === 401 || status === 403) return "Anthropic API key rejected";
+  if (status === 400 && /billing|credit/i.test(message)) {
+    return "Anthropic credit balance too low — top up at console.anthropic.com";
+  }
+  if (status === 429) return "Anthropic is rate-limiting — retry shortly";
+  if (status === 529 || /overloaded/i.test(message)) return "Anthropic is overloaded — retry shortly";
+
+  return "The site agent hit an unexpected error and stopped.";
 }
 
 type ToolResultContent = {
@@ -147,7 +198,7 @@ async function runStubTurn(params: {
   conversationId: string;
   toolCtx: AgentToolCtx;
   onEvent: (e: AgentTurnEvent) => void;
-}): Promise<{ reason: TurnDoneReason; toolCalls: number }> {
+}): Promise<AgentTurnResult> {
   const { pool, siteId, conversationId, toolCtx, onEvent } = params;
 
   const pageCount = await pool.query<{ count: number }>(
@@ -208,19 +259,19 @@ async function runStubTurn(params: {
       await persistAssistantText(pool, conversationId, text, onEvent);
       await setConversationStatus(pool, conversationId, "error");
       onEvent({ type: "turn_done", reason: "error", message: text });
-      return { reason: "error", toolCalls: 1 };
+      return { endReason: "error", toolCalls: 1 };
     }
 
     await persistAssistantText(pool, conversationId, "Stub mode: created a starter Home page.", onEvent);
     onEvent({ type: "turn_done", reason: "end_turn" });
-    return { reason: "end_turn", toolCalls: 1 };
+    return { endReason: "completed", toolCalls: 1 };
   }
 
   await persistAssistantText(
     pool, conversationId, "Stub mode: no changes made — site already has pages.", onEvent,
   );
   onEvent({ type: "turn_done", reason: "end_turn" });
-  return { reason: "end_turn", toolCalls: 0 };
+  return { endReason: "completed", toolCalls: 0 };
 }
 
 export async function runAgentTurn(input: {
@@ -232,7 +283,7 @@ export async function runAgentTurn(input: {
   onEvent?: (e: AgentTurnEvent) => void;
   limits?: { maxToolCalls?: number; deadlineMs?: number }; // route passes {15, 45_000}; job passes {}
   genId?: () => string;
-}): Promise<{ reason: TurnDoneReason; toolCalls: number }> {
+}): Promise<AgentTurnResult> {
   const { pool, conversationId, siteId } = input;
   const env = input.env ?? process.env;
   const onEvent = input.onEvent ?? (() => undefined);
@@ -273,7 +324,7 @@ export async function runAgentTurn(input: {
       // was given doesn't exist (or was scoped to the wrong site). Don't
       // force-unwrap into a TypeError; report it as a normal turn failure.
       onEvent({ type: "turn_done", reason: "error", message: "conversation not found for this site" });
-      return { reason: "error", toolCalls };
+      return { endReason: "error", toolCalls };
     }
     const usage = getTodayUsage(conv);
     if (usage.input + usage.output >= tokenBudget) {
@@ -281,7 +332,7 @@ export async function runAgentTurn(input: {
         "Daily token budget for this conversation is exhausted — try again tomorrow or raise AI_AGENT_TOKEN_BUDGET.";
       await persistAssistantText(pool, conversationId, text, onEvent);
       onEvent({ type: "turn_done", reason: "budget", message: text });
-      return { reason: "budget", toolCalls };
+      return { endReason: "token_budget", toolCalls };
     }
 
     const messages = await buildApiMessages(pool, conversationId);
@@ -291,12 +342,30 @@ export async function runAgentTurn(input: {
       // conversation with no user row anywhere has nothing valid to send.
       const text = "conversation has no user message";
       onEvent({ type: "turn_done", reason: "error", message: text });
-      return { reason: "error", toolCalls };
+      return { endReason: "error", toolCalls };
     }
-    const { message } = await runMessage(
-      { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
-      { client: input.client, env },
-    );
+    let message: Anthropic.Message;
+    try {
+      ({ message } = await runMessage(
+        { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
+        { client: input.client, env },
+      ));
+    } catch (err) {
+      // Task A4: a thrown Anthropic SDK error (auth/billing/rate-limit/
+      // overload) previously propagated straight past this loop to
+      // agent-turn.ts's outer catch, which sets status='error' but persists
+      // NO explanatory text — the bare amber "internal" the operator saw.
+      // Persist a clear, human-readable label through the SAME channel
+      // every other turn-ending error in this loop already uses
+      // (persistAssistantText + setConversationStatus), so it renders in
+      // the transcript and flips on the Resume affordance exactly like the
+      // failure-streak/budget cases above.
+      const text = describeAnthropicError(err);
+      await persistAssistantText(pool, conversationId, text, onEvent);
+      await setConversationStatus(pool, conversationId, "error");
+      onEvent({ type: "turn_done", reason: "error", message: text });
+      return { endReason: "error", toolCalls };
+    }
 
     await addTokenUsage(pool, conversationId, {
       input: message.usage.input_tokens ?? 0,
@@ -310,7 +379,7 @@ export async function runAgentTurn(input: {
 
     if (message.stop_reason !== "tool_use") {
       onEvent({ type: "turn_done", reason: "end_turn" });
-      return { reason: "end_turn", toolCalls };
+      return { endReason: "completed", toolCalls };
     }
 
     const toolUseBlocks = message.content.filter(
@@ -323,7 +392,7 @@ export async function runAgentTurn(input: {
       // execute and no result to persist. Treat it as done rather than
       // looping forever on an empty tool message.
       onEvent({ type: "turn_done", reason: "end_turn" });
-      return { reason: "end_turn", toolCalls };
+      return { endReason: "completed", toolCalls };
     }
 
     const resultBlocks: ToolResultContent[] = [];
@@ -394,14 +463,14 @@ export async function runAgentTurn(input: {
       await persistAssistantText(pool, conversationId, text, onEvent);
       await setConversationStatus(pool, conversationId, "error");
       onEvent({ type: "turn_done", reason: "error", message: text });
-      return { reason: "error", toolCalls };
+      return { endReason: "error", toolCalls };
     }
 
     if (toolCalls >= maxToolCalls) {
       const text = `Reached the limit of ${maxToolCalls} tool calls for this turn; stopping here.`;
       await persistAssistantText(pool, conversationId, text, onEvent);
       onEvent({ type: "turn_done", reason: "max_tools", message: text });
-      return { reason: "max_tools", toolCalls };
+      return { endReason: "tool_limit", toolCalls };
     }
 
     if (deadline !== null && Date.now() >= deadline) {
@@ -409,7 +478,7 @@ export async function runAgentTurn(input: {
       // message above, so a continuation call rebuilds context ending in
       // tool_results and the model resumes mid-task naturally.
       onEvent({ type: "turn_done", reason: "promoted" });
-      return { reason: "promoted", toolCalls };
+      return { endReason: "deadline", toolCalls };
     }
   }
 }

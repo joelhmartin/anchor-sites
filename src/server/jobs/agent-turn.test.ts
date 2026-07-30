@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupAgentDb } from "../../../tests/helpers/agent-db.js";
-import { createConversation, getConversation, setConversationStatus } from "../ai/agent/repo.js";
-import { handleAgentTurn } from "./agent-turn.js";
+import { createConversation, getConversation, listMessages, setConversationStatus } from "../ai/agent/repo.js";
+import { buildContinuationSingletonKey, handleAgentTurn } from "./agent-turn.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 const db = setupAgentDb();
@@ -86,6 +86,160 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
 
     const pages = await db.getPool().query(`SELECT slug FROM pages WHERE site_id = $1`, [site.id]);
     expect(pages.rows.map((r) => r.slug)).toEqual(["home"]);
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("active");
+  });
+
+  // ── Task A3: auto-continue batching ──
+
+  it("buildContinuationSingletonKey varies per round and never collides with round 0's bare-conversationId key", () => {
+    const conversationId = "11111111-1111-1111-1111-111111111111";
+    const siteId = "22222222-2222-2222-2222-222222222222";
+    expect(buildContinuationSingletonKey({ conversationId, siteId, continuation: 1 }))
+      .toBe(`${conversationId}:c1`);
+    expect(buildContinuationSingletonKey({ conversationId, siteId, continuation: 2 }))
+      .not.toBe(buildContinuationSingletonKey({ conversationId, siteId, continuation: 1 }));
+    // Round 0's actual enqueue key (admin-ai-agent.ts) is the bare
+    // conversationId — confirm the continuation format can never collide.
+    expect(buildContinuationSingletonKey({ conversationId, siteId, continuation: 1 }))
+      .not.toBe(conversationId);
+  });
+
+  it("tool_limit at continuation:0 releases the lock, then re-enqueues {continuation:1} under the round-1 key", async () => {
+    const site = await db.seedSite(`agent-turn-continue-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "tool_limit", toolCalls: 30 });
+    const enqueueContinuation = vi.fn(async () => {
+      // Verify release-before-enqueue ordering directly: by the time the
+      // continuation is being sent, the lock must already be released.
+      const convDuring = await getConversation(db.getPool(), conv.id, site.id);
+      expect(convDuring!.status).toBe("active");
+      return "job-1";
+    });
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(enqueueContinuation).toHaveBeenCalledTimes(1);
+    expect(enqueueContinuation).toHaveBeenCalledWith({
+      conversationId: conv.id, siteId: site.id, continuation: 1,
+    });
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("active");
+  });
+
+  it("continuation:3 (cap reached) does not re-enqueue, appends a visible paused note, and releases the lock", async () => {
+    const site = await db.seedSite(`agent-turn-cap-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "tool_limit", toolCalls: 30 });
+    const enqueueContinuation = vi.fn();
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 3 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(enqueueContinuation).not.toHaveBeenCalled();
+
+    const messages = await listMessages(db.getPool(), conv.id);
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe("assistant");
+    const text = JSON.stringify(last.content);
+    expect(text).toMatch(/paused/i);
+    expect(text).toMatch(/continue/i);
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("active");
+  });
+
+  it("completed never re-enqueues, regardless of continuation round", async () => {
+    const site = await db.seedSite(`agent-turn-completed-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "completed", toolCalls: 5 });
+    const enqueueContinuation = vi.fn();
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 1 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(enqueueContinuation).not.toHaveBeenCalled();
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("active");
+  });
+
+  it("continuation vs fresh-turn race: a continuation job delivered after a fresh user turn already claimed the lock claim-fails cleanly", async () => {
+    // Reviewer fix round 1 (Important): release-before-enqueue opens a
+    // window where a fresh user message can arrive between "release" and
+    // "the continuation job actually gets delivered", claim the turn-lock
+    // itself (status='running', fresh updated_at), and enqueue its own
+    // round-0 job under a DIFFERENT singletonKey (bare conversationId vs.
+    // this continuation's `${conversationId}:c1`) — so both jobs are real,
+    // queued/active work, not deduped against each other. When the
+    // continuation job is then delivered, it must claim-fail exactly like
+    // any other re-delivery (see "job re-delivery" above): no turn run, no
+    // message appended, no status change, no further re-enqueue — it must
+    // NOT clobber the fresh turn that already owns the conversation.
+    const site = await db.seedSite(`agent-turn-race-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    // Simulate: the fresh user turn won the race and is holding the lock.
+    await setConversationStatus(db.getPool(), conv.id, "running");
+
+    const runTurn = vi.fn();
+    const enqueueContinuation = vi.fn();
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 1 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(enqueueContinuation).not.toHaveBeenCalled();
+
+    const messages = await listMessages(db.getPool(), conv.id);
+    expect(messages).toHaveLength(0);
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    // Still 'running' — untouched, still owned by the fresh turn.
+    expect(convAfter!.status).toBe("running");
+  });
+
+  it("re-claims the lock for each continuation round and releases fully once a later round completes", async () => {
+    const site = await db.seedSite(`agent-turn-multi-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn()
+      .mockResolvedValueOnce({ endReason: "tool_limit", toolCalls: 30 })
+      .mockResolvedValueOnce({ endReason: "completed", toolCalls: 10 });
+    const enqueueContinuation = vi.fn().mockResolvedValue("job-2");
+
+    // Round 0 — as pg-boss would deliver the initial job.
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+    expect(enqueueContinuation).toHaveBeenCalledWith({
+      conversationId: conv.id, siteId: site.id, continuation: 1,
+    });
+    let convMid = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convMid!.status).toBe("active"); // released, not stranded 'running'
+
+    // Round 1 — as pg-boss would deliver the re-enqueued continuation job.
+    // The lock must be re-claimable (status was released to 'active' above).
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 1 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(runTurn).toHaveBeenCalledTimes(2);
+    expect(enqueueContinuation).toHaveBeenCalledTimes(1); // no second re-enqueue after "completed"
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     expect(convAfter!.status).toBe("active");
   });
