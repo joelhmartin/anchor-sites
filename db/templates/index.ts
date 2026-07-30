@@ -1,5 +1,10 @@
 import type { TemplateSeed } from "./types.js";
 import { starter } from "./starter.js";
+import { dentalPractice } from "./dental-practice.js";
+import { homeServices } from "./home-services.js";
+import { restaurant } from "./restaurant.js";
+import { lawFirm } from "./law-firm.js";
+import { fitnessStudio } from "./fitness-studio.js";
 
 /**
  * The template library registry (Task C4). Each template is authored as one
@@ -8,4 +13,11 @@ import { starter } from "./starter.js";
  * iterate. Adding a new template is: author the module, import it here, push
  * it onto this array — no other file needs to change.
  */
-export const allTemplates: TemplateSeed[] = [starter];
+export const allTemplates: TemplateSeed[] = [
+  dentalPractice,
+  homeServices,
+  restaurant,
+  lawFirm,
+  fitnessStudio,
+  starter,
+];
