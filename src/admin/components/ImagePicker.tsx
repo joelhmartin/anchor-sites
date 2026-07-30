@@ -1,7 +1,5 @@
 import { useState } from "react";
-// The editor runs inside the admin SPA; reuse the admin API client (authed).
-import { apiFetch } from "../../admin/lib/apiFetch.js";
-import type { Field } from "../index.js";
+import { apiFetch } from "../lib/apiFetch.js";
 
 type Variant = { format: string; width: number; url: string };
 type MediaAsset = {
@@ -17,8 +15,14 @@ function pickThumb(variants: Variant[] | null): Variant | null {
   return [...variants].sort((a, b) => a.width - b.width || (a.format === "webp" ? -1 : 1))[0];
 }
 
-/** Site media-library asset picker. Reused by the Puck image field and the
- * SEO panel's og:image field (P9-T9.7). */
+/**
+ * Site media-library asset picker (P5-T5.7). Reused by the SEO panel's
+ * og:image field. Originally lived at `src/editor/custom-fields/image-field.tsx`
+ * as a Puck custom field wrapper around this same component; relocated here
+ * (Task B5, 2026-07-30 lovable-workspace SDD) when Puck was removed — the
+ * Puck-specific `imageField()` wrapper went with it, but the picker itself has
+ * no Puck dependency and is still needed by `SeoPanel`/`SeoSettingsTab`.
+ */
 export function ImagePicker({
   value,
   onChange,
@@ -143,20 +147,4 @@ export function ImagePicker({
       )}
     </div>
   );
-}
-
-/**
- * Puck custom field that picks a `media_assets` id from the site's library
- * (`GET /api/sites/:siteId/media`) — used by the Image block (`asset_id`) and
- * hero-slider slides (`image_asset_id`). Stores the asset id string; the
- * renderer hydrates it via MediaContext (D-022 / D-031). P5-T5.7.
- */
-export function imageField(label = "Image", siteId?: string): Field {
-  return {
-    type: "custom",
-    label,
-    render: ({ value, onChange }: { value: unknown; onChange: (value: string) => void }) => (
-      <ImagePicker value={typeof value === "string" ? value : ""} onChange={onChange} siteId={siteId} />
-    ),
-  } as Field;
 }

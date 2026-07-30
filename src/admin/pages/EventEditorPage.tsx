@@ -44,7 +44,8 @@ function fromLocalInput(local: string): string | null {
 /**
  * Event editor (P8-T8.13). Mirrors PostEditorPage: resolves slug → site, loads
  * the event, edits metadata (title/dates/location/status) + the `description`
- * Block[] via the shared Puck editor, and saves it all in one PUT.
+ * Block[] via the shared BlockBodyEditor (TipTap, Task B5), and saves it all
+ * in one PUT.
  */
 export function EventEditorPage() {
   const { slug } = useParams();
@@ -196,7 +197,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         save (details, SEO, and description are saved together).
       </p>
 
-      <BlockBodyEditor siteId={siteId} value={event.description ?? []} onPublish={save} />
+      <BlockBodyEditor slug={slug} value={event.description ?? []} onPublish={save} />
     </div>
   );
 }

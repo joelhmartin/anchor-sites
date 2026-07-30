@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { PagesTab } from "./PagesTab.js";
 import { setAdminToken, clearAdminToken } from "../../lib/adminToken.js";
 
@@ -12,13 +12,20 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+/** Stub destination (Task B5): Edit now navigates to the workspace at
+ * `/sites/:slug` with `?page=<id>` — surface the search string so the test
+ * can assert on it without pulling in the real WorkspacePage. */
+function WorkspaceStub() {
+  const location = useLocation();
+  return <div>workspace reached {location.search}</div>;
+}
+
 function renderTab() {
   return render(
-    <MemoryRouter initialEntries={["/sites/acme"]}>
+    <MemoryRouter initialEntries={["/sites/acme/manage"]}>
       <Routes>
-        <Route path="/sites/:slug" element={<PagesTab siteId="s1" slug="acme" />} />
-        {/* Stub destination — PagesTab only owns the navigation, not the editor. */}
-        <Route path="/sites/:slug/pages/:pageId" element={<div>editor route reached</div>} />
+        <Route path="/sites/:slug/manage" element={<PagesTab siteId="s1" slug="acme" />} />
+        <Route path="/sites/:slug" element={<WorkspaceStub />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -72,12 +79,12 @@ describe("PagesTab (P4-T4.13)", () => {
     expect(body).toEqual({ slug: "about", title: "About us" });
   });
 
-  it("routes Edit to the page editor route", async () => {
+  it("routes Edit to the workspace with the page preselected via ?page=", async () => {
     global.fetch = vi.fn(async () => json({ pages: [PAGE_A] })) as unknown as typeof fetch;
     renderTab();
     await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.getByText(/editor route reached/)).toBeTruthy();
+    expect(screen.getByText(/workspace reached \?page=p1/)).toBeTruthy();
   });
 
   it("adds a page from a page template (P7-T7.9) and refreshes the list", async () => {

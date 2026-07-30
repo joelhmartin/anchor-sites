@@ -1,12 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { setAdminToken, clearAdminToken } from "./lib/adminToken.js";
-
-// Stub Puck so the routing test doesn't pull the real (heavy, browser-only)
-// editor — it only verifies route → component wiring, not the editor itself.
-vi.mock("../editor/index.js", () => ({ Puck: () => null }));
 
 // Control the auth probe so routing tests are deterministic + synchronous
 // (the real hook is exercised in RequireAdmin.test.tsx).
@@ -18,9 +14,22 @@ vi.mock("./auth/useStudioSession.js", () => ({ useStudioSession: () => session }
 
 import { AdminApp } from "./AdminApp.js";
 
+/** Surfaces the router's current location so redirect tests can assert on it
+ * without pulling apart AdminApp's own <Routes> tree. */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="location">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
+}
+
 function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
+      <LocationProbe />
       <AdminApp />
     </MemoryRouter>,
   );
@@ -83,12 +92,15 @@ describe("AdminApp routing (P4-T4.9; P8-T8.5)", () => {
     expect(screen.getByRole("heading", { name: "Sites" })).toBeTruthy();
   });
 
-  it("renders the page editor on the page-edit route", () => {
-    // Never-resolving fetch keeps EditorPage in its loading state (no async
-    // state update after mount) — we only assert the route → editor wiring.
-    global.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof fetch;
-    renderAt("/sites/muldoon-dental/pages/abc-123");
-    expect(screen.getByText("Loading…")).toBeTruthy();
+  it("redirects the legacy page-edit route to the workspace with ?page= (Task B5 — Puck removed)", async () => {
+    setAdminToken("tok");
+    mockSiteFetch();
+    renderAt("/sites/acme/pages/pg1");
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toBe("/sites/acme?page=pg1"),
+    );
+    // The redirect lands on the workspace, not a 404 or a dead route.
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
   });
 
   it("renders NotFound for an unknown admin route", () => {

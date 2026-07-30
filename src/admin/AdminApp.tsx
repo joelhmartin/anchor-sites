@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { RequireAdmin } from "./auth/RequireAdmin.js";
 import { LoginPage } from "./auth/LoginPage.js";
 import { AdminLayout } from "./AdminLayout.js";
@@ -6,11 +6,22 @@ import { SitesListPage } from "./pages/SitesListPage.js";
 import { NewSitePage } from "./pages/NewSitePage.js";
 import { SiteDetailPage } from "./pages/SiteDetailPage.js";
 import { WorkspacePage } from "./pages/WorkspacePage.js";
-import { EditorPage } from "./pages/EditorPage.js";
 import { PostEditorPage } from "./pages/PostEditorPage.js";
 import { EventEditorPage } from "./pages/EventEditorPage.js";
 import { NotFound } from "./pages/NotFound.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
+
+/**
+ * Task B5 (2026-07-30 lovable-workspace SDD): the Puck page editor route
+ * (`/sites/:slug/pages/:pageId`) is gone — page editing is chat + inline
+ * editing in the workspace. Redirect any old bookmarked/shared link straight
+ * into the workspace with the same page preselected via `?page=` (already
+ * supported by `WorkspacePage` for the PagesTab "preview" deep link).
+ */
+function PageEditRedirect() {
+  const { slug, pageId } = useParams();
+  return <Navigate to={`/sites/${slug}?page=${pageId}`} replace />;
+}
 
 /**
  * Admin SPA route tree (P4-T4.9). Mounted by `src/App.jsx` when running
@@ -33,7 +44,7 @@ export function AdminApp() {
               its fullbleed chrome variant. */}
           <Route path="/sites/:slug" element={<WorkspacePage />} />
           <Route path="/sites/:slug/manage" element={<SiteDetailPage />} />
-          <Route path="/sites/:slug/pages/:pageId" element={<EditorPage />} />
+          <Route path="/sites/:slug/pages/:pageId" element={<PageEditRedirect />} />
           <Route path="/sites/:slug/posts/:postId" element={<PostEditorPage />} />
           <Route path="/sites/:slug/events/:eventId" element={<EventEditorPage />} />
           <Route path="*" element={<NotFound />} />

@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { clearAdminToken, setAdminToken } from "../../../admin/lib/adminToken.js";
-import { imageField } from "../image-field.js";
+import { clearAdminToken, setAdminToken } from "../lib/adminToken.js";
+import { ImagePicker } from "./ImagePicker.js";
+
+/**
+ * Relocated from `src/editor/custom-fields/__tests__/image-field.test.tsx`
+ * (Task B5, 2026-07-30 lovable-workspace SDD) when Puck was removed. That
+ * file tested the Puck `imageField()` wrapper (gone with Puck); this tests
+ * the underlying `ImagePicker` component directly, which SeoPanel and
+ * SeoSettingsTab use without any Puck field wrapper.
+ */
 
 const MEDIA = [
   { id: "a1", alt: "Hero", variants_status: "ready", variants: [{ format: "webp", width: 400, url: "https://cdn/a1.webp" }] },
@@ -13,13 +21,7 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-type RP = { value: unknown; onChange: (v: string) => void };
-function renderField(value: unknown, onChange: (v: string) => void, siteId?: string) {
-  const field = imageField("Image", siteId) as unknown as { render: (p: RP) => React.ReactElement };
-  return render(<>{field.render({ value, onChange })}</>);
-}
-
-describe("imageField (P5-T5.7)", () => {
+describe("ImagePicker (P5-T5.7)", () => {
   const realFetch = global.fetch;
   beforeEach(() => setAdminToken("tok"));
   afterEach(() => {
@@ -29,13 +31,6 @@ describe("imageField (P5-T5.7)", () => {
     vi.restoreAllMocks();
   });
 
-  it("is a Puck custom field labelled Image", () => {
-    const field = imageField("Image", "s1") as unknown as { type: string; label: string; render: unknown };
-    expect(field.type).toBe("custom");
-    expect(field.label).toBe("Image");
-    expect(typeof field.render).toBe("function");
-  });
-
   it("lists the site's media when opened and selecting sets the asset id", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe("/api/sites/s1/media");
@@ -43,7 +38,7 @@ describe("imageField (P5-T5.7)", () => {
     }) as unknown as typeof fetch;
 
     const onChange = vi.fn();
-    renderField("", onChange, "s1");
+    render(<ImagePicker value="" onChange={onChange} siteId="s1" />);
     fireEvent.click(screen.getByRole("button", { name: "Choose image" }));
 
     const options = await screen.findAllByRole("option");
@@ -54,14 +49,14 @@ describe("imageField (P5-T5.7)", () => {
 
   it("clears the current selection", () => {
     const onChange = vi.fn();
-    renderField("a1", onChange, "s1");
+    render(<ImagePicker value="a1" onChange={onChange} siteId="s1" />);
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(onChange).toHaveBeenCalledWith("");
   });
 
   it("shows an error when there is no site context", async () => {
     const onChange = vi.fn();
-    renderField("", onChange, undefined);
+    render(<ImagePicker value="" onChange={onChange} siteId={undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Choose image" }));
     await screen.findByText(/No site context/);
   });
