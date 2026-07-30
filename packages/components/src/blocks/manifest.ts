@@ -57,6 +57,7 @@ import { crmFormEntry } from "./crm-form/index.js";
 import { splitHeroEntry } from "./split-hero/index.js";
 import { featureGridEntry } from "./feature-grid/index.js";
 import { statsBandEntry } from "./stats-band/index.js";
+import { richFooterEntry } from "./rich-footer/index.js";
 
 /**
  * Block manifest — every opinionated block in v0.1. Order is the order
@@ -88,6 +89,8 @@ export const blockManifest: BlockManifestEntry[] = [
   featureGridEntry as BlockManifestEntry<any>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   statsBandEntry as BlockManifestEntry<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  richFooterEntry as BlockManifestEntry<any>,
 ];
 
 /**

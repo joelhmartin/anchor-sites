@@ -15,8 +15,8 @@ const REQUIRED_KEYS = [
 const VALID_CATEGORIES = new Set(["header", "content", "cta", "layout"]);
 
 describe("blockManifest contract", () => {
-  it("has the expected count for the current minor (12, C2 batch 1: split-hero + feature-grid + stats-band)", () => {
-    expect(blockManifest.length).toBe(12);
+  it("has the expected count for the current minor (13, C2 batch 1: split-hero + feature-grid + stats-band + rich-footer)", () => {
+    expect(blockManifest.length).toBe(13);
   });
 
   it("contains the v0.2 Image block", () => {
@@ -29,11 +29,12 @@ describe("blockManifest contract", () => {
     expect(types).toContain("crm_form");
   });
 
-  it("contains the Task C2 batch-1 split-hero + feature-grid + stats-band blocks", () => {
+  it("contains the Task C2 batch-1 split-hero + feature-grid + stats-band + rich-footer blocks", () => {
     const types = blockManifest.map((e) => e.type);
     expect(types).toContain("split-hero");
     expect(types).toContain("feature-grid");
     expect(types).toContain("stats-band");
+    expect(types).toContain("rich-footer");
   });
 
   it("each entry has every required field with a sensible value", () => {
