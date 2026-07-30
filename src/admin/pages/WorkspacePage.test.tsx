@@ -50,12 +50,16 @@ type FetchOverrides = {
   /** GET /api/sites/s1/agent/conversations/:id → { conversation, messages } —
    * only needed when `conversations` seeds an existing one to reconnect to. */
   conversationDetail?: { conversation: unknown; messages: unknown[] };
+  /** POST /api/sites/s1/publish response (Task B3). Defaults to a
+   * successful publish of every seeded page with a live URL. */
+  publish?: { status: number; body: unknown };
 };
 
 function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
   const pages = overrides.pages ?? [HOME_PAGE, ABOUT_PAGE];
   const git = overrides.git ?? { configured: false, repo: null, state: null };
   const conversations = overrides.conversations ?? [];
+  const publish = overrides.publish ?? { status: 200, body: { published: 2, live_url: "https://acme.example.com" } };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -63,6 +67,9 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
     if (url === "/api/sites/s1") return json({ site: SITE });
     if (url === "/api/sites/s1/pages") return json({ pages });
     if (url === "/api/sites/s1/git") return json(git);
+    if (url === "/api/sites/s1/publish" && method === "POST") {
+      return json(publish.body, publish.status);
+    }
     if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
       return json({ conversations });
     }
@@ -189,12 +196,74 @@ describe("WorkspacePage (Task B2)", () => {
     expect(screen.queryByRole("link", { name: /GitHub/ })).toBeNull();
   });
 
-  it("renders a disabled Publish button (wiring lands in B3)", async () => {
-    mockWorkspaceFetch();
+  // ── Task B3 — one-click publish ──
+
+  it("publishes every draft page: click opens a confirmation with the page count, confirm posts, and the live URL renders", async () => {
+    const fetchMock = mockWorkspaceFetch();
     renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+
+    const dialog = await screen.findByRole("dialog", { name: "Publish site" });
+    expect(dialog.textContent).toContain("Publish 2 pages?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/sites/s1/publish" && init?.method === "POST")).toBe(
+        true,
+      ),
+    );
+
+    const link = await screen.findByRole("link", { name: /https:\/\/acme\.example\.com/ });
+    expect(link.getAttribute("href")).toBe("https://acme.example.com");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(screen.getByText("Published 2 pages.")).toBeTruthy();
+  });
+
+  it("Cancel closes the confirmation without posting", async () => {
+    const fetchMock = mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog", { name: "Publish site" })).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/sites/s1/publish")).toBe(false);
+  });
+
+  it("renders the publish error inline (red treatment) when the POST fails", async () => {
+    mockWorkspaceFetch({ publish: { status: 500, body: { error: "boom" } } });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    const errorEl = await screen.findByText("boom");
+    expect(errorEl.className).toContain("text-red-600");
+  });
+
+  it("disables the Publish button while the agent is busy", async () => {
+    mockWorkspaceFetch({
+      conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "running", token_usage: {} }],
+      conversationDetail: {
+        conversation: { id: "c9", site_id: "s1", title: "Old", status: "running", token_usage: {} },
+        messages: [
+          { id: "m1", conversation_id: "c9", role: "user", content: [{ type: "text", text: "Build me a homepage" }], created_at: "t1" },
+        ],
+      },
+    });
+    renderAt("/sites/acme");
+
     const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
     expect(publish.disabled).toBe(true);
-    expect(publish.title).toBe("coming in B3");
   });
 
   it("links Manage to the tab-based shell", async () => {

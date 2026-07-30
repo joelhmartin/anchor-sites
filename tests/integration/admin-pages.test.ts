@@ -467,6 +467,201 @@ d("admin pages API (integration)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// POST /api/sites/:siteId/publish (Task B3 — one-click publish from the
+// workspace top bar). Publishes every non-published page on the site in one
+// call: same save+revision pattern as the single-page route (source:
+// 'manual'), blocks/seo left untouched, status flipped to 'published'.
+// ---------------------------------------------------------------------------
+d("admin pages — bulk publish (Task B3)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let siteId: string;
+  let homePageId: string;
+  let draftAId: string;
+  let draftBId: string;
+
+  function buildAppWithEnqueueSpy(
+    spy: (input: { siteId: string; trigger: string }) => Promise<string | null>,
+  ): express.Express {
+    const a = express();
+    a.use(express.json({ limit: "1mb" }));
+    a.use(
+      "/api",
+      adminPagesRouter({
+        pool,
+        saveRateLimit: { max: 100, windowMs: 60_000 },
+        enqueueGitExport: spy,
+      }),
+    );
+    return a;
+  }
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+
+    const r = await pool.query<{ id: string; page_id: string }>(
+      `SELECT s.id, p.id AS page_id
+         FROM sites s JOIN pages p ON p.site_id = s.id
+        WHERE s.slug = 'muldoon-dental' AND p.slug = 'home'`,
+    );
+    siteId = r.rows[0].id;
+    homePageId = r.rows[0].page_id;
+
+    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM pages WHERE id = ANY($1::uuid[])`, [
+      [draftAId, draftBId].filter(Boolean),
+    ]).catch(() => undefined);
+    await pool.query(`UPDATE pages SET status = 'published' WHERE id = $1`, [homePageId]).catch(() => undefined);
+    await pool.end().catch(() => undefined);
+    delete process.env.ADMIN_API_TOKEN;
+  });
+
+  beforeEach(async () => {
+    // Fresh pair of drafts per test (previous test's drafts, if any, are
+    // torn down at the end of that test) so each test starts from a known
+    // "two drafts + one already-published home" baseline.
+    await pool.query(`UPDATE pages SET status = 'published' WHERE id = $1`, [homePageId]);
+    const a = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+       VALUES ($1, 'draft-a', 'Draft A', '[]'::jsonb, '{"title":"Draft A SEO"}'::jsonb, 'draft')
+       RETURNING id`,
+      [siteId],
+    );
+    draftAId = a.rows[0].id;
+    const b = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+       VALUES ($1, 'draft-b', 'Draft B', '[]'::jsonb, '{"title":"Draft B SEO"}'::jsonb, 'draft')
+       RETURNING id`,
+      [siteId],
+    );
+    draftBId = b.rows[0].id;
+  });
+
+  afterEach(async () => {
+    await pool.query(`DELETE FROM page_revisions WHERE page_id = ANY($1::uuid[])`, [
+      [draftAId, draftBId, homePageId],
+    ]);
+    await pool.query(`DELETE FROM pages WHERE id = ANY($1::uuid[])`, [[draftAId, draftBId]]);
+  });
+
+  it("publishes every draft page, appends a 'manual' revision per page, and returns the live_url", async () => {
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/publish`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ published: 2 });
+    expect(res.body.live_url).toMatch(/^https:\/\//);
+
+    const statuses = await pool.query<{ id: string; status: string }>(
+      `SELECT id, status FROM pages WHERE id = ANY($1::uuid[])`,
+      [[draftAId, draftBId]],
+    );
+    for (const row of statuses.rows) expect(row.status).toBe("published");
+
+    const revs = await pool.query<{ page_id: string; source: string }>(
+      `SELECT page_id, source FROM page_revisions WHERE page_id = ANY($1::uuid[])`,
+      [[draftAId, draftBId]],
+    );
+    expect(revs.rows).toHaveLength(2);
+    for (const row of revs.rows) expect(row.source).toBe("manual");
+  });
+
+  it("preserves each page's blocks/seo untouched — only status flips", async () => {
+    await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+
+    const row = await pool.query<{ blocks: unknown[]; seo: Record<string, unknown> }>(
+      `SELECT blocks, seo FROM pages WHERE id = $1`,
+      [draftAId],
+    );
+    expect(row.rows[0].blocks).toEqual([]);
+    expect(row.rows[0].seo).toMatchObject({ title: "Draft A SEO" });
+
+    const rev = await pool.query<{ seo: Record<string, unknown> }>(
+      `SELECT seo FROM page_revisions WHERE page_id = $1`,
+      [draftAId],
+    );
+    expect(rev.rows[0].seo).toMatchObject({ title: "Draft A SEO" });
+  });
+
+  it("is idempotent: a second call publishes nothing further", async () => {
+    const first = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(first.body.published).toBe(2);
+
+    const second = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ published: 0 });
+  });
+
+  it("404s for an unknown site", async () => {
+    const res = await request(app)
+      .post(`/api/sites/00000000-0000-0000-0000-000000000000/publish`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ error: "site not found" });
+  });
+
+  it("rejects 401 without a token", async () => {
+    const res = await request(app).post(`/api/sites/${siteId}/publish`);
+    expect(res.status).toBe(401);
+  });
+
+  it("enqueues git.export once for the whole batch when pages were published and git sync is enabled", async () => {
+    await pool.query(
+      `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, true, now())
+       ON CONFLICT (site_id) DO UPDATE SET enabled = true, updated_at = now()`,
+      [siteId],
+    );
+    const spy = vi.fn(async () => "job-1");
+    const spyApp = buildAppWithEnqueueSpy(spy);
+    process.env.GITHUB_CONTENT_TOKEN = "tok123";
+    process.env.GITHUB_CONTENT_REPO = "acme/content";
+
+    try {
+      const res = await request(spyApp).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+      expect(res.status).toBe(200);
+      expect(res.body.published).toBe(2);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith({ siteId, trigger: "publish" });
+    } finally {
+      delete process.env.GITHUB_CONTENT_TOKEN;
+      delete process.env.GITHUB_CONTENT_REPO;
+      await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]);
+    }
+  });
+
+  it("does not enqueue git.export when nothing was published (idempotent no-op call)", async () => {
+    await pool.query(
+      `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, true, now())
+       ON CONFLICT (site_id) DO UPDATE SET enabled = true, updated_at = now()`,
+      [siteId],
+    );
+    const spy = vi.fn(async () => "job-1");
+    const spyApp = buildAppWithEnqueueSpy(spy);
+    process.env.GITHUB_CONTENT_TOKEN = "tok123";
+    process.env.GITHUB_CONTENT_REPO = "acme/content";
+
+    try {
+      // First call publishes both drafts; second call is the no-op.
+      await request(spyApp).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+      spy.mockClear();
+      const res = await request(spyApp).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+      expect(res.body).toMatchObject({ published: 0 });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.GITHUB_CONTENT_TOKEN;
+      delete process.env.GITHUB_CONTENT_REPO;
+      await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]);
+    }
+  });
+});
+
 d("admin pages rate limiting (integration)", () => {
   let pool: Pool;
   let app: express.Express;

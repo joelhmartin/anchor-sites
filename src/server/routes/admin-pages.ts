@@ -621,6 +621,88 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/publish — one-click publish (Task B3, Lovable
+  // workspace). Flips every non-published page on the site to 'published'
+  // in one transaction, appending a `source:'manual'` revision per page —
+  // same save+revision pattern as the single-page route above, just batched
+  // and status-only: blocks/seo are read back from the row being updated
+  // (not touched by this UPDATE at all) so the revision snapshot mirrors
+  // the current-seo-preservation behavior of the single-page save exactly
+  // (no COALESCE needed here since we never write blocks/seo, unlike that
+  // route). Idempotent — a page already 'published' is excluded by the
+  // WHERE clause, so a second call publishes nothing further.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/publish",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId } = req.params;
+      const client = await pool.connect();
+      try {
+        const siteOk = await client.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+
+        await client.query("BEGIN");
+        const publishedRes = await client.query<{ id: string; blocks: Block[]; seo: Record<string, unknown> }>(
+          `UPDATE pages
+              SET status = 'published'
+            WHERE site_id = $1 AND status != 'published'
+            RETURNING id, blocks, seo`,
+          [siteId],
+        );
+
+        for (const page of publishedRes.rows) {
+          await client.query(
+            `INSERT INTO page_revisions (page_id, blocks, seo, source)
+             VALUES ($1, $2::jsonb, $3::jsonb, 'manual')`,
+            [page.id, JSON.stringify(page.blocks ?? []), JSON.stringify(page.seo ?? {})],
+          );
+        }
+
+        await client.query("COMMIT");
+
+        const published = publishedRes.rowCount ?? 0;
+
+        // Publish trigger (T4, GitHub sync): mirrors the single-page save's
+        // trigger below, but ONE enqueue for the whole batch rather than one
+        // per page — git.export's handler (handleGitExport) exports the
+        // entire site's current state from a single siteId, so N identical
+        // enqueues would just be N redundant full-site exports collapsed by
+        // pg-boss's own dedup at best, wasted work at worst. Only fires when
+        // this call actually changed something (`published > 0`) — an
+        // idempotent no-op publish call has nothing new to export.
+        if (published > 0 && resolveGitMode() === "api") {
+          try {
+            const gitState = await getGitState(pool, siteId);
+            if (gitState?.enabled) {
+              enqueueGitExport({ siteId, trigger: "publish" }).catch(() => undefined);
+            }
+          } catch {
+            // best-effort — never affects the response
+          }
+        }
+
+        const domainRes = await pool.query<{ hostname: string }>(
+          `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+          [siteId],
+        );
+        const live_url = domainRes.rows[0]?.hostname ? `https://${domainRes.rows[0].hostname}` : null;
+
+        res.status(200).json({ published, live_url });
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        next(err);
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // POST /api/sites/:siteId/provision — add DNS records + Cloud Run mapping
   // POST /api/sites/provision         — same, but take slug in body
   // -------------------------------------------------------------------------

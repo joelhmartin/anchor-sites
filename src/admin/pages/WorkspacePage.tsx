@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { apiFetch } from "../lib/apiFetch.js";
 import { useApi } from "../lib/useApi.js";
 import type { AgentChangeEvent, AiConversation } from "../lib/agent-api.js";
 import type { SiteDetail, SiteListRow } from "../lib/siteTypes.js";
@@ -94,6 +95,17 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const [agentBusy, setAgentBusy] = useState(false);
   const [viewport, setViewport] = useState<Viewport>("desktop");
 
+  // Task B3 — one-click publish. `publishOpen` drives the confirmation
+  // popover anchored under the top-bar button; `publishResult` swaps that
+  // same popover's content to the success state (live URL) once the POST
+  // resolves, so there's no separate success surface to wire up.
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<{ published: number; live_url: string | null } | null>(
+    null,
+  );
+  const [publishError, setPublishError] = useState<string | null>(null);
+
   const {
     data: pagesData,
     error: pagesError,
@@ -145,6 +157,26 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   function handleRevertSiteChanged() {
     reloadPages();
     setPreviewNonce((n) => n + 1);
+  }
+
+  // Task B3 — publish every draft page in one call. The confirmation
+  // popover is opened by the button's onClick; this only fires once the
+  // operator confirms.
+  async function handlePublish() {
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const result = await apiFetch<{ published: number; live_url: string | null }>(
+        `/api/sites/${siteId}/publish`,
+        { method: "POST" },
+      );
+      setPublishResult(result);
+      reloadPages();
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : "publish failed");
+    } finally {
+      setPublishing(false);
+    }
   }
 
   const { items, draft, setDraft, sending, busy, conversation, error, usageText, send, stop } = useAgentConversation({
@@ -284,10 +316,83 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
               </button>
             </div>
 
-            {/* Publish wiring lands in Task B3 — placeholder only. */}
-            <Button type="button" size="sm" disabled title="coming in B3">
-              Publish
-            </Button>
+            {/* Task B3 — one-click publish. `publishOpen` anchors a small
+                confirmation popover under the button; disabled while the
+                agent is running (a mid-build publish would ship a half-
+                finished site) or while the publish request itself is in
+                flight. */}
+            <div className="relative">
+              <Button
+                type="button"
+                size="sm"
+                disabled={agentBusy || publishing}
+                onClick={() => {
+                  setPublishError(null);
+                  setPublishResult(null);
+                  setPublishOpen((open) => !open);
+                }}
+              >
+                {publishing ? "Publishing…" : "Publish"}
+              </Button>
+
+              {publishOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Publish site"
+                  className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-zinc-200 bg-white p-3 shadow-lg"
+                >
+                  {publishResult ? (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-sm text-zinc-700">
+                        Published {publishResult.published}{" "}
+                        {publishResult.published === 1 ? "page" : "pages"}.
+                      </p>
+                      {publishResult.live_url && (
+                        <a
+                          href={publishResult.live_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                        >
+                          {publishResult.live_url} ↗
+                        </a>
+                      )}
+                      <div className="flex justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setPublishOpen(false)}
+                        >
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-sm text-zinc-700">
+                        Publish {pages.length} {pages.length === 1 ? "page" : "pages"}?
+                      </p>
+                      {publishError && <p className="text-xs text-red-600">{publishError}</p>}
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={publishing}
+                          onClick={() => setPublishOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button type="button" size="sm" disabled={publishing} onClick={handlePublish}>
+                          {publishing ? "Publishing…" : "Confirm"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {gitUrl && (
               <a
