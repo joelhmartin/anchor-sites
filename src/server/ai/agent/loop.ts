@@ -29,6 +29,22 @@ import "../../../blocks/index.js";
 
 export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "promoted";
 
+/**
+ * Task A1 (Lovable-workspace plan). The resolved value of `runAgentTurn` —
+ * distinct from `AgentTurnEvent`'s streamed `turn_done.reason` (still a
+ * `TurnDoneReason`, unchanged): this is what the CALLER gets back once the
+ * awaited promise settles, so job/route code can react to how a turn ended
+ * without re-deriving it from the event stream. Maps 1:1 from the internal
+ * `TurnDoneReason` values at every return site: end_turn->completed,
+ * max_tools->tool_limit, budget->token_budget, promoted->deadline (a
+ * mid-turn deadline is what triggers "promoted" hand-off to a background
+ * job), error->error.
+ */
+export type AgentTurnResult = {
+  endReason: "completed" | "tool_limit" | "deadline" | "token_budget" | "error";
+  toolCalls: number;
+};
+
 export type AgentTurnEvent =
   | { type: "assistant_text"; text: string }
   | { type: "tool_call"; name: string; input: unknown }
@@ -147,7 +163,7 @@ async function runStubTurn(params: {
   conversationId: string;
   toolCtx: AgentToolCtx;
   onEvent: (e: AgentTurnEvent) => void;
-}): Promise<{ reason: TurnDoneReason; toolCalls: number }> {
+}): Promise<AgentTurnResult> {
   const { pool, siteId, conversationId, toolCtx, onEvent } = params;
 
   const pageCount = await pool.query<{ count: number }>(
@@ -208,19 +224,19 @@ async function runStubTurn(params: {
       await persistAssistantText(pool, conversationId, text, onEvent);
       await setConversationStatus(pool, conversationId, "error");
       onEvent({ type: "turn_done", reason: "error", message: text });
-      return { reason: "error", toolCalls: 1 };
+      return { endReason: "error", toolCalls: 1 };
     }
 
     await persistAssistantText(pool, conversationId, "Stub mode: created a starter Home page.", onEvent);
     onEvent({ type: "turn_done", reason: "end_turn" });
-    return { reason: "end_turn", toolCalls: 1 };
+    return { endReason: "completed", toolCalls: 1 };
   }
 
   await persistAssistantText(
     pool, conversationId, "Stub mode: no changes made — site already has pages.", onEvent,
   );
   onEvent({ type: "turn_done", reason: "end_turn" });
-  return { reason: "end_turn", toolCalls: 0 };
+  return { endReason: "completed", toolCalls: 0 };
 }
 
 export async function runAgentTurn(input: {
@@ -232,7 +248,7 @@ export async function runAgentTurn(input: {
   onEvent?: (e: AgentTurnEvent) => void;
   limits?: { maxToolCalls?: number; deadlineMs?: number }; // route passes {15, 45_000}; job passes {}
   genId?: () => string;
-}): Promise<{ reason: TurnDoneReason; toolCalls: number }> {
+}): Promise<AgentTurnResult> {
   const { pool, conversationId, siteId } = input;
   const env = input.env ?? process.env;
   const onEvent = input.onEvent ?? (() => undefined);
@@ -273,7 +289,7 @@ export async function runAgentTurn(input: {
       // was given doesn't exist (or was scoped to the wrong site). Don't
       // force-unwrap into a TypeError; report it as a normal turn failure.
       onEvent({ type: "turn_done", reason: "error", message: "conversation not found for this site" });
-      return { reason: "error", toolCalls };
+      return { endReason: "error", toolCalls };
     }
     const usage = getTodayUsage(conv);
     if (usage.input + usage.output >= tokenBudget) {
@@ -281,7 +297,7 @@ export async function runAgentTurn(input: {
         "Daily token budget for this conversation is exhausted — try again tomorrow or raise AI_AGENT_TOKEN_BUDGET.";
       await persistAssistantText(pool, conversationId, text, onEvent);
       onEvent({ type: "turn_done", reason: "budget", message: text });
-      return { reason: "budget", toolCalls };
+      return { endReason: "token_budget", toolCalls };
     }
 
     const messages = await buildApiMessages(pool, conversationId);
@@ -291,7 +307,7 @@ export async function runAgentTurn(input: {
       // conversation with no user row anywhere has nothing valid to send.
       const text = "conversation has no user message";
       onEvent({ type: "turn_done", reason: "error", message: text });
-      return { reason: "error", toolCalls };
+      return { endReason: "error", toolCalls };
     }
     const { message } = await runMessage(
       { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
@@ -310,7 +326,7 @@ export async function runAgentTurn(input: {
 
     if (message.stop_reason !== "tool_use") {
       onEvent({ type: "turn_done", reason: "end_turn" });
-      return { reason: "end_turn", toolCalls };
+      return { endReason: "completed", toolCalls };
     }
 
     const toolUseBlocks = message.content.filter(
@@ -323,7 +339,7 @@ export async function runAgentTurn(input: {
       // execute and no result to persist. Treat it as done rather than
       // looping forever on an empty tool message.
       onEvent({ type: "turn_done", reason: "end_turn" });
-      return { reason: "end_turn", toolCalls };
+      return { endReason: "completed", toolCalls };
     }
 
     const resultBlocks: ToolResultContent[] = [];
@@ -394,14 +410,14 @@ export async function runAgentTurn(input: {
       await persistAssistantText(pool, conversationId, text, onEvent);
       await setConversationStatus(pool, conversationId, "error");
       onEvent({ type: "turn_done", reason: "error", message: text });
-      return { reason: "error", toolCalls };
+      return { endReason: "error", toolCalls };
     }
 
     if (toolCalls >= maxToolCalls) {
       const text = `Reached the limit of ${maxToolCalls} tool calls for this turn; stopping here.`;
       await persistAssistantText(pool, conversationId, text, onEvent);
       onEvent({ type: "turn_done", reason: "max_tools", message: text });
-      return { reason: "max_tools", toolCalls };
+      return { endReason: "tool_limit", toolCalls };
     }
 
     if (deadline !== null && Date.now() >= deadline) {
@@ -409,7 +425,7 @@ export async function runAgentTurn(input: {
       // message above, so a continuation call rebuilds context ending in
       // tool_results and the model resumes mid-task naturally.
       onEvent({ type: "turn_done", reason: "promoted" });
-      return { reason: "promoted", toolCalls };
+      return { endReason: "deadline", toolCalls };
     }
   }
 }

@@ -438,7 +438,7 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
             },
             limits: { maxToolCalls: 15, deadlineMs: 45_000 },
           });
-          if (result.reason === "promoted") {
+          if (result.endReason === "deadline") {
             const jobId = await enqueue({ conversationId, siteId });
             if (!jobId) {
               // Important 5: the client already saw `turn_done`

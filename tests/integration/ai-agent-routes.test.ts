@@ -111,7 +111,7 @@ d("agent HTTP API (integration, Task 10)", () => {
     runTurnSpy = vi.fn(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
       input.onEvent?.({ type: "assistant_text", text: "hello from the stub turn" });
       input.onEvent?.({ type: "turn_done", reason: "end_turn" });
-      return { reason: "end_turn" as const, toolCalls: 0 };
+      return { endReason: "completed" as const, toolCalls: 0 };
     });
     hasLiveAgentTurnJobSpy = vi.fn(async () => false);
 
@@ -337,7 +337,7 @@ d("agent HTTP API (integration, Task 10)", () => {
 
     runTurnSpy.mockImplementationOnce(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
       input.onEvent?.({ type: "turn_done", reason: "promoted" });
-      return { reason: "promoted" as const, toolCalls: 15 };
+      return { endReason: "deadline" as const, toolCalls: 15 };
     });
     enqueueSpy.mockClear();
 
@@ -360,7 +360,7 @@ d("agent HTTP API (integration, Task 10)", () => {
 
     runTurnSpy.mockImplementationOnce(async (input: { onEvent?: (e: AgentTurnEvent) => void }) => {
       input.onEvent?.({ type: "turn_done", reason: "promoted" });
-      return { reason: "promoted" as const, toolCalls: 15 };
+      return { endReason: "deadline" as const, toolCalls: 15 };
     });
     enqueueSpy.mockImplementationOnce(async () => null);
 

@@ -95,7 +95,7 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
 
     // 3. Run the turn directly (stub mode — no ANTHROPIC_API_KEY).
     const turnResult = await runAgentTurn({ pool: db.getPool(), conversationId, siteId });
-    expect(turnResult.reason).toBe("end_turn");
+    expect(turnResult.endReason).toBe("completed");
     expect(turnResult.toolCalls).toBe(1);
 
     // 4a. Conversation detail via the API: role sequence.
@@ -152,7 +152,7 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
     const conversationId2 = convRes2.body.conversation.id as string;
 
     const turnResult2 = await runAgentTurn({ pool: db.getPool(), conversationId: conversationId2, siteId });
-    expect(turnResult2.reason).toBe("end_turn");
+    expect(turnResult2.endReason).toBe("completed");
     expect(turnResult2.toolCalls).toBe(0);
 
     const detail2 = await auth(

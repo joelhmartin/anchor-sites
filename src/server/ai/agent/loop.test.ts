@@ -4,7 +4,7 @@ import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
   createConversation, appendMessage, listMessages, addTokenUsage, getConversation, getTodayUsage,
 } from "./repo.js";
-import { runAgentTurn, parsePositiveIntEnv, type AgentTurnEvent } from "./loop.js";
+import { runAgentTurn, parsePositiveIntEnv, type AgentTurnEvent, type AgentTurnResult } from "./loop.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 const db = setupAgentDb();
@@ -116,13 +116,15 @@ d("runAgentTurn", () => {
     ]);
 
     const events: AgentTurnEvent[] = [];
-    const result = await runAgentTurn({
+    // Type-level check (Task A1): the resolved value is the exported
+    // `AgentTurnResult`, not an untyped/void return.
+    const result: AgentTurnResult = await runAgentTurn({
       pool: db.getPool(), conversationId: conv.id, siteId: site.id,
       env: API_ENV, client, onEvent: (e) => events.push(e),
     });
 
     expect(create).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 2 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 2 });
 
     const msgs = await listMessages(db.getPool(), conv.id);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant"]);
@@ -206,7 +208,7 @@ d("runAgentTurn", () => {
       pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
     });
 
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 2 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 2 });
 
     const msgs = await listMessages(db.getPool(), conv.id);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant"]);
@@ -265,7 +267,7 @@ d("runAgentTurn", () => {
     });
 
     expect(create).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ reason: "error", toolCalls: 3 });
+    expect(result).toEqual({ endReason: "error", toolCalls: 3 });
 
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     expect(convAfter!.status).toBe("error");
@@ -305,7 +307,7 @@ d("runAgentTurn", () => {
     // follow-up round-trip needed to discover the cap; it's enforced
     // within this single batch), and only b1's write landed.
     expect(create).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ reason: "max_tools", toolCalls: 1 });
+    expect(result).toEqual({ endReason: "tool_limit", toolCalls: 1 });
 
     const pageRow = await db.getPool().query(`SELECT blocks FROM pages WHERE id = $1`, [page.id]);
     const blocks = pageRow.rows[0].blocks as { props: { html: string } }[];
@@ -354,7 +356,7 @@ d("runAgentTurn", () => {
     });
 
     expect(create).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ reason: "promoted", toolCalls: 1 });
+    expect(result).toEqual({ endReason: "deadline", toolCalls: 1 });
 
     const msgs = await listMessages(db.getPool(), conv.id);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool"]);
@@ -372,7 +374,7 @@ d("runAgentTurn", () => {
     });
 
     expect(create).not.toHaveBeenCalled();
-    expect(result).toEqual({ reason: "budget", toolCalls: 0 });
+    expect(result).toEqual({ endReason: "token_budget", toolCalls: 0 });
     expect(events.map((e) => e.type)).toEqual(["assistant_text", "turn_done"]);
     expect(events[1]).toEqual({
       type: "turn_done",
@@ -401,7 +403,7 @@ d("runAgentTurn", () => {
     });
 
     expect(create).not.toHaveBeenCalled();
-    expect(result).toEqual({ reason: "budget", toolCalls: 0 });
+    expect(result).toEqual({ endReason: "token_budget", toolCalls: 0 });
   });
 
   it("max tool calls: an empty AI_AGENT_MAX_TOOL_CALLS falls back to the real default (30), not 0", async () => {
@@ -427,7 +429,7 @@ d("runAgentTurn", () => {
     });
 
     expect(create).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 1 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 1 });
   });
 
   it("stub: with no ANTHROPIC_API_KEY, an empty site gets a real starter home page", async () => {
@@ -441,7 +443,7 @@ d("runAgentTurn", () => {
       onEvent: (e) => events.push(e),
     });
 
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 1 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 1 });
 
     const pages = await db.getPool().query(`SELECT slug, blocks FROM pages WHERE site_id = $1`, [site.id]);
     expect(pages.rowCount).toBe(1);
@@ -469,7 +471,7 @@ d("runAgentTurn", () => {
       pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: {} as NodeJS.ProcessEnv,
     });
 
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 0 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 0 });
     const pages = await db.getPool().query(`SELECT COUNT(*)::int AS count FROM pages WHERE site_id = $1`, [site.id]);
     expect(pages.rows[0].count).toBe(1);
   });
@@ -503,7 +505,7 @@ d("runAgentTurn", () => {
       pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
     });
 
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 0 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 0 });
     expect(create).toHaveBeenCalledTimes(1);
     const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
     expect(payload.messages).toEqual([
@@ -541,7 +543,7 @@ d("runAgentTurn", () => {
       pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
     });
 
-    expect(result).toEqual({ reason: "end_turn", toolCalls: 0 });
+    expect(result).toEqual({ endReason: "completed", toolCalls: 0 });
     expect(create).toHaveBeenCalledTimes(1);
     const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
     expect(payload.messages.length).toBeGreaterThan(0);
@@ -565,7 +567,7 @@ d("runAgentTurn", () => {
     });
 
     expect(create).not.toHaveBeenCalled();
-    expect(result).toEqual({ reason: "error", toolCalls: 0 });
+    expect(result).toEqual({ endReason: "error", toolCalls: 0 });
     expect(events).toEqual([
       { type: "turn_done", reason: "error", message: "conversation has no user message" },
     ]);
