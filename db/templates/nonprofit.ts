@@ -109,7 +109,7 @@ export const nonprofit: TemplateSeed = {
             heading: "Twelve years of showing up for the East End.",
             stats: [
               { value: "1,800+", label: "Neighbors fed each month" },
-              { value: "340+", label: "Youth mentored since 2012" },
+              { value: "640+", label: "Youth mentored since 2012" },
               { value: "92%", label: "Mentees who graduate on time" },
               { value: "12", label: "Years serving Church Hill & Fulton" },
             ],
@@ -125,7 +125,7 @@ export const nonprofit: TemplateSeed = {
               {
                 icon: "heart",
                 title: "Fresh Table Pantry",
-                body: "A weekly food pantry and mobile market putting fresh produce and shelf-stable staples within walking distance of Church Hill and Fulton.",
+                body: "A weekly food pantry and mobile market putting fresh produce and shelf-stable staples within walking distance of Church Hill, Fulton, and Union Hill.",
               },
               {
                 icon: "book",

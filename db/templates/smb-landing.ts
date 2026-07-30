@@ -9,7 +9,7 @@ import type { TemplateSeed } from "./types.js";
  * cleanest — one consistent rhythm per page, no niche-specific blocks.
  *
  * Fictional business: Fieldstone Advisory, a small operations & marketing
- * consultancy founded in 2015 in Richmond, Virginia, run by principal
+ * consultancy founded in 2015 in Providence, Rhode Island, run by principal
  * consultant Dana Whitcomb and marketing strategy director Theo Lindqvist.
  *
  * Design reference: MUI's free "Marketing page" template
@@ -50,7 +50,7 @@ const footer = (pageSlug: string) => ({
   type: "rich-footer",
   props: {
     brand_name: "Fieldstone Advisory",
-    tagline: "Operations and marketing consulting for small businesses in Richmond, Virginia and beyond.",
+    tagline: "Operations and marketing consulting for small businesses in Providence, Rhode Island and beyond.",
     columns: [
       {
         heading: "Services",
@@ -72,7 +72,7 @@ const footer = (pageSlug: string) => ({
       { platform: "linkedin", href: "https://linkedin.com/company/fieldstone-advisory" },
       { platform: "facebook", href: "https://facebook.com/fieldstoneadvisory" },
     ],
-    hours: "Mon–Fri 8:30am–5:30pm",
+    hours: "Mon–Fri 8:30 AM – 5:30 PM",
     small_print: "© 2026 Fieldstone Advisory. All rights reserved.",
   },
 });
@@ -107,9 +107,9 @@ export const smbLanding: TemplateSeed = {
       title: "Home",
       sort_order: 0,
       seo: {
-        title: "Fieldstone Advisory | Richmond, VA Business Consulting",
+        title: "Fieldstone Advisory | Providence, RI Business Consulting",
         description:
-          "Fieldstone Advisory fixes the operations and marketing gaps that cap small business growth in Richmond, Virginia, then hands your team a plan they can run.",
+          "Fieldstone Advisory fixes the operations and marketing gaps that cap small business growth in Providence, Rhode Island, then hands your team a plan to run.",
       },
       blocks: [
         navBar("home"),
@@ -120,7 +120,7 @@ export const smbLanding: TemplateSeed = {
             eyebrow: "Operations & Marketing Consulting",
             title: "Run a tighter business without hiring a bigger team.",
             subtitle:
-              "Fieldstone Advisory helps Richmond-area small businesses and B2B teams fix the operations and marketing gaps that quietly cap growth — then hands you a plan your own team can run.",
+              "Fieldstone Advisory helps Providence-area small businesses and B2B teams fix the operations and marketing gaps that quietly cap growth — then hands you a plan your own team can run.",
             cta_label: "Get a Consultation",
             cta_href: "/contact",
             align: "left",
@@ -162,7 +162,7 @@ export const smbLanding: TemplateSeed = {
           props: {
             heading: "Eleven years of measurable results",
             stats: [
-              { value: "11", label: "Years advising Richmond businesses" },
+              { value: "11", label: "Years advising Providence businesses" },
               { value: "60+", label: "Clients guided through a growth stage" },
               { value: "92%", label: "Clients who renew after year one" },
               { value: "$1.2M", label: "Avg. client revenue growth tracked" },
@@ -194,8 +194,8 @@ export const smbLanding: TemplateSeed = {
               {
                 quote:
                   "We hired Fieldstone for a three-month engagement and kept them on as fractional marketing leadership for two years running.",
-                author: "Sylvia Okafor",
-                role: "COO, Okafor Logistics Group",
+                author: "Sylvia Bramwell",
+                role: "COO, Bramwell Logistics Group",
                 avatar: "",
               },
             ],
@@ -225,7 +225,7 @@ export const smbLanding: TemplateSeed = {
       seo: {
         title: "Services | Fieldstone Advisory Business Consulting",
         description:
-          "Operations systems, marketing strategy, fractional marketing leadership, and growth roadmapping for Richmond, Virginia small businesses ready to scale.",
+          "Operations systems, marketing strategy, fractional marketing leadership, and growth roadmapping for Providence, Rhode Island small businesses ready to scale.",
       },
       blocks: [
         navBar("services"),
@@ -273,9 +273,9 @@ export const smbLanding: TemplateSeed = {
       title: "About",
       sort_order: 2,
       seo: {
-        title: "About | Fieldstone Advisory Richmond, VA Consulting",
+        title: "About | Fieldstone Advisory Providence, RI Consulting",
         description:
-          "Meet Dana Whitcomb and Theo Lindqvist of Fieldstone Advisory, the Richmond, Virginia consultancy helping small businesses fix operations and marketing.",
+          "Meet Dana Whitcomb and Theo Lindqvist of Fieldstone Advisory, the Providence, Rhode Island consultancy helping small businesses fix operations and marketing.",
       },
       blocks: [
         navBar("about"),
@@ -286,7 +286,7 @@ export const smbLanding: TemplateSeed = {
             eyebrow: "About Us",
             title: "Consultants who've actually run the departments they advise on",
             subtitle:
-              "Fieldstone Advisory was founded in Richmond, Virginia in 2015 by two operators who got tired of watching good businesses stall on fixable problems.",
+              "Fieldstone Advisory was founded in Providence, Rhode Island in 2015 by two operators who got tired of watching good businesses stall on fixable problems.",
             align: "left",
           },
         },
@@ -299,7 +299,7 @@ export const smbLanding: TemplateSeed = {
             body: "Dana spent nine years running operations for a regional logistics company before founding Fieldstone Advisory in 2015. She specializes in untangling the workflows, staffing structures, and vendor relationships that quietly cap a growing business, and in building systems the existing team can actually maintain after she leaves.",
             primary_cta_label: "Work With Dana",
             primary_cta_href: "/contact",
-            image_alt: "Dana Whitcomb, Principal Consultant at Fieldstone Advisory, in the Richmond office",
+            image_alt: "Dana Whitcomb, Principal Consultant at Fieldstone Advisory, in the Providence office",
             variant: "image-right",
           },
         },
@@ -368,9 +368,9 @@ export const smbLanding: TemplateSeed = {
       title: "Contact",
       sort_order: 3,
       seo: {
-        title: "Contact | Fieldstone Advisory Richmond, VA",
+        title: "Contact | Fieldstone Advisory Providence, RI",
         description:
-          "Request a consultation from Fieldstone Advisory in Richmond, Virginia. Call (804) 555-0173 or send your business details online to get started.",
+          "Request a consultation from Fieldstone Advisory in Providence, Rhode Island. Call (401) 555-0173 or send your business details online to get started.",
       },
       blocks: [
         navBar("contact"),
@@ -382,8 +382,8 @@ export const smbLanding: TemplateSeed = {
             title: "Tell us where the business feels stuck.",
             subtitle:
               "Most first calls run 30 minutes and end with a clear next step, whether or not that next step involves us.",
-            cta_label: "Call (804) 555-0173",
-            cta_href: "tel:+18045550173",
+            cta_label: "Call (401) 555-0173",
+            cta_href: "tel:+14015550173",
             align: "left",
           },
         },
@@ -391,8 +391,8 @@ export const smbLanding: TemplateSeed = {
           id: "contact-phone",
           type: "phone_number",
           props: {
-            number: "+18045550173",
-            display: "(804) 555-0173 — Mon–Fri, 8:30 AM – 5:30 PM",
+            number: "+14015550173",
+            display: "(401) 555-0173 — Mon–Fri 8:30 AM – 5:30 PM",
           },
         },
         {
@@ -409,7 +409,7 @@ export const smbLanding: TemplateSeed = {
           type: "rich-text",
           props: {
             html:
-              "<h2>Hours &amp; Location</h2><p><strong>Office hours:</strong> Mon–Fri 8:30 AM – 5:30 PM.<br><strong>Office address:</strong> 215 E Cary Street, Suite 300, Richmond, VA 23219.<br>About half of our current clients work with us fully remote — a site visit is never required to start an engagement.</p>",
+              "<h2>Hours &amp; Location</h2><p><strong>Office hours:</strong> Mon–Fri 8:30 AM – 5:30 PM.<br><strong>Office address:</strong> 88 Westminster Street, Suite 400, Providence, RI 02903.<br>About half of our current clients work with us fully remote — a site visit is never required to start an engagement.</p>",
             max_width: "medium",
           },
         },
@@ -435,9 +435,9 @@ export const smbLanding: TemplateSeed = {
                   "Operations and marketing strategy projects usually run 6-10 weeks. Fractional marketing leadership is ongoing, month to month, with a 90-day minimum so there's time to see real results.",
               },
               {
-                question: "Do you work with businesses outside Richmond?",
+                question: "Do you work with businesses outside Providence?",
                 answer:
-                  "Yes — about half our current clients are fully remote engagements across the mid-Atlantic and beyond. Site visits are available for Richmond-area clients but aren't required for the work itself.",
+                  "Yes — about half our current clients are fully remote engagements across the Northeast and beyond. Site visits are available for Providence-area clients but aren't required for the work itself.",
               },
               {
                 question: "Do you offer support after the project ends?",

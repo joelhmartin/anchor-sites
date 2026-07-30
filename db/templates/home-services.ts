@@ -524,7 +524,7 @@ export const homeServices: TemplateSeed = {
               {
                 quote:
                   "Our water heater died on a Sunday night and Dave had a new one installed by noon Monday. Upfront pricing, no surprise fees.",
-                author: "Karen Whitfield",
+                author: "Karen Bostwick",
                 role: "Homeowner, Clintonville",
                 avatar: "",
               },
@@ -538,14 +538,14 @@ export const homeServices: TemplateSeed = {
               {
                 quote:
                   "Furnace went out during the first cold snap of the year. Maria diagnosed it in ten minutes and had parts on the truck. Heat was back by dinner.",
-                author: "Priya Anand",
+                author: "Divya Anand",
                 role: "Homeowner, Westerville",
                 avatar: "",
               },
               {
                 quote:
                   "Called about a slow drain, they found a bigger issue with a camera inspection before it became a real problem. Saved us a repiping bill.",
-                author: "Jonathan Reyes",
+                author: "Jonathan Halstead",
                 role: "Homeowner, Grove City",
                 avatar: "",
               },

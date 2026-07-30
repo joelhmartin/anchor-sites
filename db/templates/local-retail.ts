@@ -6,8 +6,8 @@ import type { TemplateSeed } from "./types.js";
  * template-authoring-guide.md`).
  *
  * Design reference: a warm indie-retail layout in the spirit of Tailwind
- * UI's free "Storefront" marketing sections — a photo-forward storefront
- * hero, a browsable feature-grid standing in for shelf departments, and a
+ * UI's free marketing sections — a photo-forward storefront hero, a
+ * browsable feature-grid standing in for shelf departments, and a
  * split-image "teaser" band pointing deeper into the site — recomposed
  * without any cart/checkout chrome, since this is a visit-us site for a
  * brick-and-mortar shop, not e-commerce.
@@ -138,12 +138,12 @@ export const localRetail: TemplateSeed = {
               {
                 icon: "💿",
                 title: "New & Used Vinyl",
-                body: "Soul, jazz, hip-hop, indie, and a deep Baltimore-artist section, sorted by genre and re-stocked every week.",
+                body: "Soul, funk, go-go, jazz, hip-hop, and indie rock — plus a deep Baltimore-artist section and a growing wall of 180-gram audiophile reissues, sorted by genre and re-stocked every week.",
               },
               {
                 icon: "🎧",
                 title: "Turntables & Hi-Fi",
-                body: "Entry-level to serious tables, needles, cleaning kits, and speakers — plus free setup help at the counter.",
+                body: "From the entry-level Aldergrove SP-2 belt-drive to the direct-drive Aldergrove Mark III, plus needles, cleaning kits, and bookshelf speakers — with free setup help at the counter.",
               },
               {
                 icon: "🗃️",
@@ -153,7 +153,7 @@ export const localRetail: TemplateSeed = {
               {
                 icon: "📝",
                 title: "Special Orders",
-                body: "Can't find it on the shelf? We'll track down out-of-print pressings and reissues through our distributor network.",
+                body: "Can't find it on the shelf? We'll track down out-of-print pressings, import editions, and Harborlight Reissues represses through our distributor network.",
               },
             ],
           },
@@ -173,6 +173,38 @@ export const localRetail: TemplateSeed = {
             image_asset_id: "",
             image_alt: "Neighbors browsing crates of records during a First Friday listening party at Rowhouse Records",
             variant: "image-left",
+          },
+        },
+        {
+          id: "home-regulars",
+          type: "testimonial-carousel",
+          props: {
+            heading: "What the regulars say",
+            autoplay: true,
+            interval_ms: 6000,
+            items: [
+              {
+                quote:
+                  "I came in for a birthday gift and left with four records and a new turntable. Nora talked me out of the cheap one and I'm glad she did.",
+                author: "Odalys Ferro",
+                role: "Regular since 2019",
+                avatar: "",
+              },
+              {
+                quote:
+                  "The Saturday crate digs are the best dollar I spend all week. I've built half my funk collection out of that bin.",
+                author: "Trevor Nakashima",
+                role: "Vinyl Wednesdays regular",
+                avatar: "",
+              },
+              {
+                quote:
+                  "They tracked down an out-of-print pressing I'd been hunting for two years. Three weeks and it was in my hands.",
+                author: "Yolanda Pruitt",
+                role: "Special-order customer",
+                avatar: "",
+              },
+            ],
           },
         },
         {
@@ -206,7 +238,7 @@ export const localRetail: TemplateSeed = {
           props: {
             eyebrow: "In the Shop",
             title: "What's on the shelves",
-            subtitle: "No cart, no checkout — just a storefront worth walking into. Here's what you'll find when you do.",
+            subtitle: "Genre-sorted vinyl up front, a turntable bar you can actually test drive, and a trade counter that's always buying. Here's what's on the shelves this month.",
             cta_label: "Plan Your Visit",
             cta_href: "/visit",
             align: "left",
@@ -217,8 +249,20 @@ export const localRetail: TemplateSeed = {
           type: "rich-text",
           props: {
             html:
-              "<h2>New &amp; Used Vinyl</h2><p>The front room is sorted by genre — soul, jazz, hip-hop, indie rock, folk, and a standing Baltimore-artist section we keep stocked from local releases and estate collections. New pressings and reissues sit up front; used stock (graded honestly, every sleeve played before it's priced) fills the back bins.</p><h2>Turntables &amp; Hi-Fi</h2><p>We carry a small, carefully chosen line of turntables from entry-level belt-drives to serious direct-drives, along with replacement needles, cleaning brushes and fluid, and a rack of bookshelf speakers. Bring in your table and we'll help you dial it in at no charge.</p><h2>Trade-In &amp; Buy Counter</h2><p>Bring a crate, leave with cash or store credit. We buy individual records and whole collections — just drop by during shop hours, no appointment needed.</p><h2>Special Orders</h2><p>If it's out of print or hard to find, ask at the counter or use the form on our Visit page. We work with a distributor network that can usually track down a pressing within a couple of weeks.</p>",
+              "<h2>New &amp; Used Vinyl</h2><p>The front room is sorted by genre — soul, funk, go-go, jazz, hip-hop, indie rock, folk, and a standing Baltimore-artist section we keep stocked from local releases and estate collections. New pressings and 180-gram audiophile reissues sit up front; used stock (graded honestly, every sleeve played before it's priced) fills the back bins.</p><h2>Turntables &amp; Hi-Fi</h2><p>We carry a small, carefully chosen line of turntables — the entry-level Aldergrove SP-2 belt-drive up through the direct-drive Aldergrove Mark III — along with replacement needles, cleaning brushes and fluid, and a rack of bookshelf speakers. Bring in your table and we'll help you dial it in at no charge.</p><h2>Trade-In &amp; Buy Counter</h2><p>Bring a crate, leave with cash or store credit. We buy individual records and whole collections — just drop by during shop hours, no appointment needed.</p><h2>Special Orders</h2><p>If it's out of print or hard to find, ask at the counter or use the form on our Visit page. We work with a distributor network — including Harborlight Reissues — that can usually track down a pressing within a couple of weeks.</p>",
             max_width: "medium",
+          },
+        },
+        {
+          id: "shop-by-the-numbers",
+          type: "stats-band",
+          props: {
+            heading: "Rowhouse Records, by the numbers",
+            stats: [
+              { value: "12 yrs", label: "In Federal Hill" },
+              { value: "8,000+", label: "Records in stock" },
+              { value: "4", label: "Dollar crates, always full" },
+            ],
           },
         },
         {
@@ -251,8 +295,8 @@ export const localRetail: TemplateSeed = {
           type: "announcement-bar",
           props: {
             text: "First Friday Listening Party — August 7, 7–9pm. Doors open early for dollar-crate diggers.",
-            link_label: "See Details",
-            link_href: "/events",
+            link_label: "Get Directions",
+            link_href: "/visit",
           },
         },
         {
@@ -274,6 +318,14 @@ export const localRetail: TemplateSeed = {
             html:
               "<h2>Vinyl Wednesdays</h2><p>Every Wednesday, 5–7pm. The week's new arrivals get their first spin on the shop turntable, staff picks included. Come early for first crack at anything rare.</p><h2>First Friday Listening Party</h2><p>First Friday of the month, 7–9pm. We clear the front room, pour some cider, and spin full albums start to finish — a different genre theme every month, picked by a different staffer.</p><h2>Crate Dig Saturdays</h2><p>Every Saturday, 11am–1pm. The dollar crates get a fresh dump from the week's trade-ins before the shop even opens to the rest of the day — regulars know to show up early.</p><h2>Baltimore Local Spotlight</h2><p>Third Thursday of the month, 6–8pm. A short in-store set from a Baltimore-based artist or band, followed by an informal Q&amp;A and a signing at the counter.</p>",
             max_width: "medium",
+          },
+        },
+        {
+          id: "events-photo",
+          type: "image",
+          props: {
+            alt: "Neighbors packed into the front room of Rowhouse Records for a First Friday listening party",
+            fit: "cover",
           },
         },
         {
@@ -320,6 +372,36 @@ export const localRetail: TemplateSeed = {
             html:
               "<h2>Hours</h2><ul><li>Tuesday – Saturday: 11:00 AM – 7:00 PM</li><li>Sunday: 12:00 – 5:00 PM</li><li>Monday: Closed</li></ul><h2>Location &amp; Parking</h2><p>1416 Light Street, Baltimore, MD 21230 — three blocks north of the Inner Harbor promenade. Street parking is free after 6 PM and all day Sunday; the Cross Street Market garage is a three-minute walk and validates for two hours with any purchase.</p><h2>Transit</h2><p>The CityLink Purple and Route 1 buses both stop at Light &amp; Cross, half a block from the door. The Camden Yards light rail stop is a flat 12-minute walk if you'd rather skip the bus.</p>",
             max_width: "medium",
+          },
+        },
+        {
+          id: "visit-faq",
+          type: "faq-accordion",
+          props: {
+            heading: "Parking & Special Orders",
+            multiple: false,
+            items: [
+              {
+                question: "Is parking hard to find?",
+                answer:
+                  "Not usually. Street parking is free after 6 PM and all day Sunday, and the Cross Street Market garage is a three-minute walk with two free hours on any purchase.",
+              },
+              {
+                question: "How long does a special order take?",
+                answer:
+                  "Most requests come in within a couple of weeks through our distributor network. We'll call or text as soon as it's on the shelf waiting for you.",
+              },
+              {
+                question: "Do I need to pay up front for a special order?",
+                answer:
+                  "No — we just ask for a deposit on rare or import pressings. Standard reissues and in-print titles don't require anything until you pick them up.",
+              },
+              {
+                question: "Can I request something in person instead of using the form?",
+                answer:
+                  "Of course. Ask at the counter any time we're open and we'll fill out the request with you on the spot.",
+              },
+            ],
           },
         },
         {

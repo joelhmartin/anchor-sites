@@ -4,7 +4,7 @@ import type { TemplateSeed } from "./types.js";
  * Creative Portfolio template (Task C-creative-portfolio, category "Portfolio").
  *
  * Fictional business: Marlowe Studio, an independent design & illustration
- * practice run solo by Sable Marlowe out of East Austin, TX — typographic
+ * practice run solo by Sable Marlowe out of Austin, TX — typographic
  * identities, packaging systems, and editorial illustration for record
  * labels, independent presses, coffee roasters, and festival promoters.
  *
@@ -368,7 +368,7 @@ export const creativePortfolio: TemplateSeed = {
           type: "rich-text",
           props: {
             html:
-              "<h2>Before you write</h2><p>I take on a small number of projects at a time, currently booking into Q1 2027. The best briefs tell me three things: what you're making, who it's for, and why the version that exists right now isn't working.</p><p>Based in East Austin, Texas. Calls happen by appointment only — text or email gets the fastest reply, and most of the work itself happens remotely.</p>",
+              "<h2>Before you write</h2><p>I take on a small number of projects at a time, currently booking into Q1 2027. The best briefs tell me three things: what you're making, who it's for, and why the version that exists right now isn't working.</p><p>Based in Austin, Texas. Calls happen by appointment only — text or email gets the fastest reply, and most of the work itself happens remotely.</p>",
             max_width: "medium",
           },
         },
