@@ -16,6 +16,15 @@ const d = TEST_DB_URL ? describe : describe.skip;
 
 const ADMIN_TOKEN = "test-admin-token-media";
 
+// vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+// then guarantees this resets before the next test anywhere in the suite,
+// regardless of how long any describe's own `afterAll` takes (root cause of
+// the cross-file requireAdmin flake — see
+// .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+beforeEach(() => {
+  vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+});
+
 const runMigrate = (direction: "up" | "down", count: number) =>
   migrate({
     databaseUrl: TEST_DB_URL!,
@@ -63,13 +72,11 @@ d("POST /api/sites/:siteId/media/upload-url (P3-T3.9)", () => {
       `SELECT id FROM sites WHERE slug = 'muldoon-dental'`,
     );
     muldoonSiteId = r.rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool, sign);
   }, 60_000);
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   beforeEach(() => {
@@ -159,13 +166,11 @@ d("POST /api/sites/:siteId/media/:assetId/complete (P3-T3.11)", () => {
       `SELECT id FROM sites WHERE slug = 'muldoon-dental'`,
     );
     muldoonSiteId = r.rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool, sign, enqueue);
   }, 60_000);
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   beforeEach(async () => {

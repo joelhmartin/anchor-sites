@@ -1,15 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { isAdminHost, studioHost } from "./admin-host.js";
 
 describe("isAdminHost (P4-T4.1 / D-032)", () => {
-  const orig = process.env.STUDIO_HOST;
-  afterEach(() => {
-    if (orig === undefined) delete process.env.STUDIO_HOST;
-    else process.env.STUDIO_HOST = orig;
-  });
-
   it("matches the default studio.anchorcorps.com", () => {
-    delete process.env.STUDIO_HOST;
+    vi.stubEnv("STUDIO_HOST", "");
     expect(isAdminHost("studio.anchorcorps.com")).toBe(true);
   });
 
@@ -38,8 +32,13 @@ describe("isAdminHost (P4-T4.1 / D-032)", () => {
     expect(isAdminHost(null)).toBe(false);
   });
 
+  // vi.stubEnv, not a raw `process.env` write (+ hand-rolled save/restore) —
+  // vitest's `unstubEnvs` hygiene guarantees this resets before the next
+  // test anywhere in the suite even if this test throws before its own
+  // cleanup runs (root cause of the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
   it("honors a STUDIO_HOST override", () => {
-    process.env.STUDIO_HOST = "studio.staging.anchorcorps.com";
+    vi.stubEnv("STUDIO_HOST", "studio.staging.anchorcorps.com");
     expect(isAdminHost("studio.staging.anchorcorps.com")).toBe(true);
     expect(isAdminHost("studio.anchorcorps.com")).toBe(false);
     expect(studioHost()).toBe("studio.staging.anchorcorps.com");

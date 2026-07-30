@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { setupAgentDb } from "../helpers/agent-db.js";
@@ -34,9 +34,17 @@ d("inline editing end-to-end gate (Inline Editing Task 12)", () => {
   let pagesApp: express.Express;
   let mediaApp: express.Express;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await db.runMigrations();
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
 
     const pages = express();
     pages.use(express.json({ limit: "1mb" }));
@@ -54,7 +62,6 @@ d("inline editing end-to-end gate (Inline Editing Task 12)", () => {
 
   afterAll(async () => {
     await db.teardown();
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("edit-mode preview -> inline save + revision round-trip -> stock search/import -> plain preview unchanged", async () => {

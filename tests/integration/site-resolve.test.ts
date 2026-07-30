@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../../src/server/app.js";
 import { pool } from "../../src/server/db.js";
@@ -13,16 +13,20 @@ d("GET /__site_resolve (P3-T3.2)", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeAll(() => {
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = createApp();
   });
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long any file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
   beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
     __clearResolveSiteCacheForTests();
   });
 
   afterAll(async () => {
-    delete process.env.ADMIN_API_TOKEN;
     await pool.end().catch(() => {});
   });
 

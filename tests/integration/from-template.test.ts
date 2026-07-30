@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
@@ -30,6 +30,15 @@ d("create-site-from-template API (integration, P7-T7.6)", () => {
   let siteTemplateId: string;
   let pageTemplateId: string;
   let archivedTemplateId: string;
+
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
 
   beforeAll(async () => {
     await runMigrate("up", Infinity);
@@ -69,7 +78,6 @@ d("create-site-from-template API (integration, P7-T7.6)", () => {
       return { id: "test-job-" + enqueued.length };
     };
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const a = express();
     a.use(express.json());
     a.use("/api", templatesRouter({ pool, saveRateLimit: { max: 200, windowMs: 60_000 }, enqueueMaterialize: enqueue }));
@@ -80,7 +88,6 @@ d("create-site-from-template API (integration, P7-T7.6)", () => {
     await pool.query(`DELETE FROM sites WHERE slug LIKE 'ftsite-%'`).catch(() => undefined);
     await pool.query(`DELETE FROM templates WHERE slug LIKE 'fttpl-%'`).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401s without an admin token", async () => {

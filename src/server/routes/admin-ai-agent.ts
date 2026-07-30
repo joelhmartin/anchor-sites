@@ -458,6 +458,22 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
       }
 
       sseInit(res);
+      // A client that tears down its side of the connection abruptly (e.g. a
+      // test harness reading one SSE frame off a raw socket then calling
+      // `req.destroy()`, or a browser tab closing mid-stream) leaves this
+      // response's `writableEnded` UNSET — the server never called
+      // `res.end()` — so `sseSend`'s dead-socket guard below doesn't catch
+      // it. The next write attempt (from an already-in-flight poll tick that
+      // was mid-DB-query when `close` fired, so `clearInterval` didn't stop
+      // it in time) then errors on the broken socket; Node delivers that via
+      // the stream's `error` event, not a thrown exception, so the poll
+      // tick's own try/catch never sees it. With no listener here, that's an
+      // uncaught error at the process level — striking whatever test happens
+      // to be running next in this single-fork suite, which is exactly the
+      // kind of untraceable cross-test flake this route must never cause.
+      res.on("error", () => {
+        // Client already gone — nothing to report back to.
+      });
       sseSend(res, { type: "snapshot", conversation, messages: initialMessages });
 
       let lastSeenId: string | null =

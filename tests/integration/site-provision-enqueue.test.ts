@@ -4,7 +4,7 @@ import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
 import migrate from "node-pg-migrate";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { seed } from "../../db/seed.js";
 import { adminSitesRouter } from "../../src/server/routes/admin-sites.js";
 import {
@@ -59,11 +59,24 @@ d("POST /api/sites — auto-provision enqueue (Task D1)", () => {
   let app: express.Express;
   const createdSlugs: string[] = [];
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // (vitest.workspace.ts) then guarantees this resets before the next test
+  // runs anywhere in the suite, regardless of how long this file's own
+  // `afterAll` (real pg-boss `stopJobs()` + Postgres teardown — the slowest
+  // hook in the whole suite) takes. This file was the prime suspect for the
+  // cross-file requireAdmin flake (a raw `process.env.ADMIN_API_TOKEN = …`
+  // set once in `beforeAll` and deleted once in `afterAll`, racing whichever
+  // admin-gated request from ANY other file happened to be in flight when
+  // this `afterAll` was slow) — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md.
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
     await seed(pool);
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
 
     __resetJobsForTests();
@@ -77,7 +90,6 @@ d("POST /api/sites — auto-provision enqueue (Task D1)", () => {
       await pool.query(`DELETE FROM sites WHERE slug = $1`, [slug]).catch(() => {});
     }
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   afterEach(async () => {

@@ -42,17 +42,24 @@ d("POST /api/sites/:siteId/media/stock-search + stock-import (Task 8)", () => {
   let siteId: string;
   let app: express.Express;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await db.runMigrations();
     pool = db.getPool();
     const site = await db.seedSite("media-stock");
     siteId = site.id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
-    delete process.env.ADMIN_API_TOKEN;
     await db.teardown();
   });
 

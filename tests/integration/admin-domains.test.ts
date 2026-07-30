@@ -4,7 +4,7 @@ import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
 import migrate from "node-pg-migrate";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { seed } from "../../db/seed.js";
 import { adminDomainsRouter, type AdminDomainsOptions } from "../../src/server/routes/admin-domains.js";
 import type { DnsProvider, DnsRecord, EnsureResult } from "../../src/server/dns/provider.js";
@@ -16,6 +16,22 @@ const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
 const ADMIN_TOKEN = "test-admin-token-domains";
+
+// vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+// (vitest.workspace.ts) then guarantees this is reset before the NEXT test
+// runs anywhere in the suite, regardless of how long any file's own
+// `afterAll` (real Postgres queries, `pool.end()`) takes. A raw
+// `process.env.ADMIN_API_TOKEN = …` set once per describe's `beforeAll` and
+// deleted once in `afterAll` depended on that `afterAll` finishing before
+// the next hook ran; when it didn't, the stale/missing token leaked into
+// whichever admin-gated request happened to be in flight next (root cause
+// of the cross-file requireAdmin flake — see
+// .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+// One root-level hook covers every `describe` below — they all share this
+// token.
+beforeEach(() => {
+  vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+});
 
 const runMigrate = (direction: "up" | "down", count: number) =>
   migrate({
@@ -120,13 +136,11 @@ d("admin domains API — GET /api/sites/:siteId/domains (10.5)", () => {
     muldoonId = (
       await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
     ).rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401 without admin token", async () => {
@@ -190,13 +204,11 @@ d("admin domains API — POST /api/sites/:siteId/domains (10.5)", () => {
     muldoonId = (
       await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
     ).rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("400 for invalid hostname format", async () => {
@@ -260,7 +272,6 @@ d("admin domains API — DELETE /api/sites/:siteId/domains/:domainId (10.5)", ()
     muldoonId = (
       await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
     ).rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     mockDns = makeMockDns();
     mockCloudRun = makeMockCloudRun();
     app = buildApp(pool, { dns: mockDns, cloudRun: mockCloudRun });
@@ -268,7 +279,6 @@ d("admin domains API — DELETE /api/sites/:siteId/domains/:domainId (10.5)", ()
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("400 when trying to delete the primary domain", async () => {
@@ -342,7 +352,6 @@ d("admin domains API — POST provision + GET status (10.6)", () => {
     );
     domainId = ins.rows[0].id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     mockDns = makeMockDns();
     mockCloudRun = makeMockCloudRun({
       resourceRecords: [{ name: hostname, type: "CNAME", rrdata: "ghs.googlehosted.com." }],
@@ -353,7 +362,6 @@ d("admin domains API — POST provision + GET status (10.6)", () => {
   afterAll(async () => {
     await pool.query(`DELETE FROM site_domains WHERE hostname = $1`, [hostname]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("POST provision returns steps and required_records for client-owned domain", async () => {
@@ -419,7 +427,6 @@ d("admin domains API — provision client-owned domain uses manual DNS (no opts.
     );
     domainId = ins.rows[0].id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     mockCloudRun = makeMockCloudRun({
       resourceRecords: [{ name: hostname, type: "CNAME", rrdata: "ghs.googlehosted.com." }],
     });
@@ -431,7 +438,6 @@ d("admin domains API — provision client-owned domain uses manual DNS (no opts.
   afterAll(async () => {
     await pool.query(`DELETE FROM site_domains WHERE hostname = $1`, [hostname]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("provision of client-owned domain reports external DNS (not a DNS error)", async () => {

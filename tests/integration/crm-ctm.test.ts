@@ -9,7 +9,7 @@ import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
 import migrate from "node-pg-migrate";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminSitesRouter } from "../../src/server/routes/admin-sites.js";
 import { resolveSite, __clearResolveSiteCacheForTests } from "../../src/middleware/resolveSite.js";
 import { ctmScriptTag } from "../../src/server/render-page.js";
@@ -22,6 +22,15 @@ const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
 const ADMIN_TOKEN = "test-admin-token-crm-ctm";
+
+// vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+// then guarantees this resets before the next test anywhere in the suite,
+// regardless of how long any describe's own `afterAll` takes (root cause of
+// the cross-file requireAdmin flake — see
+// .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+beforeEach(() => {
+  vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+});
 
 const runMigrate = (direction: "up" | "down", count: number) =>
   migrate({
@@ -50,7 +59,6 @@ d("P11 — PATCH /api/sites/:id — ctm_account_id", () => {
       [`ctmtest-${Date.now()}`],
     );
     siteId = ins.rows[0].id;
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const a = express();
     a.use(express.json());
     a.use("/api", adminSitesRouter({ pool, createRateLimit: { max: 1000, windowMs: 60_000 } }));
@@ -60,7 +68,6 @@ d("P11 — PATCH /api/sites/:id — ctm_account_id", () => {
   afterAll(async () => {
     await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => {});
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("sets ctm_account_id", async () => {
@@ -271,7 +278,6 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
       listCampaigns: vi.fn().mockResolvedValue([]),
     };
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const app = express();
     app.use(express.json());
     app.use("/api", adminSitesRouter({ pool, createRateLimit: { max: 1000, windowMs: 60_000 }, crmClient }));
@@ -286,7 +292,6 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
     expect(crmClient.provisionSite).toHaveBeenCalledTimes(1);
 
     await pool.query(`DELETE FROM sites WHERE slug = $1`, [slug]).catch(() => {});
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("PATCH /api/sites/:id calls updateSite when display_name changes and crm_site_id set", async () => {
@@ -306,7 +311,6 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
     );
     const siteId = ins.rows[0].id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const app = express();
     app.use(express.json());
     app.use("/api", adminSitesRouter({ pool, createRateLimit: { max: 1000, windowMs: 60_000 }, crmClient }));
@@ -322,6 +326,5 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
     expect(crmClient.updateSite).toHaveBeenCalledWith("crm-patch-test", expect.objectContaining({ name: "New Name" }));
 
     await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => {});
-    delete process.env.ADMIN_API_TOKEN;
   });
 });

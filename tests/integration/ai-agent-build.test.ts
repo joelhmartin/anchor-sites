@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { setupAgentDb } from "../helpers/agent-db.js";
@@ -28,19 +28,26 @@ const auth = (r: request.Test) => r.set("X-Admin-Token", ADMIN_TOKEN);
 d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
   const db = setupAgentDb();
   let app: express.Express;
-  let savedApiKey: string | undefined;
   // Sites created via POST /api/sites (not db.seedSite()) aren't tracked by
   // setupAgentDb()'s teardown — clean them up ourselves so they don't
   // accumulate in the shared test DB across runs (sibling precedent:
   // tests/integration/admin-sites.test.ts's createdSlugs / afterAll).
   const createdSiteIds: string[] = [];
 
-  beforeAll(async () => {
-    savedApiKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees both of these reset before the next test anywhere in the
+  // suite, regardless of how long this file's own `afterAll` (real Postgres
+  // teardown) takes (root cause of the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+    // ANTHROPIC_API_KEY explicitly absent for this suite (stub mode) —
+    // stubbed to "" in case a local shell has it exported (CI never will).
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+  });
 
+  beforeAll(async () => {
     await db.runMigrations();
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
 
     const a = express();
     a.use(express.json());
@@ -59,7 +66,7 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
   afterEach(() => {
     // Guard against a real key sneaking in mid-suite from some other module's
     // side effect — every test in this suite must run stub-mode.
-    expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(process.env.ANTHROPIC_API_KEY).toBeFalsy();
   });
 
   afterAll(async () => {
@@ -68,12 +75,6 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
       await db.getPool().query(`DELETE FROM sites WHERE id = ANY($1)`, [createdSiteIds]);
     }
     await db.teardown();
-    delete process.env.ADMIN_API_TOKEN;
-    if (savedApiKey !== undefined) {
-      process.env.ANTHROPIC_API_KEY = savedApiKey;
-    } else {
-      delete process.env.ANTHROPIC_API_KEY;
-    }
   });
 
   it("builds a starter Home page via the stub loop, then reports no changes on the next turn", async () => {

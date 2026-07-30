@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
@@ -42,6 +42,15 @@ d("save-as-template API (integration, P7-T7.3)", () => {
   let homePageId: string;
   let servicesPageId: string;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
@@ -65,7 +74,6 @@ d("save-as-template API (integration, P7-T7.3)", () => {
     );
     servicesPageId = sp.rows[0].id;
 
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = buildApp(pool);
   }, 60_000);
 
@@ -73,7 +81,6 @@ d("save-as-template API (integration, P7-T7.3)", () => {
     await pool.query(`DELETE FROM templates WHERE slug LIKE 'apitest-%' OR slug = 'my-starter'`).catch(() => undefined);
     await pool.query(`DELETE FROM pages WHERE id = $1`, [servicesPageId]).catch(() => undefined);
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401s without an admin token", async () => {

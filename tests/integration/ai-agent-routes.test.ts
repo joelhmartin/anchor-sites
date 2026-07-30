@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import express from "express";
 import request from "supertest";
@@ -93,9 +93,17 @@ d("agent HTTP API (integration, Task 10)", () => {
   // has whenever no matching job row exists.
   let hasLiveAgentTurnJobSpy: ReturnType<typeof vi.fn>;
 
+  // vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+  // then guarantees this resets before the next test anywhere in the suite,
+  // regardless of how long this file's own `afterAll` takes (root cause of
+  // the cross-file requireAdmin flake — see
+  // .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+  beforeEach(() => {
+    vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+  });
+
   beforeAll(async () => {
     await db.runMigrations();
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
 
     enqueueSpy = vi.fn(async () => "job-id-1");
     hasLiveAgentTurnJobSpy = vi.fn(async () => false);
@@ -128,7 +136,6 @@ d("agent HTTP API (integration, Task 10)", () => {
 
   afterAll(async () => {
     await db.teardown();
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("401s without an admin token", async () => {

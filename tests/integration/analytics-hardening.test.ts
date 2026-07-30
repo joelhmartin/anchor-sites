@@ -11,7 +11,7 @@ import express from "express";
 import request from "supertest";
 import { Pool } from "pg";
 import migrate from "node-pg-migrate";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // blocks/index.ts imports @anchorcorps/components (unbuilt in test env).
 // The routes under test don't use the block registry; stub the side-effect.
@@ -29,6 +29,15 @@ const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
 const ADMIN_TOKEN = "test-admin-token-analytics";
+
+// vi.stubEnv, not a raw `process.env` write — vitest's `unstubEnvs` hygiene
+// then guarantees this resets before the next test anywhere in the suite,
+// regardless of how long any describe's own `afterAll` takes (root cause of
+// the cross-file requireAdmin flake — see
+// .superpowers/sdd/2026-07-30-lovable-workspace/test-pollution-debug.md).
+beforeEach(() => {
+  vi.stubEnv("ADMIN_API_TOKEN", ADMIN_TOKEN);
+});
 
 const runMigrate = (direction: "up" | "down", count: number) =>
   migrate({
@@ -48,7 +57,6 @@ d("P12 — analytics_disabled PATCH field (12.1)", () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
     await seed(pool);
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = express();
     app.use(express.json({ limit: "1mb" }));
     app.use("/api", adminSitesRouter({ pool, createRateLimit: { max: 1000, windowMs: 60_000 } }));
@@ -56,7 +64,6 @@ d("P12 — analytics_disabled PATCH field (12.1)", () => {
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("PATCH analytics_disabled=true persists and is returned", async () => {
@@ -127,7 +134,6 @@ d("P12 — pg-boss health endpoint (12.7)", () => {
   beforeAll(async () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     app = express();
     app.use(express.json());
     app.use("/api", adminJobsRouter({ pool, bossEnabled: false }));
@@ -135,7 +141,6 @@ d("P12 — pg-boss health endpoint (12.7)", () => {
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("returns 200 with enabled:false when boss disabled", async () => {
@@ -160,7 +165,6 @@ d("P12 — CRM phone-numbers rate limit (12.6)", () => {
     await runMigrate("up", Infinity);
     pool = new Pool({ connectionString: TEST_DB_URL });
     await seed(pool);
-    process.env.ADMIN_API_TOKEN = ADMIN_TOKEN;
     const stubCrm = {
       listPhoneNumbers: async () => [],
       getCampaigns: async () => [],
@@ -181,7 +185,6 @@ d("P12 — CRM phone-numbers rate limit (12.6)", () => {
 
   afterAll(async () => {
     await pool.end().catch(() => undefined);
-    delete process.env.ADMIN_API_TOKEN;
   });
 
   it("returns 429 after rate limit is hit", async () => {
