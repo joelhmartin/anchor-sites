@@ -28,9 +28,11 @@ import {
  * PermissionDenied; this handler records that as a clean `failed` status on
  * the domain row (never an unhandled crash) and rethrows so pg-boss retries
  * per the `retryLimit`/`retryDelay` the caller enqueued with. The DNS step
- * is a no-op in practice for `*.sites` hostnames (the wildcard CNAME already
- * exists in the Kinsta zone) but the KinstaDnsProvider still upserts it
- * idempotently every time, without error.
+ * creates a literal per-site record that coexists with the zone's
+ * `*.sites` wildcard CNAME (exact-name matching never treats the wildcard
+ * as "already exists"); this is idempotent per-site — retries for the same
+ * hostname find the literal record. Bursts >5 site creates/min can hit
+ * Kinsta's create rate limit and self-heal via the job's 60s backoff.
  */
 export type SiteProvisionInput = { siteId: string; domainId: string };
 export type SiteProvisionDeps = {
