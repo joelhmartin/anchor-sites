@@ -15,6 +15,18 @@ function makeAsset(overrides: Partial<MediaAssetData> = {}): MediaAssetData {
   };
 }
 
+function makeMultiVariantAsset(): MediaAssetData {
+  return {
+    id: "logo-2",
+    alt: "Multi logo",
+    variants: [
+      { name: "sm", format: "webp", width: 200, height: 60, url: "https://x/sm.webp" },
+      { name: "lg", format: "webp", width: 800, height: 240, url: "https://x/lg.webp" },
+      { name: "sm", format: "jpg", width: 200, height: 60, url: "https://x/sm.jpg" },
+    ],
+  };
+}
+
 describe("ac-nav-bar", () => {
   it("renders as a <header> with a <nav aria-label='Primary'> landmark", () => {
     const props = navBarSchema.parse({});
@@ -103,5 +115,91 @@ describe("ac-nav-bar", () => {
     });
     render(<NavBar {...props} />);
     expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("href", "/pricing");
+  });
+
+  // ---- Fix round 1 (review): mobile collapse, no overflow at 390px ----
+
+  it("'default' variant: outer row stacks on mobile and goes horizontal from sm:, matching the batch's breakpoint convention", () => {
+    const props = navBarSchema.parse({ variant: "default" });
+    const { container } = render(<NavBar {...props} />);
+    const inner = container.querySelector(".ac-nav-bar__inner");
+    expect(inner?.className).toMatch(/flex-col/);
+    expect(inner?.className).toMatch(/sm:flex-row/);
+  });
+
+  it("'default' variant: the links+CTA group wraps instead of overflowing", () => {
+    const props = navBarSchema.parse({
+      variant: "default",
+      links: Array.from({ length: 7 }, (_, i) => ({ label: `Link ${i}`, href: `#${i}` })),
+    });
+    const { container } = render(<NavBar {...props} />);
+    expect(container.querySelector(".ac-nav-bar__right")?.className).toMatch(/flex-wrap/);
+  });
+
+  it("'cta' variant: outer row stacks on mobile and goes horizontal from sm:", () => {
+    const props = navBarSchema.parse({ variant: "cta", cta_label: "Book now" });
+    const { container } = render(<NavBar {...props} />);
+    const inner = container.querySelector(".ac-nav-bar__inner");
+    expect(inner?.className).toMatch(/flex-col/);
+    expect(inner?.className).toMatch(/sm:flex-row/);
+  });
+
+  it("'cta' variant: the links+CTA group wraps and the CTA is full-width on mobile, auto width from sm:", () => {
+    const props = navBarSchema.parse({
+      variant: "cta",
+      cta_label: "Book now",
+      links: Array.from({ length: 7 }, (_, i) => ({ label: `Link ${i}`, href: `#${i}` })),
+    });
+    const { container } = render(<NavBar {...props} />);
+    expect(container.querySelector(".ac-nav-bar__right")?.className).toMatch(/flex-wrap/);
+    expect(container.querySelector(".ac-nav-bar__cta")?.className).toMatch(/w-full/);
+    expect(container.querySelector(".ac-nav-bar__cta")?.className).toMatch(/sm:w-auto/);
+  });
+
+  it("'centered' variant: link row wraps sanely with many links (no overflow)", () => {
+    const props = navBarSchema.parse({
+      variant: "centered",
+      links: Array.from({ length: 7 }, (_, i) => ({ label: `Link ${i}`, href: `#${i}` })),
+    });
+    const { container } = render(<NavBar {...props} />);
+    const links = container.querySelector(".ac-nav-bar__links");
+    expect(links?.className).toMatch(/flex-wrap/);
+    expect(links?.className).toMatch(/justify-center/);
+    expect(container.querySelectorAll(".ac-nav-bar__links li")).toHaveLength(7);
+  });
+
+  // ---- Fix round 1 (review): retina logo ----
+
+  it("picks the LARGEST webp variant for the logo src (regression: previously picked the smallest)", () => {
+    const props = navBarSchema.parse({ brand_name: "Acme", logo_asset_id: "logo-2" });
+    const { container } = render(
+      <MediaProvider assets={[makeMultiVariantAsset()]}>
+        <NavBar {...props} />
+      </MediaProvider>,
+    );
+    const img = container.querySelector(".ac-nav-bar__logo") as HTMLImageElement;
+    expect(img.src).toContain("lg.webp");
+  });
+
+  it("builds a webp srcSet across all available widths so the browser can pick a sharper image", () => {
+    const props = navBarSchema.parse({ brand_name: "Acme", logo_asset_id: "logo-2" });
+    const { container } = render(
+      <MediaProvider assets={[makeMultiVariantAsset()]}>
+        <NavBar {...props} />
+      </MediaProvider>,
+    );
+    const img = container.querySelector(".ac-nav-bar__logo") as HTMLImageElement;
+    expect(img.srcset).toBe("https://x/sm.webp 200w, https://x/lg.webp 800w");
+  });
+
+  it("single-variant assets (no srcSet possible) still resolve a src without throwing", () => {
+    const props = navBarSchema.parse({ brand_name: "Acme", logo_asset_id: "logo-1" });
+    const { container } = render(
+      <MediaProvider assets={[makeAsset()]}>
+        <NavBar {...props} />
+      </MediaProvider>,
+    );
+    const img = container.querySelector(".ac-nav-bar__logo") as HTMLImageElement;
+    expect(img.src).toContain("logo.webp");
   });
 });
