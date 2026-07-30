@@ -5,6 +5,10 @@ import { pool as defaultPool } from "../src/server/db.js";
 import "../src/blocks/index.js";
 import { validateBlocks } from "../src/blocks/validate.js";
 import { searchPixabay } from "../src/server/media/pixabay.js";
+import { ingestImageFromUrl } from "../src/server/media/ingest.js";
+import { handleMediaProcessUpload } from "../src/server/jobs/media-process-upload.js";
+import type { ProcessedVariant } from "../src/server/media/variant-spec.js";
+import { ensureSystemTemplatesSite } from "../src/server/templates/system-site.js";
 import { allTemplates } from "./templates/index.js";
 import type { TemplateCoverSeed, TemplateSeed } from "./templates/types.js";
 
@@ -17,30 +21,56 @@ import type { TemplateCoverSeed, TemplateSeed } from "./templates/types.js";
  * blocks are validated against the block registry before insert so a typo
  * fails loudly here rather than at materialize time.
  *
- * COVER INGESTION — design choice (Task C4):
- * `templates.cover_image_url` is a bare `text` column, not a foreign key into
- * `media_assets`. `media_assets` rows are mandatorily site-scoped (`site_id
- * uuid NOT NULL REFERENCES sites`, see db/migrations/1747573000000_media_
- * assets.cjs) and their variants are produced ASYNCHRONOUSLY by a pg-boss job
- * (MEDIA_PROCESS_UPLOAD) — there's no site a *template* naturally belongs to,
- * and waiting on a background job mid-seed (or provisioning a synthetic
- * "system" site just to hang cover assets off of) would add real complexity
- * for a gallery-card thumbnail. So: covers are resolved via Pixabay search
- * and the resulting CDN URL (`largeImageURL`) is stored directly in
- * `cover_image_url` — no download, no GCS re-host, no media_assets row.
- * Pixabay's API is designed to be hit this way (the API response IS the
- * asset URL meant for direct use in an application); this sidesteps the
- * site-scoping problem entirely rather than working around it.
+ * COVER INGESTION (Task C4, fix round 1 — supersedes the original "store the
+ * Pixabay CDN URL directly" design, which a review correctly rejected:
+ * Pixabay's API terms restrict the URLs it returns to temporary display of
+ * search results, not permanent hotlinking, and they rotate/expire).
+ *
+ * Covers now go through the REAL media pipeline:
+ *   1. `ensureSystemTemplatesSite` finds-or-creates a reserved, unroutable
+ *      `sites` row (`src/server/templates/system-site.ts`) — templates
+ *      aren't real sites, but `media_assets.site_id` is `NOT NULL`, so
+ *      ingestion needs *some* site to hang the asset off of.
+ *   2. `ingestImageFromUrl` (`src/server/media/ingest.ts`) downloads the
+ *      source (Pixabay hit or an authored `{ url }`) and lands it as a
+ *      `media_assets` row under that site — same SSRF-guarded path every
+ *      other image ingest in this codebase uses.
+ *   3. Variant generation normally happens asynchronously via the
+ *      `MEDIA_PROCESS_UPLOAD` pg-boss job — a seed script can't rely on a
+ *      worker process being up to drain that queue, so this calls the job's
+ *      handler (`handleMediaProcessUpload`) directly and synchronously
+ *      instead of enqueuing it. Same function pg-boss would have invoked;
+ *      just invoked in-process so the seed doesn't return before covers are
+ *      actually ready. `tests/integration/media-process-upload.test.ts`
+ *      already calls it the same direct way.
+ *   4. The "md" (768px) variant's URL is stored as `cover_image_url`.
  *
  * Idempotence: a template whose `cover_image_url` is already non-null is left
- * alone — Pixabay is never re-queried for it. To pick up a new query for an
- * already-covered template, null out that column by hand first.
+ * alone — nothing is re-fetched or re-ingested for it. To pick up a new
+ * query/URL for an already-covered template, null out that column by hand
+ * first (a second `media_assets` row would otherwise accumulate under the
+ * system site on every reseed).
  *
- * When `PIXABAY_API_KEY` is absent (CI/local without secrets), `searchPixabay`
+ * ATTRIBUTION: `ingestImageFromUrl`'s input shape is `{ siteId, url, alt,
+ * contentType? }` and `media_assets` has no metadata/source-url column —
+ * checked, neither supports recording where an image came from. Per this
+ * task's brief, no column is added for it; the Pixabay hit id / source URL
+ * is therefore NOT persisted anywhere beyond this run's logs. If per-image
+ * attribution becomes a real requirement, that's a schema change for a
+ * later task, not a seed-script workaround.
+ *
+ * CLEAN-SKIP environments: when `PIXABAY_API_KEY` is absent, `searchPixabay`
  * falls back to deterministic `example.invalid` stub hits (same convention
- * `src/server/ai/config.ts` and git-sync's "disabled sentinel" use elsewhere)
- * — those are never written as a real cover; ingestion is skipped with a log
- * line and seeding still succeeds.
+ * `src/server/ai/config.ts` uses) — those are never ingested. Separately,
+ * `ingestImageFromUrl` / `handleMediaProcessUpload` need real GCS
+ * credentials (`getStorage()` talks to actual Application Default
+ * Credentials) — in an environment without them (most local/dev boxes, and
+ * possibly the `deploy:db` migrate job itself, which this task does not
+ * modify), the ingest/process call throws. Either failure mode is caught,
+ * logged, and left as a null cover — seeding always succeeds regardless of
+ * whether covers can be materialized. Prod covers backfill the next time
+ * `db:seed-templates` runs somewhere with BOTH `PIXABAY_API_KEY` and GCS
+ * storage credentials present.
  */
 
 /**
@@ -64,19 +94,34 @@ export async function validateAllTemplates(templates: TemplateSeed[]): Promise<v
 
 export type ResolveCoverDeps = {
   searchStock?: typeof searchPixabay;
+  ingest?: typeof ingestImageFromUrl;
+  processUpload?: typeof handleMediaProcessUpload;
   env?: NodeJS.ProcessEnv;
 };
 
+/** Prefers the "md" (768px) webp variant; falls back to md/jpg, then any variant. */
+function pickCoverVariantUrl(variants: ProcessedVariant[]): string | null {
+  const md = variants.filter((v) => v.name === "md");
+  const webp = md.find((v) => v.format === "webp");
+  if (webp) return webp.url;
+  if (md.length > 0) return md[0].url;
+  return variants[0]?.url ?? null;
+}
+
 /**
- * Resolves and persists a template's `cover_image_url`, or skips cleanly.
- * Exported standalone (unit-tested in tests/unit/seed-templates-cover.test.ts)
- * since it's pure DB + injectable-search logic with no need for the full
- * migrate-a-real-database integration harness.
+ * Resolves and persists a template's `cover_image_url` by ingesting it
+ * through the real media pipeline under the reserved system site, or skips
+ * cleanly (see the module header for both skip paths). Exported standalone
+ * — unit-tested in tests/unit/seed-templates-cover.test.ts with the ingest
+ * boundary faked (same injectable-deps pattern src/server/media/ingest.ts
+ * itself uses) — and the system-site idempotence is covered by a DB-backed
+ * integration test.
  */
 export async function resolveTemplateCover(
   pool: Pool,
   templateId: string,
   cover: TemplateCoverSeed,
+  systemSiteId: string,
   deps: ResolveCoverDeps = {},
 ): Promise<void> {
   if (!cover) return;
@@ -91,22 +136,45 @@ export async function resolveTemplateCover(
     return;
   }
 
+  let sourceUrl: string;
   if ("url" in cover) {
-    await pool.query(`UPDATE templates SET cover_image_url = $1 WHERE id = $2`, [cover.url, templateId]);
-    return;
+    sourceUrl = cover.url;
+  } else {
+    const search = deps.searchStock ?? searchPixabay;
+    const env = deps.env ?? process.env;
+    const { mode, hits } = await search(cover.stock_query, { env, perPage: 3 });
+    if (mode === "stub" || hits.length === 0) {
+      console.log(
+        `[seed-templates] skipping cover ingestion for template ${templateId} (query "${cover.stock_query}") — ` +
+          `${mode === "stub" ? "PIXABAY_API_KEY not set" : "no hits"}`,
+      );
+      return;
+    }
+    sourceUrl = hits[0].largeImageURL;
   }
 
-  const search = deps.searchStock ?? searchPixabay;
-  const env = deps.env ?? process.env;
-  const { mode, hits } = await search(cover.stock_query, { env, perPage: 3 });
-  if (mode === "stub" || hits.length === 0) {
-    console.log(
-      `[seed-templates] skipping cover ingestion for template ${templateId} (query "${cover.stock_query}") — ` +
-        `${mode === "stub" ? "PIXABAY_API_KEY not set" : "no hits"}`,
-    );
-    return;
+  const ingest = deps.ingest ?? ingestImageFromUrl;
+  const processUpload = deps.processUpload ?? handleMediaProcessUpload;
+
+  try {
+    const { asset_id } = await ingest(pool, { siteId: systemSiteId, url: sourceUrl, alt: cover.alt });
+    const { variants } = await processUpload({ asset_id }, { pool });
+    const variantUrl = pickCoverVariantUrl(variants);
+    if (!variantUrl) {
+      console.log(
+        `[seed-templates] cover ingest for template ${templateId} produced no variants — leaving cover_image_url null`,
+      );
+      return;
+    }
+    await pool.query(`UPDATE templates SET cover_image_url = $1 WHERE id = $2`, [variantUrl, templateId]);
+  } catch (err) {
+    // No GCS credentials in this environment (or any other ingest/process
+    // failure) — clean skip, same contract as the no-PIXABAY_API_KEY path
+    // above. Seeding must still succeed even when covers can't be
+    // materialized here; they'll backfill on a run that has both secrets.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[seed-templates] skipping cover ingestion for template ${templateId}: ${msg}`);
   }
-  await pool.query(`UPDATE templates SET cover_image_url = $1 WHERE id = $2`, [hits[0].largeImageURL, templateId]);
 }
 
 export async function seedTemplates(
@@ -117,6 +185,8 @@ export async function seedTemplates(
   await validateAllTemplates(allTemplates);
 
   let pageCount = 0;
+  let systemSiteId: string | null = null;
+
   for (const tpl of allTemplates) {
     const client = await pool.connect();
     let templateId: string;
@@ -155,8 +225,13 @@ export async function seedTemplates(
     }
 
     // Outside the transaction: cover resolution may hit the network
-    // (Pixabay), which shouldn't happen while holding a checked-out client.
-    await resolveTemplateCover(pool, templateId, tpl.cover);
+    // (Pixabay, GCS), which shouldn't happen while holding a checked-out
+    // pool client. The system site is created lazily — only when some
+    // registered template actually has a cover to resolve.
+    if (tpl.cover) {
+      if (!systemSiteId) systemSiteId = await ensureSystemTemplatesSite(pool);
+      await resolveTemplateCover(pool, templateId, tpl.cover, systemSiteId);
+    }
   }
 
   return { templates: allTemplates.length, pages: pageCount };

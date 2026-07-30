@@ -12,6 +12,7 @@ import { resolveCrmClient } from "../crm/resolve.js";
 import type { CrmClient } from "../crm/client.js";
 import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
 import type { CrmSyncInput } from "../crm/sync-job.js";
+import { SYSTEM_TEMPLATES_SITE_SLUG } from "../templates/system-site.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -78,13 +79,18 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
     admin,
     async (_req: Request, res: Response, next: NextFunction) => {
       try {
+        // Excludes the reserved system site that owns template gallery
+        // cover images (Task C4 fix round 1) — it's not a real site and
+        // has nothing an operator would ever manage here.
         const result = await pool.query(
           `SELECT s.id, s.slug, s.display_name, s.status, s.created_at,
                   COUNT(p.id)::int AS pages_count
              FROM sites s
              LEFT JOIN pages p ON p.site_id = s.id
+            WHERE s.slug != $1
             GROUP BY s.id
             ORDER BY s.created_at DESC`,
+          [SYSTEM_TEMPLATES_SITE_SLUG],
         );
         res.json({ sites: result.rows });
       } catch (err) {

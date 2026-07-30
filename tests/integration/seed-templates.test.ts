@@ -6,6 +6,7 @@ import migrate from "node-pg-migrate";
 import { seedTemplates, validateAllTemplates } from "../../db/seed-templates.js";
 import { allTemplates } from "../../db/templates/index.js";
 import { listTemplates, getTemplate } from "../../src/server/templates/repo.js";
+import { ensureSystemTemplatesSite, SYSTEM_TEMPLATES_SITE_SLUG } from "../../src/server/templates/system-site.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -74,5 +75,31 @@ d("seed-templates (integration, P7-T7.7)", () => {
     // no garbage value written. See tests/unit/seed-templates-cover.test.ts for
     // the stock_query / no-key skip path exercised directly.
     expect(starter.cover_image_url).toBeNull();
+  });
+
+  // Task C4 fix round 1: `ensureSystemTemplatesSite` find-or-creates the
+  // reserved site that owns template cover media — this must be idempotent
+  // against real re-seeding, not just against a mocked pool.
+  it("ensureSystemTemplatesSite is idempotent — a second call returns the same row, no duplicate", async () => {
+    await pool.query(`DELETE FROM sites WHERE slug = $1`, [SYSTEM_TEMPLATES_SITE_SLUG]);
+
+    const firstId = await ensureSystemTemplatesSite(pool);
+    const secondId = await ensureSystemTemplatesSite(pool);
+    expect(secondId).toBe(firstId);
+
+    const rows = await pool.query<{ count: string }>(`SELECT count(*) FROM sites WHERE slug = $1`, [
+      SYSTEM_TEMPLATES_SITE_SLUG,
+    ]);
+    expect(Number(rows.rows[0].count)).toBe(1);
+
+    const site = (
+      await pool.query<{ status: string }>(`SELECT status FROM sites WHERE id = $1`, [firstId])
+    ).rows[0];
+    expect(site.status).toBe("archived");
+
+    const domains = await pool.query(`SELECT 1 FROM site_domains WHERE site_id = $1`, [firstId]);
+    expect(domains.rowCount).toBe(0);
+
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [firstId]);
   });
 });

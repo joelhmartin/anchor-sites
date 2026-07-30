@@ -7,6 +7,7 @@ import migrate from "node-pg-migrate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../../db/seed.js";
 import { adminSitesRouter } from "../../src/server/routes/admin-sites.js";
+import { ensureSystemTemplatesSite, SYSTEM_TEMPLATES_SITE_SLUG } from "../../src/server/templates/system-site.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -78,6 +79,16 @@ d("admin sites API — GET /api/sites (P4-T4.2)", () => {
     const times = r.body.sites.map((s: { created_at: string }) => new Date(s.created_at).getTime());
     const sorted = [...times].sort((a, b) => b - a);
     expect(times).toEqual(sorted);
+  });
+
+  // Task C4 fix round 1: the reserved system site that owns template cover
+  // media exists in `sites` (it needs to, for the FK) but must never show up
+  // where an operator manages real sites.
+  it("excludes the reserved system-templates site from the list", async () => {
+    await ensureSystemTemplatesSite(pool);
+    const r = await request(app).get("/api/sites").set("X-Admin-Token", ADMIN_TOKEN);
+    const slugs = r.body.sites.map((s: { slug: string }) => s.slug);
+    expect(slugs).not.toContain(SYSTEM_TEMPLATES_SITE_SLUG);
   });
 });
 
