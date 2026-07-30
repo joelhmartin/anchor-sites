@@ -14,7 +14,7 @@ import { Card, CardContent } from "../ui/card.js";
 import { Spinner } from "../ui/spinner.js";
 import { cn } from "../ui/cn.js";
 
-type PageOption = { id: string; slug: string; title: string };
+type PageOption = { id: string; slug: string; title: string; status: string };
 
 /** Mirrors `src/server/git/state-repo.ts`'s `SiteGitState`, the same shape
  * `GitCard` reads (`site-tabs/GitCard.tsx`). */
@@ -105,6 +105,16 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     null,
   );
   const [publishError, setPublishError] = useState<string | null>(null);
+  // Fix round 1 (Critical finding 1): outside-click/Escape close + initial
+  // focus need refs into the popover's DOM — the toggle button (so an
+  // outside-click handler doesn't treat clicking it as "outside" and race
+  // its own onClick toggle) and the popover panel itself, plus the two
+  // buttons that get focus depending on which state (confirm vs success)
+  // is showing.
+  const publishButtonRef = useRef<HTMLButtonElement | null>(null);
+  const publishPopoverRef = useRef<HTMLDivElement | null>(null);
+  const publishConfirmRef = useRef<HTMLButtonElement | null>(null);
+  const publishDoneRef = useRef<HTMLButtonElement | null>(null);
 
   const {
     data: pagesData,
@@ -112,6 +122,11 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     reload: reloadPages,
   } = useApi<{ pages: PageOption[] }>(`/api/sites/${siteId}/pages`);
   const pages = pagesData?.pages ?? [];
+  // Fix round 1 (Critical finding 1): the server only publishes pages whose
+  // status isn't already 'published' (POST /publish) — the confirmation
+  // must count the SAME set, not every page on the site, or an already-
+  // partially-published site shows a wrong "Publish N pages?" count.
+  const draftPageCount = pages.filter((p) => p.status !== "published").length;
 
   // Default the page switcher to "home" (by slug) or the first page, once
   // the pages list has loaded and nothing else (an explicit `?page=` or an
@@ -178,6 +193,42 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
       setPublishing(false);
     }
   }
+
+  // Fix round 1 (Important finding 2 — a11y): the popover is `role="dialog"`
+  // but was rendered with none of the behavior that implies — Escape and an
+  // outside click now both close it, mirroring what Radix's Dialog gives
+  // for free (kept as a hand-rolled anchored popover rather than switching
+  // to that full-screen-overlay primitive, since this is meant to hang off
+  // the button, not take over the screen).
+  useEffect(() => {
+    if (!publishOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setPublishOpen(false);
+    }
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (publishPopoverRef.current?.contains(target)) return;
+      if (publishButtonRef.current?.contains(target)) return;
+      setPublishOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [publishOpen]);
+
+  // Initial focus: the Confirm button when the popover opens (or reopens
+  // after Cancel/Done reset publishResult), and the Done button once a
+  // result has landed — imperative refs rather than the `autofocus`
+  // attribute since that's only reliably applied by browsers on elements
+  // present at initial parse, not ones mounted later by React.
+  useEffect(() => {
+    if (!publishOpen) return;
+    if (publishResult) publishDoneRef.current?.focus();
+    else publishConfirmRef.current?.focus();
+  }, [publishOpen, publishResult]);
 
   const { items, draft, setDraft, sending, busy, conversation, error, usageText, send, stop } = useAgentConversation({
     siteId,
@@ -319,13 +370,22 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
             {/* Task B3 — one-click publish. `publishOpen` anchors a small
                 confirmation popover under the button; disabled while the
                 agent is running (a mid-build publish would ship a half-
-                finished site) or while the publish request itself is in
-                flight. */}
+                finished site), while the publish request itself is in
+                flight, or when there's nothing to publish (Fix round 1,
+                Critical finding 1). */}
             <div className="relative">
               <Button
+                ref={publishButtonRef}
                 type="button"
                 size="sm"
-                disabled={agentBusy || publishing}
+                disabled={agentBusy || publishing || draftPageCount === 0}
+                title={
+                  agentBusy
+                    ? "Agent is running"
+                    : draftPageCount === 0
+                      ? "Nothing to publish"
+                      : undefined
+                }
                 onClick={() => {
                   setPublishError(null);
                   setPublishResult(null);
@@ -337,6 +397,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
 
               {publishOpen && (
                 <div
+                  ref={publishPopoverRef}
                   role="dialog"
                   aria-label="Publish site"
                   className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-zinc-200 bg-white p-3 shadow-lg"
@@ -359,6 +420,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                       )}
                       <div className="flex justify-end">
                         <Button
+                          ref={publishDoneRef}
                           type="button"
                           size="sm"
                           variant="outline"
@@ -371,7 +433,9 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                   ) : (
                     <div className="flex flex-col gap-2">
                       <p className="text-sm text-zinc-700">
-                        Publish {pages.length} {pages.length === 1 ? "page" : "pages"}?
+                        {draftPageCount > 0
+                          ? `Publish ${draftPageCount} ${draftPageCount === 1 ? "page" : "pages"}?`
+                          : "Everything is published."}
                       </p>
                       {publishError && <p className="text-xs text-red-600">{publishError}</p>}
                       <div className="flex justify-end gap-2">
@@ -384,7 +448,13 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                         >
                           Cancel
                         </Button>
-                        <Button type="button" size="sm" disabled={publishing} onClick={handlePublish}>
+                        <Button
+                          ref={publishConfirmRef}
+                          type="button"
+                          size="sm"
+                          disabled={publishing || agentBusy || draftPageCount === 0}
+                          onClick={handlePublish}
+                        >
                           {publishing ? "Publishing…" : "Confirm"}
                         </Button>
                       </div>

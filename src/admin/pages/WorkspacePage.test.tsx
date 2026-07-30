@@ -50,8 +50,13 @@ type FetchOverrides = {
   /** GET /api/sites/s1/agent/conversations/:id → { conversation, messages } —
    * only needed when `conversations` seeds an existing one to reconnect to. */
   conversationDetail?: { conversation: unknown; messages: unknown[] };
-  /** POST /api/sites/s1/publish response (Task B3). Defaults to a
-   * successful publish of every seeded page with a live URL. */
+  /** POST /api/sites/s1/publish response (Task B3). Defaults to matching
+   * REAL server semantics against the default [HOME_PAGE, ABOUT_PAGE]
+   * fixture: HOME is already 'published', only ABOUT is a draft, so a
+   * real /publish call would report `published: 1`, not 2 — Fix round 1
+   * (Critical finding 1) caught the earlier version of this mock hardcoding
+   * `published: 2`, which masked a client bug that counted ALL pages
+   * instead of only non-published ones. */
   publish?: { status: number; body: unknown };
 };
 
@@ -59,7 +64,7 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
   const pages = overrides.pages ?? [HOME_PAGE, ABOUT_PAGE];
   const git = overrides.git ?? { configured: false, repo: null, state: null };
   const conversations = overrides.conversations ?? [];
-  const publish = overrides.publish ?? { status: 200, body: { published: 2, live_url: "https://acme.example.com" } };
+  const publish = overrides.publish ?? { status: 200, body: { published: 1, live_url: "https://acme.example.com" } };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -198,7 +203,12 @@ describe("WorkspacePage (Task B2)", () => {
 
   // ── Task B3 — one-click publish ──
 
-  it("publishes every draft page: click opens a confirmation with the page count, confirm posts, and the live URL renders", async () => {
+  it("publishes only the draft pages: click opens a confirmation with the DRAFT count (not every page), confirm posts, and the live URL renders", async () => {
+    // Fixture is [HOME_PAGE (published), ABOUT_PAGE (draft)] — the count
+    // must come from the draft, not both pages (Fix round 1, Critical
+    // finding 1: this test previously mocked `published: 2` against this
+    // same fixture, which would have passed even with the bug it exists to
+    // catch).
     const fetchMock = mockWorkspaceFetch();
     renderAt("/sites/acme");
     await screen.findByTitle("Draft preview");
@@ -208,7 +218,7 @@ describe("WorkspacePage (Task B2)", () => {
     fireEvent.click(publish);
 
     const dialog = await screen.findByRole("dialog", { name: "Publish site" });
-    expect(dialog.textContent).toContain("Publish 2 pages?");
+    expect(dialog.textContent).toContain("Publish 1 page?");
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
@@ -221,7 +231,17 @@ describe("WorkspacePage (Task B2)", () => {
     const link = await screen.findByRole("link", { name: /https:\/\/acme\.example\.com/ });
     expect(link.getAttribute("href")).toBe("https://acme.example.com");
     expect(link.getAttribute("target")).toBe("_blank");
-    expect(screen.getByText("Published 2 pages.")).toBeTruthy();
+    expect(screen.getByText("Published 1 page.")).toBeTruthy();
+  });
+
+  it("Fix round 1 (Critical finding 1) — disables Publish (and shows an explanatory title) when every page is already published", async () => {
+    mockWorkspaceFetch({ pages: [HOME_PAGE] }); // HOME_PAGE.status === "published"
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
+    expect(publish.disabled).toBe(true);
+    expect(publish.title).toBe("Nothing to publish");
   });
 
   it("Cancel closes the confirmation without posting", async () => {
@@ -264,6 +284,63 @@ describe("WorkspacePage (Task B2)", () => {
 
     const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
     expect(publish.disabled).toBe(true);
+  });
+
+  it("Fix round 1 (Important finding 2) — Escape closes the confirmation popover", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish site" })).toBeNull());
+  });
+
+  it("Fix round 1 (Important finding 2) — a click outside the popover closes it", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+
+    fireEvent.mouseDown(document.body);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish site" })).toBeNull());
+  });
+
+  it("Fix round 1 (Important finding 2) — focuses the Confirm button when the popover opens", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Confirm" })));
+  });
+
+  it("Fix round 1 (Minor finding 3) — disables Confirm if the agent starts running while the popover is already open", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+
+    // Sending a chat message flips `sending` (and therefore `busy`) to true
+    // synchronously, before the POST resolves — the same race the finding
+    // describes ("the agent may start mid-popover").
+    const textarea = screen.getByLabelText("Message");
+    fireEvent.change(textarea, { target: { value: "Add a services page" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(confirm.disabled).toBe(true));
   });
 
   it("links Manage to the tab-based shell", async () => {
