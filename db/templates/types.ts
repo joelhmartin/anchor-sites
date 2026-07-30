@@ -26,11 +26,14 @@ export type TemplatePageSeed = {
 /**
  * Gallery card thumbnail. Either:
  *   - `stock_query`: resolved through Pixabay search at seed time (see
- *     `resolveTemplateCover` in `seed-templates.ts`) — the returned CDN URL is
- *     stored directly as `cover_image_url` (no re-hosting; see that module's
- *     header comment for why).
- *   - `url`: an already-known image URL, stored as-is.
+ *     `resolveTemplateCover` in `seed-templates.ts`) — the top hit is ingested
+ *     through the media pipeline under the reserved system-templates site and
+ *     `cover_image_url` stores the resulting variant URL. Pixabay CDN URLs are
+ *     never persisted (their API terms allow temporary display only).
+ *   - `url`: ingested through the same pipeline, then stored as a variant URL.
  *   - `null`: no cover yet; the gallery card falls back to a placeholder.
+ * Covers only resolve when PIXABAY_API_KEY + storage creds are present;
+ * otherwise seeding cleanly skips and leaves `cover_image_url` null.
  */
 export type TemplateCoverSeed = { stock_query: string; alt: string } | { url: string; alt: string } | null;
 
