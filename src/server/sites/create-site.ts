@@ -3,8 +3,9 @@ import { getDomainConfig, hostnameForSlug } from "../../config/domain.js";
 import { seedSiteCopyIn } from "./copy-in.js";
 import { resolveCrmClient, type CrmEnv } from "../crm/resolve.js";
 import type { CrmClient } from "../crm/client.js";
-import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
+import { getBoss, CRM_SYNC_JOB, SITE_PROVISION } from "../jobs/index.js";
 import type { CrmSyncInput } from "../crm/sync-job.js";
+import type { SiteProvisionInput } from "../jobs/site-provision.js";
 
 /**
  * Shared site-creation primitive (P7-T7.6). Extracted from the inline logic in
@@ -70,6 +71,32 @@ export async function createSiteWithDomains(
 
   // P8-T8.12 (D-047): per-site copy-in — tenant auth config + starter content.
   await seedSiteCopyIn(client, siteId);
+
+  // Task D1 (Lovable-workspace): auto-provision the canonical
+  // *.sites.anchorcorps.com domain (Cloud Run mapping + DNS) so the preview
+  // URL comes up without an operator visiting the Domains tab. Best-effort,
+  // like CRM provisioning below — site creation must never block or fail on
+  // it. `singletonKey: canonicalDomainId` so a retry (or a manual
+  // "Provision" click before this job runs) collapses into whichever
+  // attempt is already queued/active rather than double-queuing.
+  // `retryLimit`/`retryDelay` give the Cloud Run/DNS calls a few automatic
+  // retries (e.g. across the one-time Webmaster Central verification the
+  // operator still needs to do — see docs/deploy.md §9) without hammering
+  // either API indefinitely; failures land on the domain row's own status
+  // fields via the job handler (src/server/jobs/site-provision.ts), visible
+  // through the existing GET .../domains/:domainId/status poll.
+  try {
+    getBoss()
+      .send(
+        SITE_PROVISION,
+        { siteId, domainId: canonicalDomainId } satisfies SiteProvisionInput,
+        { singletonKey: canonicalDomainId, retryLimit: 5, retryDelay: 60, retryBackoff: true },
+      )
+      .catch(() => undefined);
+  } catch {
+    // Boss not started (JOBS_ENABLED=false or not yet booted) — skip; the
+    // operator can trigger provisioning manually from the Domains tab.
+  }
 
   // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site creation.
   const crmClient = opts.crmClient ?? resolveCrmClient(opts.crmEnv);

@@ -243,6 +243,57 @@ Take the CNAME / A record values from the returned `kind: ResourceRecord`
 and add them to your DNS provider. Cloud Run provisions SSL certs
 automatically once DNS resolves.
 
+### Known limitation — Webmaster Central verification gates auto-provisioning (Task D1)
+
+Every domain mapping Cloud Run creates — whether from this manual step, the
+admin "Provision" button, or the automatic `site.provision` job that now
+fires on site creation (see below) — is rejected with `PermissionDenied`
+until the **runtime service account**,
+`333281424614-compute@developer.gserviceaccount.com`, is added as a
+**verified owner of `anchorcorps.com`** in [Google Search Console /
+Webmaster Central](https://search.google.com/search-console/welcome). This
+is a **one-time operator action** (Search Console → add owner → paste the
+service account email), separate from the TXT-record domain verification
+above, which only proves *a* human controls the domain — Cloud Run's domain
+mappings API separately requires the *calling identity* to be a verified
+owner before it will mint a mapping + managed cert for a new hostname.
+
+Until that's done:
+
+- `provisionSiteHostname`'s `cloud_run` step fails cleanly with a
+  `PermissionDenied` detail string (never an unhandled crash).
+- The `site.provision` job (Task D1) records this as `verification_status =
+  'failed'` / `ssl_status = 'failed'` on the domain row and retries a few
+  times (`retryLimit: 5`, backoff) before giving up — so once the operator
+  completes the one-time verification, the next automatic retry (or a
+  manual "Provision" click) succeeds without any code change.
+- The DNS step is unaffected either way: the wildcard CNAME
+  `*.sites.anchorcorps.com → ghs.googlehosted.com.` already exists in the
+  Kinsta zone, so `KinstaDnsProvider.ensureRecord` is a no-op ("exists") for
+  every `*.sites` hostname regardless of the Cloud Run mapping's state — it
+  still upserts idempotently, just with nothing new to write.
+
+### Kinsta DNS provider (Task D1) — auto-provisioning on site create
+
+`anchorcorps.com`'s DNS zone lives on **Kinsta DNS** (Route 53 under the
+hood — GoDaddy has no zone file for it and 404s `UNKNOWN_DOMAIN`). Set
+`KINSTA_API_KEY` / `KINSTA_COMPANY_ID` (Secret Manager: `KINSTA_API_KEY`,
+`KINSTA_AGENCY_ID` — see cloudbuild.yaml's `--set-secrets`) and
+`resolveDnsProvider()` picks Kinsta by default (it outranks GoDaddy in the
+no-`DNS_PROVIDER`-set precedence, since Kinsta is where the real zone is).
+Force a specific provider with `DNS_PROVIDER=kinsta|godaddy|manual|cloud-dns`.
+
+Every site creation (the new-site wizard and the create-from-template flow —
+both funnel through `createSiteWithDomains`) now enqueues a `site.provision`
+pg-boss job (`singletonKey` = the canonical domain row's id) right after the
+site + its `<slug>.sites.anchorcorps.com` domain row commit. The job reuses
+`provisionSiteHostname` (`src/server/provisioning/orchestrator.ts`) — the
+same orchestration the admin "Provision" endpoints call — so there's exactly
+one Cloud Run + DNS step sequence in the codebase. Site creation itself never
+blocks or fails on this: enqueue failures (pg-boss not booted) are swallowed,
+and job failures land on the domain row's own status fields rather than
+surfacing as an API error, per the known limitation above.
+
 ## 10 — Confirm the demo URLs
 
 ```bash

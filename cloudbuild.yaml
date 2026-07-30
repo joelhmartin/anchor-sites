@@ -27,6 +27,15 @@
 #   GODADDY_API_KEY               — GoDaddy DNS API key (DnsProvider, shared
 #                                   project-wide across the Cloud Run services).
 #   GODADDY_API_SECRET            — GoDaddy DNS API secret.
+#   KINSTA_API_KEY                 — Kinsta API key (DnsProvider). anchorcorps.com's
+#                                   primary zone lives on Kinsta DNS — GoDaddy has
+#                                   no zone file for it (404 UNKNOWN_DOMAIN) — so
+#                                   resolveDnsProvider() prefers Kinsta by default
+#                                   when both sets of creds are present (Task D1).
+#   KINSTA_COMPANY_ID              — Kinsta company/agency id `dns-records`
+#                                   operate under. Maps to the KINSTA_AGENCY_ID
+#                                   Secret Manager secret (same value; the Kinsta
+#                                   API just calls it "company").
 #   GITHUB_CONTENT_TOKEN          — GitHub sync (docs/github-sync.md). Created
 #                                   with placeholder value "disabled" (Task 8)
 #                                   so resolveGitMode() stays "disabled" and
@@ -127,7 +136,7 @@ steps:
       # deploy. Any secret NOT listed here is dropped from the next revision —
       # so OAuth (Studio Google sign-in) and GoDaddy DNS MUST be listed here, or
       # a CI deploy silently disables them. Keep this in sync with Secret Manager.
-      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,ADMIN_API_TOKEN=ANCHOR_SITES_ADMIN_API_TOKEN:latest,MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest,MAILGUN_DEFAULT_FROM=MAILGUN_DEFAULT_FROM:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,GODADDY_API_KEY=GODADDY_API_KEY:latest,GODADDY_API_SECRET=GODADDY_API_SECRET:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,PIXABAY_API_KEY=PIXABAY_API_KEY:latest,PLUGIN_CONFIG_ENC_KEY=PLUGIN_CONFIG_ENC_KEY:latest,GITHUB_CONTENT_TOKEN=GITHUB_CONTENT_TOKEN:latest,GITHUB_WEBHOOK_SECRET=GITHUB_WEBHOOK_SECRET:latest
+      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,ADMIN_API_TOKEN=ANCHOR_SITES_ADMIN_API_TOKEN:latest,MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest,MAILGUN_DEFAULT_FROM=MAILGUN_DEFAULT_FROM:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,GODADDY_API_KEY=GODADDY_API_KEY:latest,GODADDY_API_SECRET=GODADDY_API_SECRET:latest,KINSTA_API_KEY=KINSTA_API_KEY:latest,KINSTA_COMPANY_ID=KINSTA_AGENCY_ID:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,PIXABAY_API_KEY=PIXABAY_API_KEY:latest,PLUGIN_CONFIG_ENC_KEY=PLUGIN_CONFIG_ENC_KEY:latest,GITHUB_CONTENT_TOKEN=GITHUB_CONTENT_TOKEN:latest,GITHUB_WEBHOOK_SECRET=GITHUB_WEBHOOK_SECRET:latest
       - --min-instances=0
       - --max-instances=10
       - --cpu=1
