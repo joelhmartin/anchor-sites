@@ -143,7 +143,18 @@ steps:
       # so OAuth (Studio Google sign-in) and GoDaddy DNS MUST be listed here, or
       # a CI deploy silently disables them. Keep this in sync with Secret Manager.
       - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,ADMIN_API_TOKEN=ANCHOR_SITES_ADMIN_API_TOKEN:latest,MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_DOMAIN=MAILGUN_DOMAIN:latest,MAILGUN_DEFAULT_FROM=MAILGUN_DEFAULT_FROM:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,GODADDY_API_KEY=GODADDY_API_KEY:latest,GODADDY_API_SECRET=GODADDY_API_SECRET:latest,KINSTA_API_KEY=KINSTA_API_KEY:latest,KINSTA_COMPANY_ID=KINSTA_AGENCY_ID:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,PIXABAY_API_KEY=PIXABAY_API_KEY:latest,PLUGIN_CONFIG_ENC_KEY=PLUGIN_CONFIG_ENC_KEY:latest,GITHUB_CONTENT_TOKEN=GITHUB_CONTENT_TOKEN:latest,GITHUB_WEBHOOK_SECRET=GITHUB_WEBHOOK_SECRET:latest
-      - --min-instances=0
+      # W1.4 / D600: the sole pg-boss worker lives IN-PROCESS in this service
+      # (src/server/index.ts boots jobs in the web process — there is no
+      # separate worker service). At --min-instances=0, "no HTTP traffic"
+      # means NOTHING runs: queued agent continuation rounds, provision
+      # retries (60s-16min delays routinely outlive idle-down), media
+      # retries, and pg-boss's own expiration sweep all sit until a request
+      # happens to spawn an instance — and scale-in SIGTERM kills a 30-tool-
+      # call turn mid-flight with retryLimit:0, so it never re-runs.
+      # min-instances=1 keeps one worker alive so the queues are a real
+      # execution guarantee, not best-effort. (--no-cpu-throttling below
+      # fixes CPU-while-alive; it does not fix existence.)
+      - --min-instances=1
       - --max-instances=10
       - --cpu=1
       - --memory=512Mi
