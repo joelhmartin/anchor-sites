@@ -168,10 +168,22 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // static-index fallback in prod — both mounted by `src/server/index.ts`).
   app.use(pageRouter());
 
-  // P12-T12.4 (D-055) — Global 4-param Express error handler. Logs the stack,
-  // captures to Sentry (when configured), and returns a safe JSON error
-  // response. 500 bodies are masked in production to avoid leaking internals.
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  // P12-T12.4 (D-055) — global error handler. Registered last.
+  app.use(globalErrorHandler());
+
+  return app;
+}
+
+// P12-T12.4 (D-055) — Global 4-param Express error handler. Logs the stack,
+// captures to Sentry (when configured), and returns a safe JSON error
+// response. 500 bodies are masked in production to avoid leaking internals.
+// Exported for direct testing (D102).
+export function globalErrorHandler() {
+  return (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    // D102: once a response has started we can't write a JSON body — doing so
+    // threw ERR_HTTP_HEADERS_SENT on top of the original error. Delegate to
+    // Express's default handler, which closes the connection instead.
+    if (res.headersSent) return next(err);
     const status = typeof (err as { status?: number }).status === "number"
       ? (err as { status: number }).status
       : 500;
@@ -183,7 +195,5 @@ export function createApp(opts: CreateAppOptions = {}): Express {
         ? "internal server error"
         : (err instanceof Error ? err.message : String(err));
     res.status(status).json({ error: message });
-  });
-
-  return app;
+  };
 }

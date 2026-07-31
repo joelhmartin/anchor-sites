@@ -280,46 +280,54 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         const site = updated.rows[0];
         res.json({ site });
 
-        // P11-T11.7 (D-053): best-effort CRM sync after PATCH.
-        if (site.crm_site_id && (display_name !== undefined)) {
-          const primaryRow = await pool.query<{ hostname: string }>(
-            `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
-            [siteId],
-          );
-          crmClient.updateSite(site.crm_site_id, {
-            name: site.display_name,
-            primaryDomain: primaryRow.rows[0]?.hostname,
-          }).catch((err) => {
-            // eslint-disable-next-line no-console
-            console.error("[crm] updateSite failed (best-effort):", err);
-            try {
-              void getBoss().send(
-                CRM_SYNC_JOB,
-                { action: "update", siteId } satisfies CrmSyncInput,
-                { retryLimit: 3 },
-              );
-            } catch {
-              // Boss not started — skip retry enqueue.
-            }
-          });
-        }
-        // Deprovision when site is archived via PATCH status (status not in patchSitePayload yet,
-        // but guard here for when it lands — D-053).
-        if (site.crm_site_id && site.status === "archived") {
-          crmClient.deprovisionSite(site.crm_site_id).catch((err) => {
-            // eslint-disable-next-line no-console
-            console.error("[crm] deprovisionSite failed (best-effort):", err);
-            try {
-              void getBoss().send(
-                CRM_SYNC_JOB,
-                { action: "deprovision", siteId } satisfies CrmSyncInput,
-                { retryLimit: 3 },
-              );
-            } catch {
-              // Boss not started — skip retry enqueue.
-            }
-          });
-        }
+        // P11-T11.7 (D-053): best-effort CRM sync after PATCH. Detached from
+        // the request lifecycle (D102): the response above is already sent,
+        // so a failure here must be logged — it can never be allowed to
+        // reach next(err) and the (already-responded) error handler.
+        void (async () => {
+          if (site.crm_site_id && (display_name !== undefined)) {
+            const primaryRow = await pool.query<{ hostname: string }>(
+              `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+              [siteId],
+            );
+            crmClient.updateSite(site.crm_site_id, {
+              name: site.display_name,
+              primaryDomain: primaryRow.rows[0]?.hostname,
+            }).catch((err) => {
+              // eslint-disable-next-line no-console
+              console.error("[crm] updateSite failed (best-effort):", err);
+              try {
+                void getBoss().send(
+                  CRM_SYNC_JOB,
+                  { action: "update", siteId } satisfies CrmSyncInput,
+                  { retryLimit: 3 },
+                );
+              } catch {
+                // Boss not started — skip retry enqueue.
+              }
+            });
+          }
+          // Deprovision when site is archived via PATCH status (status not in patchSitePayload yet,
+          // but guard here for when it lands — D-053).
+          if (site.crm_site_id && site.status === "archived") {
+            crmClient.deprovisionSite(site.crm_site_id).catch((err) => {
+              // eslint-disable-next-line no-console
+              console.error("[crm] deprovisionSite failed (best-effort):", err);
+              try {
+                void getBoss().send(
+                  CRM_SYNC_JOB,
+                  { action: "deprovision", siteId } satisfies CrmSyncInput,
+                  { retryLimit: 3 },
+                );
+              } catch {
+                // Boss not started — skip retry enqueue.
+              }
+            });
+          }
+        })().catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error("[crm] post-response sync failed (best-effort):", err);
+        });
       } catch (err) {
         next(err);
       }

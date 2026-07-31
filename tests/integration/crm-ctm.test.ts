@@ -327,4 +327,64 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
 
     await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => {});
   });
+
+  it("PATCH post-response CRM lookup failure is logged, never forwarded to next(err) (D102)", async () => {
+    const crmClient: CrmClient = {
+      provisionSite: vi.fn().mockResolvedValue({ crmSiteId: "crm-late-test" }),
+      updateSite: vi.fn().mockResolvedValue(undefined),
+      deprovisionSite: vi.fn().mockResolvedValue(undefined),
+      listPhoneNumbers: vi.fn().mockResolvedValue([]),
+      listCampaigns: vi.fn().mockResolvedValue([]),
+    };
+
+    const slug = `crm-late-${Date.now()}`;
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name, default_brand_tokens, crm_site_id)
+       VALUES ($1, 'Old Name', '{}'::jsonb, 'crm-late-test') RETURNING id`,
+      [slug],
+    );
+    const siteId = ins.rows[0].id;
+
+    // Delegating pool whose primary-domain lookup (the query the PATCH
+    // handler runs AFTER res.json) rejects — before D102 that rejection
+    // reached next(err) and the error handler tried to write to an
+    // already-sent response.
+    const failingPool = {
+      query: (text: unknown, params?: unknown[]) => {
+        if (typeof text === "string" && text.includes("is_primary = true")) {
+          return Promise.reject(new Error("site_domains lookup exploded"));
+        }
+        return (pool as unknown as { query: (t: unknown, p?: unknown[]) => Promise<unknown> }).query(text, params);
+      },
+      connect: () => pool.connect(),
+    } as unknown as Pool;
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", adminSitesRouter({ pool: failingPool, createRateLimit: { max: 1000, windowMs: 60_000 }, crmClient }));
+    const forwarded: unknown[] = [];
+    app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      forwarded.push(err);
+      if (!res.headersSent) res.status(500).end();
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ display_name: "New Name" });
+
+    expect(r.status).toBe(200);
+    expect(r.body.site.display_name).toBe("New Name");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(forwarded).toHaveLength(0);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[crm]"),
+      expect.objectContaining({ message: "site_domains lookup exploded" }),
+    );
+    // The lookup failed before updateSite could be called.
+    expect(crmClient.updateSite).not.toHaveBeenCalled();
+
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => {});
+  });
 });
