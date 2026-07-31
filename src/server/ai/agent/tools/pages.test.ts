@@ -355,5 +355,77 @@ d("agent page write tools", () => {
       const row = await db.getPool().query(`SELECT 1 FROM pages WHERE id = $1`, [lonelyPage.id]);
       expect(row.rowCount).toBe(1);
     });
+
+    // D1116 (W2-SEC) — delete_page was the agent's only irreversible tool:
+    // page_revisions CASCADEs away with the page, so the delete destroyed the
+    // very history that could undo it. A tombstone (deleted_pages) written in
+    // the SAME transaction makes a model misfire recoverable.
+    describe("[D1116] tombstone", () => {
+      it("copies the full page (blocks + meta + publish state) into deleted_pages", async () => {
+        const created = await executeAgentTool(ctx, "create_page", {
+          slug: `del-tomb-${runId}`,
+          title: "Tombstoned",
+          blocks: [{ type: "rich-text", props: { html: "<p>Keep me recoverable</p>" } }],
+        });
+        if (!created.ok) throw new Error("unreachable");
+        const { page_id } = created.data as { page_id: string };
+        // Give it publish state so the tombstone provably carries it.
+        await db.getPool().query(
+          `UPDATE pages
+              SET status = 'published',
+                  published_at = now(),
+                  published_snapshot = jsonb_build_object('title', title, 'blocks', blocks, 'seo', seo, 'brand_tokens_override', brand_tokens_override)
+            WHERE id = $1`,
+          [page_id],
+        );
+
+        const result = await executeAgentTool(ctx, "delete_page", { page_id });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error("unreachable");
+        expect((result.data as { tombstone_id: string }).tombstone_id).toBeTruthy();
+
+        const gone = await db.getPool().query(`SELECT 1 FROM pages WHERE id = $1`, [page_id]);
+        expect(gone.rowCount).toBe(0);
+
+        const tomb = await db.getPool().query<{
+          site_id: string;
+          slug: string;
+          title: string;
+          blocks: unknown[];
+          status: string;
+          published_snapshot: Record<string, unknown> | null;
+          deleted_by: string;
+        }>(
+          `SELECT site_id, slug, title, blocks, status, published_snapshot, deleted_by
+             FROM deleted_pages WHERE page_id = $1`,
+          [page_id],
+        );
+        expect(tomb.rowCount).toBe(1);
+        const row = tomb.rows[0];
+        expect(row.site_id).toBe(siteId);
+        expect(row.slug).toBe(`del-tomb-${runId}`);
+        expect(row.title).toBe("Tombstoned");
+        expect(JSON.stringify(row.blocks)).toContain("Keep me recoverable");
+        expect(row.status).toBe("published");
+        expect(row.published_snapshot).not.toBeNull();
+        expect(row.deleted_by).toBe("ai");
+      });
+
+      it("a refused delete (only page) writes NO tombstone", async () => {
+        const lonelySiteId = (await db.seedSite(`t5-lonely2-${runId}`)).id;
+        const lonelyPage = await db.seedPage(lonelySiteId, "home", []);
+        const lonelyCtx: AgentToolCtx = { ...ctx, siteId: lonelySiteId };
+
+        const result = await executeAgentTool(lonelyCtx, "delete_page", {
+          page_id: lonelyPage.id,
+        });
+        expect(result.ok).toBe(false);
+
+        const tomb = await db
+          .getPool()
+          .query(`SELECT 1 FROM deleted_pages WHERE page_id = $1`, [lonelyPage.id]);
+        expect(tomb.rowCount).toBe(0);
+      });
+    });
   });
 });

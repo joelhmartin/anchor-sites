@@ -245,7 +245,9 @@ const deletePageParams = z.object({ page_id: z.string().uuid() });
 
 const deletePage: AgentTool = {
   name: "delete_page",
-  description: "Delete a page from the current site. Refuses to delete the site's only remaining page.",
+  description:
+    "Delete a page from the current site. Refuses to delete the site's only remaining page. " +
+    "A full snapshot of the deleted page is kept server-side, so an accidental delete is recoverable by an operator.",
   paramsSchema: deletePageParams,
   async execute(ctx: AgentToolCtx, input: z.infer<typeof deletePageParams>): Promise<AgentToolResult> {
     const client = await ctx.pool.connect();
@@ -273,6 +275,27 @@ const deletePage: AgentTool = {
         return { ok: false, error: "cannot delete the only page" };
       }
 
+      // D1116 (W2-SEC) — tombstone BEFORE delete, same transaction. This was
+      // the agent's only irreversible tool: page_revisions CASCADEs away with
+      // the page, so the delete destroyed the very history that could undo
+      // it. deleted_pages copies the full row (content + publish state), so
+      // a model misfire is recoverable by re-inserting the payload as a new
+      // page. W1.3 publish semantics need no extra 409 machinery here: the
+      // FOR UPDATE lock above serializes against a concurrent publish's
+      // UPDATE — whichever commits second sees the other's outcome (a
+      // publish after this commit finds no row and 404s cleanly).
+      const tombRes = await client.query<{ id: string }>(
+        `INSERT INTO deleted_pages
+           (site_id, page_id, slug, title, blocks, seo, brand_tokens_override,
+            status, published_snapshot, sort_order, published_at, deleted_by)
+         SELECT site_id, id, slug, title, blocks, seo, brand_tokens_override,
+                status, published_snapshot, sort_order, published_at, 'ai'
+           FROM pages WHERE id = $1 AND site_id = $2
+         RETURNING id`,
+        [input.page_id, ctx.siteId],
+      );
+      const tombstoneId = tombRes.rows[0].id;
+
       await client.query(`DELETE FROM pages WHERE id = $1 AND site_id = $2`, [
         input.page_id,
         ctx.siteId,
@@ -281,8 +304,8 @@ const deletePage: AgentTool = {
 
       return {
         ok: true,
-        data: { page_id: input.page_id },
-        summary: "Deleted page.",
+        data: { page_id: input.page_id, tombstone_id: tombstoneId },
+        summary: "Deleted page (a restorable snapshot was kept).",
         change: { kind: "page_deleted", page_id: input.page_id, summary: "Deleted page." },
       };
     } catch (err) {
