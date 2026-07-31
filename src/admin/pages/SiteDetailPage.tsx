@@ -112,14 +112,31 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
           <div className="flex items-center gap-3">
             {site && <SaveAsTemplateDialog siteId={site.id} siteName={site.display_name} />}
-            <a
-              href={liveSiteUrl(slug)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-            >
-              View live site ↗
-            </a>
+            {/* D923 — never present the URL as live before the primary
+                domain's mapping is Ready (unprovisioned hostnames TLS-refuse,
+                verified live). Same href either way; honest labeling. */}
+            {site &&
+              (site.live_url_ready ? (
+                <a
+                  href={site.live_url ?? liveSiteUrl(slug)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                >
+                  View live site ↗
+                </a>
+              ) : site.live_url ? (
+                <a
+                  href={site.live_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium text-zinc-400 hover:text-zinc-500"
+                >
+                  Site provisioning… (check Domains) ↗
+                </a>
+              ) : (
+                <span className="text-sm text-zinc-400">No domain connected — see Domains</span>
+              ))}
           </div>
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>

@@ -20,4 +20,9 @@ export type SiteDetail = SiteListRow & {
   /** P12-T12.1 (D-054) — analytics opt-out flag. */
   analytics_disabled?: boolean;
   media_count: number;
+  /** D923 — primary-domain URL + readiness (same contract as the publish
+   * response): never present the URL as live before the mapping is Ready. */
+  live_url?: string | null;
+  live_url_ready?: boolean;
+  live_url_status?: { verification_status?: string; ssl_status?: string } | null;
 };

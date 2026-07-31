@@ -136,6 +136,39 @@ d("admin sites API — detail + pages (P4-T4.3)", () => {
     expect(typeof r.body.site.media_count).toBe("number");
   });
 
+  // D923 — the Studio must not present a URL as live before the primary
+  // domain's mapping is actually Ready (verified live: unprovisioned tenant
+  // hostnames TLS-refuse; the UI linked them as if working).
+  it("GET /api/sites/:id carries primary-domain live_url readiness (D923)", async () => {
+    const r = await request(app).get(`/api/sites/${muldoonId}`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    // Seed marks the canonical domain verified/active.
+    expect(r.body.site.live_url).toMatch(/^https:\/\//);
+    expect(r.body.site.live_url_ready).toBe(true);
+    expect(r.body.site.live_url_status).toMatchObject({
+      verification_status: "verified",
+      ssl_status: "active",
+    });
+
+    // Flip SSL back to pending → not ready.
+    await pool.query(
+      `UPDATE site_domains SET ssl_status = 'pending' WHERE site_id = $1 AND is_primary = true`,
+      [muldoonId],
+    );
+    try {
+      const pending = await request(app)
+        .get(`/api/sites/${muldoonId}`)
+        .set("X-Admin-Token", ADMIN_TOKEN);
+      expect(pending.body.site.live_url_ready).toBe(false);
+      expect(pending.body.site.live_url_status?.ssl_status).toBe("pending");
+    } finally {
+      await pool.query(
+        `UPDATE site_domains SET ssl_status = 'active' WHERE site_id = $1 AND is_primary = true`,
+        [muldoonId],
+      );
+    }
+  });
+
   it("GET /api/sites/:id 404 for unknown site", async () => {
     const r = await request(app)
       .get(`/api/sites/00000000-0000-0000-0000-000000000000`)

@@ -182,7 +182,33 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           res.status(404).json({ error: "site not found" });
           return;
         }
-        res.json({ site: result.rows[0] });
+        // D923 — same readiness contract as the publish response (2b): the
+        // client must never present the URL as live before the mapping is
+        // actually Ready (unprovisioned hostnames TLS-refuse, verified live).
+        const domainRes = await pool.query<{
+          hostname: string;
+          verification_status: string;
+          ssl_status: string;
+        }>(
+          `SELECT hostname, verification_status, ssl_status
+             FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+          [siteId],
+        );
+        const domain = domainRes.rows[0];
+        res.json({
+          site: {
+            ...result.rows[0],
+            live_url: domain?.hostname ? `https://${domain.hostname}` : null,
+            live_url_ready:
+              domain?.verification_status === "verified" && domain?.ssl_status === "active",
+            live_url_status: domain
+              ? {
+                  verification_status: domain.verification_status,
+                  ssl_status: domain.ssl_status,
+                }
+              : null,
+          },
+        });
       } catch (err) {
         next(err);
       }

@@ -101,12 +101,41 @@ describe("SiteDetailPage (P4-T4.12) — management shell (served at /manage sinc
     expect(screen.getByRole("tab", { name: "Pages" }).getAttribute("aria-selected")).toBe("true");
   });
 
-  it("links 'View live site' to the canonical tenant hostname", async () => {
-    mockApi([SITE], SITE);
+  // D923 — the live link is gated on the primary domain actually being Ready.
+  it("links 'View live site' only when the domain is Ready", async () => {
+    const ready = {
+      ...SITE,
+      live_url: "https://acme.sites.anchorcorps.com",
+      live_url_ready: true,
+      live_url_status: { verification_status: "verified", ssl_status: "active" },
+    };
+    mockApi([ready], ready);
     renderAt("acme");
     const link = await screen.findByRole("link", { name: /View live site/ });
     expect(link.getAttribute("href")).toBe("https://acme.sites.anchorcorps.com");
     expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  it("labels a not-yet-Ready domain as provisioning (same href, honest label) — D923", async () => {
+    const pending = {
+      ...SITE,
+      live_url: "https://acme.sites.anchorcorps.com",
+      live_url_ready: false,
+      live_url_status: { verification_status: "verified", ssl_status: "pending" },
+    };
+    mockApi([pending], pending);
+    renderAt("acme");
+    const link = await screen.findByRole("link", { name: /provisioning/i });
+    expect(link.getAttribute("href")).toBe("https://acme.sites.anchorcorps.com");
+    expect(screen.queryByRole("link", { name: /View live site/ })).toBeNull();
+  });
+
+  it("shows no live link at all when no domain is connected — D923", async () => {
+    const noDomain = { ...SITE, live_url: null, live_url_ready: false, live_url_status: null };
+    mockApi([noDomain], noDomain);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByText(/No domain connected/)).toBeTruthy());
+    expect(screen.queryByRole("link", { name: /View live site/ })).toBeNull();
   });
 
   it("shows a not-found card when the slug has no matching site", async () => {
