@@ -365,7 +365,9 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     else publishConfirmRef.current?.focus();
   }, [publishOpen, publishResult]);
 
-  const { items, draft, setDraft, sending, busy, conversation, error, usageText, send, stop } = useAgentConversation({
+  const {
+    items, draft, setDraft, sending, busy, reconnecting, conversation, error, usageText, send, stop,
+  } = useAgentConversation({
     siteId,
     active: true,
     // The workspace is the permanent home for this conversation (not a
@@ -441,6 +443,13 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
           onScroll={handleTranscriptScroll}
         />
 
+        {/* D1118 — the tail dropped repeatedly and is auto-retrying; say so
+            instead of letting the build look frozen. */}
+        {reconnecting && (
+          <p className="shrink-0 px-4 pb-2 text-xs text-amber-600" role="status">
+            Connection lost — reconnecting to the build…
+          </p>
+        )}
         {error && <p className="shrink-0 px-4 pb-2 text-xs text-red-600">{error}</p>}
 
         <div className="shrink-0">

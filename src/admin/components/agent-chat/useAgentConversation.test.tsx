@@ -280,6 +280,68 @@ describe("useAgentConversation — inter-round settle debounce (final review, it
     expect(result.current.sending).toBe(false);
   });
 
+  it("D1118: a dropped tail reconnects with backoff from the cursor instead of dying silently", async () => {
+    mockFetch();
+    // The first connection drops mid-build (network blip / proxy timeout).
+    streamAgentEvents.mockImplementationOnce(() => Promise.reject(new Error("network error")));
+    const { result } = renderConversation();
+    await flush();
+
+    await act(async () => {
+      void result.current.send("build me a site");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(streamAgentEvents).toHaveBeenCalledTimes(1);
+
+    // First retry after ~1s backoff, resuming from the same cursor.
+    advance(1000);
+    await flush();
+    expect(streamAgentEvents).toHaveBeenCalledTimes(2);
+    expect(streamAgentEvents.mock.calls[1][0]).toBe(TAIL_PATH);
+
+    // The reconnected tail is live — events flow into the same handler.
+    emit({ type: "status", status: "running" });
+    expect(result.current.busy).toBe(true);
+    expect(result.current.reconnecting).toBe(false);
+  });
+
+  it("D1118: persistent drops surface 'reconnecting'; a successful event clears it", async () => {
+    mockFetch();
+    streamAgentEvents
+      .mockImplementationOnce(() => Promise.reject(new Error("boom")))
+      .mockImplementationOnce(() => Promise.reject(new Error("boom")));
+    const { result } = renderConversation();
+    await flush();
+
+    await act(async () => {
+      void result.current.send("build me a site");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+    // One drop is silent — no scary banner for a single blip.
+    expect(result.current.reconnecting).toBe(false);
+
+    advance(1000);
+    await flush();
+    // Second consecutive drop — now it's persistent enough to say so.
+    expect(result.current.reconnecting).toBe(true);
+    expect(streamAgentEvents).toHaveBeenCalledTimes(2);
+
+    // Next retry (2s backoff) lands on the default live mock…
+    advance(2000);
+    await flush();
+    expect(streamAgentEvents).toHaveBeenCalledTimes(3);
+    // …and the first delivered event clears the reconnecting surface.
+    emit({ type: "status", status: "running" });
+    expect(result.current.reconnecting).toBe(false);
+    expect(result.current.busy).toBe(true);
+  });
+
   it("W1.4 Stop: stop() calls the cancel endpoint, keeps the tail alive, and settles on the tailed 'stopped' status", async () => {
     const fetchMock = mockFetch();
     const { result } = renderConversation();

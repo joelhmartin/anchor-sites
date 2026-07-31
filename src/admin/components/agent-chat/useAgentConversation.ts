@@ -51,6 +51,9 @@ export type UseAgentConversationResult = {
    * pg-boss pickup) OR a server-reported running build (including one this
    * hook merely reconnected to). */
   busy: boolean;
+  /** D1118 — the live tail has dropped repeatedly and is auto-retrying;
+   * hosts surface a "reconnecting…" line so the build doesn't look frozen. */
+  reconnecting: boolean;
   error: string | null;
   conversation: AiConversation | null;
   /** Formatted footer text, e.g. "123 tokens today · +45 this turn". */
@@ -93,6 +96,7 @@ export function useAgentConversation({
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastTurnDelta, setLastTurnDelta] = useState<{ input: number; output: number } | null>(null);
 
@@ -202,17 +206,72 @@ export function useAgentConversation({
     tailAbortRef.current?.abort();
     const controller = new AbortController();
     tailAbortRef.current = controller;
-    const qs = afterId ? `?after=${afterId}` : "";
-    streamAgentEvents(`/api/sites/${siteId}/agent/conversations/${id}/events${qs}`, {
-      signal: controller.signal,
-      // `afterId` is captured per-call: the server's `snapshot` payload
-      // shape depends on whether `after=` was sent (only messages newer
-      // than it; else the last 50), so the handler needs to know which one
-      // it's looking at.
-      onEvent: (e) => handleTailEvent(e as AgentTailEvent, afterId, id),
-    }).catch(() => {
-      // aborted (host deactivated/unmounted) or connection dropped — best-effort tail
+    void runTail(id, afterId, controller);
+  }
+
+  /** Abort-aware sleep for the reconnect backoff — resolves early (and
+   * cleanly) the moment the tail is aborted. */
+  function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, ms);
+      function done() {
+        signal.removeEventListener("abort", done);
+        clearTimeout(timer);
+        resolve();
+      }
+      signal.addEventListener("abort", done);
     });
+  }
+
+  /**
+   * W1.4 / D1118 — the tail used to be `streamAgentEvents(...).catch(() =>
+   * {})`: any connection drop (proxy timeout, laptop sleep, server restart)
+   * silently froze the transcript mid-build with no retry and no notice.
+   * Now every drop — rejection OR a server-side close — reconnects with
+   * exponential backoff (1s → 15s cap), resuming from `lastMessageIdRef` so
+   * nothing already-displayed is refetched or lost. A single blip retries
+   * silently; from the second consecutive failure on, `reconnecting`
+   * surfaces so the build doesn't look frozen. Any delivered event proves
+   * the pipe works again and resets both the backoff and the surface.
+   */
+  async function runTail(id: string, initialAfterId: string | null, controller: AbortController) {
+    let afterId = initialAfterId;
+    let attempt = 0;
+    for (;;) {
+      // `afterId` is captured per-connection: the server's `snapshot`
+      // payload shape depends on whether `after=` was sent (only messages
+      // newer than it; else the last 50), so the handler needs to know
+      // which one this connection used.
+      const cursor = afterId;
+      const qs = cursor ? `?after=${cursor}` : "";
+      try {
+        await streamAgentEvents(`/api/sites/${siteId}/agent/conversations/${id}/events${qs}`, {
+          signal: controller.signal,
+          onEvent: (e) => {
+            attempt = 0;
+            setReconnecting(false);
+            handleTailEvent(e as AgentTailEvent, cursor, id);
+          },
+        });
+        // Resolved without abort: the server closed the stream (restart/
+        // deploy). Fall through to the same reconnect path as a rejection.
+      } catch {
+        // Connection dropped or aborted — the checks below decide which.
+      }
+      if (controller.signal.aborted) {
+        setReconnecting(false);
+        return;
+      }
+      attempt += 1;
+      if (attempt >= 2) setReconnecting(true);
+      await abortableSleep(Math.min(1000 * 2 ** (attempt - 1), 15_000), controller.signal);
+      if (controller.signal.aborted) {
+        setReconnecting(false);
+        return;
+      }
+      // Cursor resume: pick up right after the newest message already shown.
+      afterId = lastMessageIdRef.current ?? afterId;
+    }
   }
 
   /** Best-effort per-turn token-usage delta for a turn THIS hook instance
@@ -532,6 +591,7 @@ export function useAgentConversation({
     // D310 — include `sending`, matching what `onStatusChange` already
     // reports: the typing pulse and busy gates start at Send, not at pickup.
     busy: sending || conversation?.status === "running",
+    reconnecting,
     error,
     conversation,
     usageText,
