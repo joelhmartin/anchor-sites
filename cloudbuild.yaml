@@ -91,6 +91,10 @@ steps:
       - --region=${_REGION}
       - --command=npm
       - --args=run,deploy:db
+      # PIXABAY_API_KEY lets db:seed-templates ingest template gallery covers
+      # (media pipeline under the system-templates site). --set-secrets on
+      # jobs REPLACES the whole list too — DATABASE_URL must stay listed.
+      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,PIXABAY_API_KEY=PIXABAY_API_KEY:latest
 
   # 3b. Run DB migrations + seed built-in templates as a one-off job before
   #     swapping traffic. Reads DATABASE_URL from Secret Manager via the Cloud
