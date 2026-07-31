@@ -241,6 +241,79 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
     },
   );
 
+  // POST /api/sites/:siteId/domains/:domainId/set-primary — make this
+  // domain the site's canonical hostname (D110).
+  //
+  // "Primary" is what publish reports as live_url (`WHERE is_primary =
+  // true`) — without this transition a customer's custom domain could never
+  // become the canonical live URL, which blocks the core "connect your
+  // domain" promise. Swap is transactional (demote-then-promote in one tx —
+  // never zero or two primaries visible), and both hostnames' resolver
+  // cache entries are evicted.
+  router.post(
+    "/sites/:siteId/domains/:domainId/set-primary",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId, domainId } = req.params;
+        const row = await pool.query<Omit<DomainRow, "domain_class">>(
+          `SELECT ${DOMAIN_COLUMNS}
+             FROM site_domains
+            WHERE id = $1 AND site_id = $2`,
+          [domainId, siteId],
+        );
+        if (row.rowCount === 0) {
+          res.status(404).json({ error: "domain not found" });
+          return;
+        }
+        if (row.rows[0].is_primary) {
+          res.status(200).json({ domain: toDomainRow(row.rows[0]) });
+          return;
+        }
+
+        const client = await pool.connect();
+        let demotedHostnames: string[] = [];
+        let promoted: Omit<DomainRow, "domain_class">;
+        try {
+          await client.query("BEGIN");
+          const demoted = await client.query<{ hostname: string }>(
+            `UPDATE site_domains SET is_primary = false, updated_at = now()
+              WHERE site_id = $1 AND is_primary = true
+              RETURNING hostname`,
+            [siteId],
+          );
+          demotedHostnames = demoted.rows.map((r) => r.hostname);
+          const prom = await client.query<Omit<DomainRow, "domain_class">>(
+            `UPDATE site_domains SET is_primary = true, updated_at = now()
+              WHERE id = $1 AND site_id = $2
+              RETURNING ${DOMAIN_COLUMNS}`,
+            [domainId, siteId],
+          );
+          if (prom.rowCount === 0) {
+            // Deleted between the read and the tx — abort, nothing changed.
+            await client.query("ROLLBACK");
+            res.status(404).json({ error: "domain not found" });
+            return;
+          }
+          promoted = prom.rows[0];
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw err;
+        } finally {
+          client.release();
+        }
+
+        for (const h of demotedHostnames) evictSiteCache(h);
+        evictSiteCache(promoted.hostname);
+
+        res.status(200).json({ domain: toDomainRow(promoted) });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // POST /api/sites/:siteId/domains/:domainId/provision — trigger Cloud Run + DNS.
   router.post(
     "/sites/:siteId/domains/:domainId/provision",

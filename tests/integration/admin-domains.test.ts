@@ -516,6 +516,83 @@ d("admin domains API — POST provision + GET status (10.6)", () => {
   });
 });
 
+d("admin domains API — POST set-primary (D110)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let muldoonId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    // Restore the canonical primary for other suites sharing the seed DB.
+    await pool.query(
+      `UPDATE site_domains SET is_primary = (hostname = 'muldoon-dental.sites.anchorcorps.com')
+        WHERE site_id = $1`,
+      [muldoonId],
+    );
+    await pool.query(`DELETE FROM site_domains WHERE hostname = 'custom.d110-test.example.com'`);
+    await pool.end().catch(() => undefined);
+  });
+
+  it("404 for unknown domain", async () => {
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/00000000-0000-0000-0000-000000000000/set-primary`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+
+  it("swaps is_primary transactionally: the custom domain becomes the canonical live URL", async () => {
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
+       VALUES ($1, 'custom.d110-test.example.com', false, 'verified', 'active')
+       RETURNING id`,
+      [muldoonId],
+    );
+    const customId = ins.rows[0].id;
+
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${customId}/set-primary`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.id).toBe(customId);
+    expect(r.body.domain.is_primary).toBe(true);
+
+    // Exactly ONE primary per site, and it's the custom domain now —
+    // publish's live_url (WHERE is_primary = true) follows it.
+    const primaries = await pool.query<{ hostname: string }>(
+      `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true`,
+      [muldoonId],
+    );
+    expect(primaries.rows.map((p) => p.hostname)).toEqual(["custom.d110-test.example.com"]);
+  });
+
+  it("no-ops with 200 when the domain is already primary", async () => {
+    const cur = await pool.query<{ id: string }>(
+      `SELECT id FROM site_domains WHERE site_id = $1 AND is_primary = true`,
+      [muldoonId],
+    );
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${cur.rows[0].id}/set-primary`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.is_primary).toBe(true);
+
+    const count = await pool.query(
+      `SELECT count(*)::int AS n FROM site_domains WHERE site_id = $1 AND is_primary = true`,
+      [muldoonId],
+    );
+    expect(count.rows[0].n).toBe(1);
+  });
+});
+
 d("admin domains API — status transitions (D608/D609)", () => {
   let pool: Pool;
   let muldoonId: string;
