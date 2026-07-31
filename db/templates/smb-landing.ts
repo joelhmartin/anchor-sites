@@ -400,7 +400,7 @@ export const smbLanding: TemplateSeed = {
           type: "crm_form",
           props: {
             embed_code:
-              "<form action=\"/api/leads\" method=\"post\" class=\"fieldstone-contact-form\"><label>Name<input type=\"text\" name=\"name\" required></label><label>Company<input type=\"text\" name=\"company\"></label><label>Email<input type=\"email\" name=\"email\" required></label><label>What's going on?<textarea name=\"details\" rows=\"4\" required></textarea></label><button type=\"submit\">Request a Consultation</button></form>",
+              "<form action=\"/api/leads\" method=\"post\" class=\"fieldstone-contact-form\"><input type=\"hidden\" name=\"_page\" value=\"/contact\"><label style=\"position:absolute;left:-9999px\" aria-hidden=\"true\">Leave this field empty<input type=\"text\" name=\"website\" tabindex=\"-1\" autocomplete=\"off\"></label><label>Name<input type=\"text\" name=\"name\" required></label><label>Company<input type=\"text\" name=\"company\"></label><label>Email<input type=\"email\" name=\"email\" required></label><label>What's going on?<textarea name=\"details\" rows=\"4\" required></textarea></label><button type=\"submit\">Request a Consultation</button></form>",
             label: "Request a Consultation",
           },
         },

@@ -462,7 +462,9 @@ export const fitnessStudio: TemplateSeed = {
           type: "crm_form",
           props: {
             embed_code:
-              '<form action="https://forms.pulsefitnessdenver.com/trial" method="post" class="pulse-trial-form">' +
+              '<form action="/api/leads" method="post" class="pulse-trial-form">' +
+              '<input type="hidden" name="_page" value="/contact" />' +
+              '<label style="position:absolute;left:-9999px" aria-hidden="true">Leave this field empty<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>' +
               "<h3>Request Your Free Trial Class</h3>" +
               '<label>Full name<input type="text" name="name" required /></label>' +
               '<label>Email<input type="email" name="email" required /></label>' +

@@ -585,7 +585,7 @@ export const restaurant: TemplateSeed = {
           type: "crm_form",
           props: {
             embed_code:
-              "<form action=\"/reservations\" method=\"post\" class=\"ac-reservation-form\"><label for=\"res-name\">Name</label><input id=\"res-name\" name=\"name\" type=\"text\" required /><label for=\"res-date\">Date</label><input id=\"res-date\" name=\"date\" type=\"date\" required /><label for=\"res-party\">Party size</label><input id=\"res-party\" name=\"party_size\" type=\"number\" min=\"1\" max=\"20\" required /><label for=\"res-phone\">Phone</label><input id=\"res-phone\" name=\"phone\" type=\"tel\" required /><button type=\"submit\">Request a Table</button></form>",
+              "<form action=\"/api/leads\" method=\"post\" class=\"ac-reservation-form\"><input type=\"hidden\" name=\"_page\" value=\"/contact\"><label style=\"position:absolute;left:-9999px\" aria-hidden=\"true\">Leave this field empty<input type=\"text\" name=\"website\" tabindex=\"-1\" autocomplete=\"off\"></label><label for=\"res-name\">Name</label><input id=\"res-name\" name=\"name\" type=\"text\" required /><label for=\"res-date\">Date</label><input id=\"res-date\" name=\"date\" type=\"date\" required /><label for=\"res-party\">Party size</label><input id=\"res-party\" name=\"party_size\" type=\"number\" min=\"1\" max=\"20\" required /><label for=\"res-phone\">Phone</label><input id=\"res-phone\" name=\"phone\" type=\"tel\" required /><button type=\"submit\">Request a Table</button></form>",
             label: "Reservation Request",
           },
         },

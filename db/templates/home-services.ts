@@ -664,7 +664,7 @@ export const homeServices: TemplateSeed = {
           id: "contact-form",
           type: "crm_form",
           props: {
-            embed_code: "<form action=\"/api/leads\" method=\"post\" class=\"ironclad-contact-form\"><label>Name<input type=\"text\" name=\"name\" required></label><label>Phone<input type=\"tel\" name=\"phone\" required></label><label>Address<input type=\"text\" name=\"address\" required></label><label>What's going on?<textarea name=\"details\" rows=\"4\" required></textarea></label><button type=\"submit\">Request Service</button></form>",
+            embed_code: "<form action=\"/api/leads\" method=\"post\" class=\"ironclad-contact-form\"><input type=\"hidden\" name=\"_page\" value=\"/contact\"><label style=\"position:absolute;left:-9999px\" aria-hidden=\"true\">Leave this field empty<input type=\"text\" name=\"website\" tabindex=\"-1\" autocomplete=\"off\"></label><label>Name<input type=\"text\" name=\"name\" required></label><label>Phone<input type=\"tel\" name=\"phone\" required></label><label>Address<input type=\"text\" name=\"address\" required></label><label>What's going on?<textarea name=\"details\" rows=\"4\" required></textarea></label><button type=\"submit\">Request Service</button></form>",
             label: "Request Service Form",
           },
         },

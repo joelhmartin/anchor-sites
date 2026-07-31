@@ -485,7 +485,7 @@ export const coaching: TemplateSeed = {
           type: "crm_form",
           props: {
             embed_code:
-              "<form action=\"/api/leads\" method=\"post\" class=\"crossroads-call-form\"><label>Full Name<input type=\"text\" name=\"name\" required></label><label>Email<input type=\"email\" name=\"email\" required></label><label>Phone<input type=\"tel\" name=\"phone\" required></label><label>What's going on right now?<textarea name=\"details\" rows=\"4\" required></textarea></label><label>Best day/time to call<input type=\"text\" name=\"preferred_time\" placeholder=\"e.g. Tuesday afternoons\"></label><button type=\"submit\">Request My Free Call</button></form>",
+              "<form action=\"/api/leads\" method=\"post\" class=\"crossroads-call-form\"><input type=\"hidden\" name=\"_page\" value=\"/book-a-call\"><label style=\"position:absolute;left:-9999px\" aria-hidden=\"true\">Leave this field empty<input type=\"text\" name=\"website\" tabindex=\"-1\" autocomplete=\"off\"></label><label>Full Name<input type=\"text\" name=\"name\" required></label><label>Email<input type=\"email\" name=\"email\" required></label><label>Phone<input type=\"tel\" name=\"phone\" required></label><label>What's going on right now?<textarea name=\"details\" rows=\"4\" required></textarea></label><label>Best day/time to call<input type=\"text\" name=\"preferred_time\" placeholder=\"e.g. Tuesday afternoons\"></label><button type=\"submit\">Request My Free Call</button></form>",
             label: "Free Call Request",
           },
         },

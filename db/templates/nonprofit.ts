@@ -637,7 +637,7 @@ export const nonprofit: TemplateSeed = {
           id: "contact-form",
           type: "crm_form",
           props: {
-            embed_code: "<form action=\"/api/leads\" method=\"post\" class=\"fulton-roots-contact-form\"><label>Name<input type=\"text\" name=\"name\" required></label><label>Email<input type=\"email\" name=\"email\" required></label><label>Phone<input type=\"tel\" name=\"phone\"></label><label>How can we help?<textarea name=\"details\" rows=\"4\" required></textarea></label><button type=\"submit\">Send Message</button></form>",
+            embed_code: "<form action=\"/api/leads\" method=\"post\" class=\"fulton-roots-contact-form\"><input type=\"hidden\" name=\"_page\" value=\"/contact\"><label style=\"position:absolute;left:-9999px\" aria-hidden=\"true\">Leave this field empty<input type=\"text\" name=\"website\" tabindex=\"-1\" autocomplete=\"off\"></label><label>Name<input type=\"text\" name=\"name\" required></label><label>Email<input type=\"email\" name=\"email\" required></label><label>Phone<input type=\"tel\" name=\"phone\"></label><label>How can we help?<textarea name=\"details\" rows=\"4\" required></textarea></label><button type=\"submit\">Send Message</button></form>",
             label: "General Inquiry Form",
           },
         },

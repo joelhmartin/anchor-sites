@@ -431,7 +431,16 @@ export const dentalPractice: TemplateSeed = {
           type: "crm_form",
           props: {
             embed_code:
-              '<iframe title="Willowbrook Dental New Patient Intake Form" src="https://forms.willowbrookdental.com/new-patient-intake" width="100%" height="900" style="border:0;"></iframe>',
+              '<form action="/api/leads" method="post" class="willowbrook-new-patient-form">' +
+              '<input type="hidden" name="_page" value="/new-patients" />' +
+              '<label style="position:absolute;left:-9999px" aria-hidden="true">Leave this field empty<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>' +
+              '<label>Full name<input type="text" name="name" required /></label>' +
+              '<label>Phone<input type="tel" name="phone" required /></label>' +
+              '<label>Email<input type="email" name="email" required /></label>' +
+              '<label>Preferred days or times<input type="text" name="preferred_time" placeholder="e.g. weekday mornings" /></label>' +
+              '<label>Anything we should know before your first visit?<textarea name="details" rows="4"></textarea></label>' +
+              '<button type="submit">Request My First Appointment</button>' +
+              "</form>",
             label: "New Patient Forms",
           },
         },
@@ -490,7 +499,15 @@ export const dentalPractice: TemplateSeed = {
           type: "crm_form",
           props: {
             embed_code:
-              '<iframe title="Contact Willowbrook Dental" src="https://forms.willowbrookdental.com/contact" width="100%" height="700" style="border:0;"></iframe>',
+              '<form action="/api/leads" method="post" class="willowbrook-contact-form">' +
+              '<input type="hidden" name="_page" value="/contact" />' +
+              '<label style="position:absolute;left:-9999px" aria-hidden="true">Leave this field empty<input type="text" name="website" tabindex="-1" autocomplete="off" /></label>' +
+              '<label>Name<input type="text" name="name" required /></label>' +
+              '<label>Phone<input type="tel" name="phone" required /></label>' +
+              '<label>Email<input type="email" name="email" /></label>' +
+              '<label>How can we help?<textarea name="details" rows="4" required></textarea></label>' +
+              '<button type="submit">Send Message</button>' +
+              "</form>",
             label: "Send Us a Message",
           },
         },
