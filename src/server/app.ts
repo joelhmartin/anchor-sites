@@ -17,6 +17,7 @@ import { adminTenantRouter } from "./routes/admin-tenant.js";
 import { adminDomainsRouter } from "./routes/admin-domains.js";
 import { adminCrmRouter } from "./routes/admin-crm.js";
 import { vitalsRouter } from "./routes/vitals.js";
+import { leadsRouter } from "./routes/leads.js";
 import { adminJobsRouter } from "./routes/admin-jobs.js";
 import { adminAiAgentRouter } from "./routes/admin-ai-agent.js";
 import { meRouter } from "./routes/me.js";
@@ -122,6 +123,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // P12-T12.3: web-vitals ingestion (tenant pages post metrics here; no admin gate).
   app.use("/api", vitalsRouter());
+
+  // W1.6/D700: tenant lead capture — template crm_forms post here from the
+  // tenant origin. Host-resolved (resolveSite), rate-limited, no admin gate.
+  app.use("/api", leadsRouter());
 
   // P12-T12.7: pg-boss health endpoint (admin-only).
   app.use("/api", adminJobsRouter());

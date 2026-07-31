@@ -380,6 +380,49 @@ export function renderComingSoon(site: ResolvedSite): { html: string; status: nu
   });
 }
 
+/**
+ * D700 — branded confirmation for a stored lead. Template `crm_form`s are
+ * plain HTML posts (published pages ship no client JS), so this page IS the
+ * post-submit navigation target. `backHref` is always site-relative (the
+ * leads route clamps it to a leading "/"), pointing back at the page the
+ * visitor submitted from.
+ */
+export function renderLeadThanks(
+  site: ResolvedSite,
+  opts: { backHref?: string } = {},
+): { html: string; status: number } {
+  const backHref = opts.backHref ?? "/";
+  const bodyHtml = renderShellContent(
+    site,
+    <div className="ac-lead-thanks">
+      <h1>Thank you!</h1>
+      <p>Your message has been received by {site.display_name}.</p>
+      <p className="ac-lead-thanks__sub">We&rsquo;ll be in touch as soon as possible.</p>
+      <p>
+        <a className="ac-lead-thanks__back" href={backHref}>
+          &larr; Back to the site
+        </a>
+      </p>
+    </div>,
+  );
+  const extraCss = `
+    .ac-lead-thanks { max-width: 40rem; margin: 6rem auto; padding: 0 1.5rem; text-align: center; }
+    .ac-lead-thanks h1 { color: var(--theme-main, #111); margin: 0 0 0.75rem; }
+    .ac-lead-thanks p { margin: 0 0 0.5rem; font-size: 1.125rem; }
+    .ac-lead-thanks__sub { color: #777; font-size: 0.875rem; }
+    .ac-lead-thanks__back { color: var(--theme-accent, var(--theme-main, #111)); text-decoration: underline; }
+  `;
+  return shell({
+    site,
+    title: `Thank you — ${site.display_name}`,
+    bodyHtml,
+    status: 200,
+    extraCss,
+    // A confirmation page must never be indexed.
+    headExtra: `<meta name="robots" content="noindex" />`,
+  });
+}
+
 export function renderNotFound(site: ResolvedSite): { html: string; status: number } {
   const bodyHtml = renderShellContent(
     site,
