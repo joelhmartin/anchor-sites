@@ -5,7 +5,7 @@ import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import {
-  createConversation,
+  getOrCreateConversation,
   getConversation,
   listConversations,
   appendMessage,
@@ -300,9 +300,15 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
   }
 
   // -------------------------------------------------------------------------
-  // POST /sites/:siteId/agent/conversations — create a conversation, optionally
-  // seeded with a first user message. Creation itself never streams: an
-  // inline turn always happens via a follow-up POST .../messages.
+  // POST /sites/:siteId/agent/conversations — get-or-create THE site's
+  // conversation (D302: one live conversation per site, enforced by the
+  // `ai_conversations_one_active_per_site` partial unique index). A site
+  // with an existing non-archived conversation gets that one back (200)
+  // instead of a twin — two tabs racing their bootstrap converge on the
+  // same conversation, so two concurrent agent builds against one site are
+  // structurally impossible. A genuinely new conversation returns 201.
+  // Optionally seeded with a first user message; creation itself never
+  // streams — a turn always runs via the AGENT_TURN job.
   // -------------------------------------------------------------------------
   router.post(
     "/sites/:siteId/agent/conversations",
@@ -325,7 +331,7 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         }
 
         const resolvedTitle = title ?? (message ? message.slice(0, 60) : "New conversation");
-        const conversation = await createConversation(pool, siteId, resolvedTitle);
+        const { conversation, created } = await getOrCreateConversation(pool, siteId, resolvedTitle);
 
         if (message) {
           if (run === "job") {
@@ -345,7 +351,7 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
           await appendMessage(pool, conversation.id, "user", [{ type: "text", text: message }]);
         }
 
-        res.status(201).json({ conversation });
+        res.status(created ? 201 : 200).json({ conversation });
       } catch (err) {
         next(err);
       }

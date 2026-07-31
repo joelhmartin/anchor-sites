@@ -227,6 +227,44 @@ d("agent HTTP API (integration, Task 10)", () => {
     expect(detail.body.messages).toEqual([]);
   });
 
+  // ── W2-CONC / D302: one conversation per site — POST is get-or-create ──
+
+  it("D302: a second create POST returns the SAME conversation with 200, not a twin", async () => {
+    const site = await db.seedSite("agent-routes-getorcreate");
+
+    const first = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({
+      title: "first tab",
+    });
+    expect(first.status).toBe(201);
+
+    const second = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({
+      title: "second tab",
+    });
+    expect(second.status).toBe(200);
+    expect(second.body.conversation.id).toBe(first.body.conversation.id);
+    // The existing conversation keeps its own title — the racing tab's is ignored.
+    expect(second.body.conversation.title).toBe("first tab");
+
+    const listed = await auth(request(app).get(`/api/sites/${site.id}/agent/conversations`));
+    expect(
+      listed.body.conversations.filter((c: { status: string }) => c.status !== "archived"),
+    ).toHaveLength(1);
+  });
+
+  it("D302: an errored/stopped conversation is still THE conversation (respects W1.4's claimable statuses)", async () => {
+    const site = await db.seedSite("agent-routes-getorcreate-status");
+    const first = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    expect(first.status).toBe(201);
+    await db.getPool().query(`UPDATE ai_conversations SET status = 'stopped' WHERE id = $1`, [
+      first.body.conversation.id,
+    ]);
+
+    const second = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    expect(second.status).toBe(200);
+    expect(second.body.conversation.id).toBe(first.body.conversation.id);
+    expect(second.body.conversation.status).toBe("stopped");
+  });
+
   it("derives the title from the first 60 chars of the message when no title is given", async () => {
     const site = await db.seedSite("agent-routes-title");
     const longMessage = "x".repeat(100);

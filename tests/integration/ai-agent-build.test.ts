@@ -144,13 +144,15 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
     expect(previewViaToken.status).toBe(200);
     expect(previewViaToken.text).toContain("Your new site, drafted by AI");
 
-    // 5. A second conversation + runAgentTurn on the SAME (now non-empty) site
-    // makes no changes.
+    // 5. A second create POST on the SAME site converges on THE site's
+    // conversation (D302 get-or-create: 200 + same id, never a twin), and a
+    // second runAgentTurn on the now non-empty site makes no changes.
     const convRes2 = await auth(request(app).post(`/api/sites/${siteId}/agent/conversations`)).send({
       message: "Add another page",
     });
-    expect(convRes2.status).toBe(201);
+    expect(convRes2.status).toBe(200);
     const conversationId2 = convRes2.body.conversation.id as string;
+    expect(conversationId2).toBe(conversationId);
 
     const turnResult2 = await runAgentTurn({ pool: db.getPool(), conversationId: conversationId2, siteId });
     expect(turnResult2.endReason).toBe("completed");
@@ -160,7 +162,12 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
       request(app).get(`/api/sites/${siteId}/agent/conversations/${conversationId2}`),
     );
     expect(detail2.status).toBe(200);
-    expect(detail2.body.messages.map((m: { role: string }) => m.role)).toEqual(["user", "assistant"]);
+    // Same conversation as turn 1, so the seed message + this turn's reply
+    // land at the END of the existing transcript.
+    expect(detail2.body.messages.slice(-2).map((m: { role: string }) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
     expect(JSON.stringify(detail2.body.messages.at(-1).content)).toContain(
       "Stub mode: no changes made — site already has pages.",
     );

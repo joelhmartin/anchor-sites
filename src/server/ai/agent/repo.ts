@@ -53,6 +53,41 @@ export async function createConversation(
   return r.rows[0];
 }
 
+/**
+ * W2-CONC / D302 — server-side get-or-create: ONE live conversation per
+ * site. Returns the site's existing non-archived conversation (whatever its
+ * status — active/error/running/stopped are all "the" conversation; W1.4's
+ * 'stopped' included) instead of minting a twin. The INSERT's ON CONFLICT
+ * arbiter is the `ai_conversations_one_active_per_site` partial unique
+ * index, so two tabs racing this converge on the same row: the loser's
+ * INSERT returns nothing and the follow-up SELECT finds the winner's row.
+ *
+ * The final re-SELECT can only come up empty if the winner's conversation
+ * was archived in the microseconds between our INSERT and SELECT — one
+ * retry loop iteration covers it rather than surfacing a spurious 500.
+ */
+export async function getOrCreateConversation(
+  pool: Pool, siteId: string, title: string,
+): Promise<{ conversation: AiConversation; created: boolean }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = await pool.query<AiConversation>(
+      `SELECT ${CONV_COLS} FROM ai_conversations WHERE site_id = $1 AND status <> 'archived' LIMIT 1`,
+      [siteId],
+    );
+    if (existing.rows[0]) return { conversation: existing.rows[0], created: false };
+
+    const inserted = await pool.query<AiConversation>(
+      `INSERT INTO ai_conversations (site_id, title) VALUES ($1, $2)
+       ON CONFLICT (site_id) WHERE status <> 'archived' DO NOTHING
+       RETURNING ${CONV_COLS}`,
+      [siteId, title],
+    );
+    if (inserted.rows[0]) return { conversation: inserted.rows[0], created: true };
+    // Lost the race — loop back to pick up the winner's row.
+  }
+  throw new Error(`conversation get-or-create kept racing for site ${siteId}`);
+}
+
 export async function getConversation(
   pool: Pool, id: string, siteId: string,
 ): Promise<AiConversation | null> {

@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
-  createConversation, getConversation, listConversations, appendMessage,
+  createConversation, getOrCreateConversation, getConversation, listConversations, appendMessage,
   listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
   claimConversationTurn, releaseConversationTurn, sweepStalledConversation,
   requestConversationStop, consumeCancelRequest, markConversationStopped,
@@ -14,11 +14,22 @@ d("ai agent repo", () => {
   let siteId: string;
   let otherSiteId: string;
 
+  /** D302: at most one non-archived conversation per site — free the slot. */
+  async function archiveLive(...siteIds: string[]): Promise<void> {
+    await db.getPool().query(
+      `UPDATE ai_conversations SET status = 'archived' WHERE site_id = ANY($1)`,
+      [siteIds],
+    );
+  }
+
   beforeAll(async () => {
     await db.runMigrations();
     siteId = (await db.seedSite("agent-repo-a")).id;
     otherSiteId = (await db.seedSite("agent-repo-b")).id;
   });
+  // D302's one-live-conversation-per-site index: each test starts with the
+  // shared sites' conversation slots free.
+  beforeEach(() => archiveLive(siteId, otherSiteId));
   afterAll(() => db.teardown());
 
   it("creates and fetches a conversation, scoped by site", async () => {
@@ -51,11 +62,58 @@ d("ai agent repo", () => {
 
   it("sets status and lists newest-first", async () => {
     const c1 = await createConversation(db.getPool(), siteId, "one");
+    // D302: archive c1 to free the site's live-conversation slot before
+    // creating c2 (the index allows any number of archived rows).
+    await setConversationStatus(db.getPool(), c1.id, "archived");
     const c2 = await createConversation(db.getPool(), siteId, "two");
-    await setConversationStatus(db.getPool(), c1.id, "error");
     const list = await listConversations(db.getPool(), siteId);
     expect(list.findIndex((c) => c.id === c2.id)).toBeLessThan(list.findIndex((c) => c.id === c1.id));
-    expect(list.find((c) => c.id === c1.id)!.status).toBe("error");
+    expect(list.find((c) => c.id === c1.id)!.status).toBe("archived");
+  });
+
+  // ── W2-CONC / D302: one live conversation per site ──
+
+  describe("getOrCreateConversation (D302)", () => {
+    it("creates when the site has no live conversation, then returns THAT one on every later call", async () => {
+      const first = await getOrCreateConversation(db.getPool(), siteId, "first");
+      expect(first.created).toBe(true);
+      const second = await getOrCreateConversation(db.getPool(), siteId, "ignored title");
+      expect(second.created).toBe(false);
+      expect(second.conversation.id).toBe(first.conversation.id);
+    });
+
+    it("returns the existing conversation whatever its live status (error/running/stopped)", async () => {
+      const { conversation } = await getOrCreateConversation(db.getPool(), siteId, "t");
+      for (const status of ["error", "running", "stopped"] as const) {
+        await setConversationStatus(db.getPool(), conversation.id, status);
+        const again = await getOrCreateConversation(db.getPool(), siteId, "t");
+        expect(again.created).toBe(false);
+        expect(again.conversation.id).toBe(conversation.id);
+        expect(again.conversation.status).toBe(status);
+      }
+    });
+
+    it("an archived conversation frees the slot — the next call creates a fresh one", async () => {
+      const { conversation } = await getOrCreateConversation(db.getPool(), siteId, "t");
+      await setConversationStatus(db.getPool(), conversation.id, "archived");
+      const next = await getOrCreateConversation(db.getPool(), siteId, "t");
+      expect(next.created).toBe(true);
+      expect(next.conversation.id).not.toBe(conversation.id);
+    });
+
+    it("is per-site: another site still gets its own conversation", async () => {
+      const a = await getOrCreateConversation(db.getPool(), siteId, "t");
+      const b = await getOrCreateConversation(db.getPool(), otherSiteId, "t");
+      expect(b.created).toBe(true);
+      expect(b.conversation.id).not.toBe(a.conversation.id);
+    });
+
+    it("the DB index itself rejects a raw twin INSERT (the invariant is structural, not route-side)", async () => {
+      await createConversation(db.getPool(), siteId, "one");
+      await expect(createConversation(db.getPool(), siteId, "twin")).rejects.toMatchObject({
+        code: "23505",
+      });
+    });
   });
 
   describe("claimConversationTurn / releaseConversationTurn (bot-review fix wave, item 1)", () => {
@@ -118,9 +176,11 @@ d("ai agent repo", () => {
       await claimConversationTurn(db.getPool(), running.id);
       expect(await requestConversationStop(db.getPool(), running.id)).toBe(true);
       expect(await cancelFlag(running.id)).toBe(true);
+      await archiveLive(siteId); // D302: free the slot for the next conversation
 
       const active = await createConversation(db.getPool(), siteId, "t");
       expect(await requestConversationStop(db.getPool(), active.id)).toBe(true);
+      await archiveLive(siteId);
 
       const errored = await createConversation(db.getPool(), siteId, "t");
       await setConversationStatus(db.getPool(), errored.id, "error");
@@ -168,6 +228,7 @@ d("ai agent repo", () => {
       await requestConversationStop(db.getPool(), conv.id);
       await releaseConversationTurn(db.getPool(), conv.id, "active");
       expect(await cancelFlag(conv.id)).toBe(false);
+      await archiveLive(siteId); // D302: free the slot for the next conversation
 
       const conv2 = await createConversation(db.getPool(), siteId, "t");
       await claimConversationTurn(db.getPool(), conv2.id);
