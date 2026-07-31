@@ -27,7 +27,11 @@ export async function signInWithGoogle(callbackURL = "/"): Promise<void> {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     credentials: "include",
-    body: JSON.stringify({ provider: "google", callbackURL }),
+    // D800: `errorCallbackURL` routes a REJECTED callback (denied consent,
+    // allowlist rejection) straight to /login?error=…, where LoginPage
+    // explains it — instead of Better-auth's default bounce to `/?error=…`
+    // (which only reaches /login via RequireAdmin's forwarding).
+    body: JSON.stringify({ provider: "google", callbackURL, errorCallbackURL: "/login" }),
   });
   const data = (await res.json().catch(() => null)) as { url?: string } | null;
   if (!res.ok || !data?.url) {

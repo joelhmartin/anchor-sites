@@ -32,6 +32,12 @@ describe("session helpers (P8-T8.5)", () => {
     try {
       await signInWithGoogle("/");
       expect(assign).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/x");
+      // D800: rejected callbacks must land on /login (where the error is
+      // explained), not the default `/?error=…` bounce.
+      const body = JSON.parse(
+        (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string,
+      );
+      expect(body.errorCallbackURL).toBe("/login");
     } finally {
       Object.defineProperty(window, "location", { configurable: true, value: original });
     }

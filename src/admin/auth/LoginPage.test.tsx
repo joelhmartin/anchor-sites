@@ -55,4 +55,33 @@ describe("LoginPage (P8-T8.5)", () => {
     await waitFor(() => expect(fetchMe).toHaveBeenCalled());
     expect(localStorage.getItem("anchorcorps.admin_token")).toBe("tok");
   });
+
+  // D800 — a rejected sign-in must land on a screen that SAYS WHAT HAPPENED.
+  describe("[D800] rejected sign-in explanations (?error=)", () => {
+    it("explains a cancelled/denied Google consent", () => {
+      renderLogin("?error=access_denied");
+      expect(screen.getByText(/cancelled or didn't finish/i)).toBeTruthy();
+    });
+
+    it("explains an allowlist rejection at session creation (D804's code)", () => {
+      renderLogin("?error=unable_to_create_session");
+      expect(screen.getByText(/isn't authorized for Studio/i)).toBeTruthy();
+      expect(screen.getByText(/allowlist/i)).toBeTruthy();
+    });
+
+    it("explains the user-create rejection (underscored hook message)", () => {
+      renderLogin("?error=This_Google_account_is_not_authorized_for_Studio.");
+      expect(screen.getByText(/isn't authorized for Studio/i)).toBeTruthy();
+    });
+
+    it("falls back to a decoded generic message for unknown codes", () => {
+      renderLogin("?error=some_weird_thing");
+      expect(screen.getByText(/some weird thing/i)).toBeTruthy();
+    });
+
+    it("renders no error box without an error param", () => {
+      renderLogin();
+      expect(screen.queryByTestId("auth-error")).toBeNull();
+    });
+  });
 });
