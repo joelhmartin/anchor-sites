@@ -46,4 +46,37 @@ describe("GET /api/me (P8-T8.5)", () => {
     expect(res.status).toBe(200);
     expect(res.body.user.id).toBe("dev");
   });
+
+  // D814 — the login page must only offer sign-in methods the deployment
+  // honors, which requires an unauthenticated way to ask which mode is live.
+  describe("GET /api/auth-mode (D814)", () => {
+    it("reports google when all secrets are present, without auth", async () => {
+      vi.stubEnv("GOOGLE_CLIENT_ID", "id");
+      vi.stubEnv("GOOGLE_CLIENT_SECRET", "secret");
+      vi.stubEnv("BETTER_AUTH_SECRET", "s3cret");
+      const res = await request(buildApp()).get("/api/auth-mode");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ mode: "google" });
+    });
+
+    it("reports dev when secrets are absent outside production", async () => {
+      vi.stubEnv("GOOGLE_CLIENT_ID", "");
+      vi.stubEnv("GOOGLE_CLIENT_SECRET", "");
+      vi.stubEnv("BETTER_AUTH_SECRET", "");
+      vi.stubEnv("NODE_ENV", "test");
+      const res = await request(buildApp()).get("/api/auth-mode");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ mode: "dev" });
+    });
+
+    it("reports disabled in production without secrets", async () => {
+      vi.stubEnv("GOOGLE_CLIENT_ID", "");
+      vi.stubEnv("GOOGLE_CLIENT_SECRET", "");
+      vi.stubEnv("BETTER_AUTH_SECRET", "");
+      vi.stubEnv("NODE_ENV", "production");
+      const res = await request(buildApp()).get("/api/auth-mode");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ mode: "disabled" });
+    });
+  });
 });

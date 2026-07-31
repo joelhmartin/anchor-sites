@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../ui/button.js";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card.js";
@@ -7,7 +7,12 @@ import { Label } from "../ui/label.js";
 import { Spinner } from "../ui/spinner.js";
 import { setAdminToken } from "../lib/adminToken.js";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
-import { fetchMe, signInWithGoogle } from "../lib/session.js";
+import {
+  fetchAuthMode,
+  fetchMe,
+  signInWithGoogle,
+  type StudioAuthModeClient,
+} from "../lib/session.js";
 
 /**
  * D800 — translate Better-auth's `?error=` codes into human explanations.
@@ -63,6 +68,25 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // D814 — only offer sign-in methods the deployment honors. `null` while
+  // the (unauthenticated) discovery request is in flight, and on any failure
+  // the helper falls back to "google" — keep offering the button rather than
+  // hiding a path that might work on an older deployment.
+  const [authMode, setAuthMode] = useState<StudioAuthModeClient | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetchAuthMode().then((mode) => {
+      if (active) setAuthMode(mode);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const googleAvailable = authMode !== "dev" && authMode !== "disabled";
+  // D216: the reveal must toggle BOTH ways — but only when there is a Google
+  // view to go back to. In dev/disabled mode the token form IS the page.
+  const effectiveTokenMode = tokenMode || !googleAvailable;
+
   async function startGoogle() {
     setBusy(true);
     setError(null);
@@ -113,11 +137,19 @@ export function LoginPage() {
                 {describeAuthError(authErrorCode)}
               </p>
             )}
-            <Button type="button" onClick={startGoogle} disabled={busy}>
-              {busy && !tokenMode ? <Spinner /> : "Sign in with Google"}
-            </Button>
+            {googleAvailable ? (
+              <Button type="button" onClick={startGoogle} disabled={busy}>
+                {busy && !effectiveTokenMode ? <Spinner /> : "Sign in with Google"}
+              </Button>
+            ) : (
+              // D814 — honest copy instead of a button that fails post-click
+              // with "Is OAuth configured?" jargon.
+              <p className="text-sm text-zinc-500">
+                Google sign-in isn't configured on this deployment — use an admin token.
+              </p>
+            )}
 
-            {tokenMode ? (
+            {effectiveTokenMode ? (
               // Not a CRM form — admin auth gate; no PHI, no CTM.
               <form onSubmit={submitToken} className="mt-2 flex flex-col gap-3 border-t border-zinc-200 pt-3">
                 <div className="flex flex-col gap-1">
@@ -134,6 +166,17 @@ export function LoginPage() {
                 <Button type="submit" variant="outline" disabled={busy || !value.trim()}>
                   {busy ? <Spinner /> : "Use token"}
                 </Button>
+                {googleAvailable && (
+                  // D216 — a progressive-disclosure toggle must disclose both
+                  // ways: this is the way back (also un-sticks ?mode=token).
+                  <button
+                    type="button"
+                    onClick={() => setTokenMode(false)}
+                    className="text-xs text-zinc-400 hover:text-zinc-600"
+                  >
+                    Back to Google sign-in
+                  </button>
+                )}
               </form>
             ) : (
               <button

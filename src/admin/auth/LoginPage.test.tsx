@@ -5,9 +5,13 @@ import { MemoryRouter } from "react-router-dom";
 
 const signInWithGoogle = vi.fn();
 const fetchMe = vi.fn();
+// D814 — LoginPage asks the deployment which methods it honors. Default:
+// google (the prod case); individual tests override.
+const fetchAuthMode = vi.fn<() => Promise<string>>(async () => "google");
 vi.mock("../lib/session.js", () => ({
   signInWithGoogle: (...a: unknown[]) => signInWithGoogle(...a),
   fetchMe: (...a: unknown[]) => fetchMe(...a),
+  fetchAuthMode: () => fetchAuthMode(),
 }));
 
 import { LoginPage } from "./LoginPage.js";
@@ -54,6 +58,39 @@ describe("LoginPage (P8-T8.5)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use token" }));
     await waitFor(() => expect(fetchMe).toHaveBeenCalled());
     expect(localStorage.getItem("anchorcorps.admin_token")).toBe("tok");
+  });
+
+  // D216 — the token-mode reveal must disclose both ways.
+  it("[D216] token mode offers a way back to the Google view (both entry paths)", async () => {
+    renderLogin("?mode=token");
+    const back = await screen.findByRole("button", { name: /Back to Google sign-in/i });
+    fireEvent.click(back);
+    expect(screen.queryByLabelText("Admin token")).toBeNull();
+    expect(screen.getByRole("button", { name: /Sign in with Google/i })).toBeTruthy();
+    // …and forward again via the reveal link.
+    fireEvent.click(screen.getByRole("button", { name: /Use an admin token instead/i }));
+    expect(screen.getByLabelText("Admin token")).toBeTruthy();
+  });
+
+  // D814 — only offer sign-in methods the deployment honors.
+  describe("[D814] auth-mode discovery", () => {
+    it("hides the Google button in disabled mode, with honest copy + the token form", async () => {
+      fetchAuthMode.mockResolvedValueOnce("disabled");
+      renderLogin();
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: /Sign in with Google/i })).toBeNull(),
+      );
+      expect(screen.getByText(/isn't configured on this deployment/i)).toBeTruthy();
+      expect(screen.getByLabelText("Admin token")).toBeTruthy();
+      // No "back to Google" affordance — there is nothing to go back to.
+      expect(screen.queryByRole("button", { name: /Back to Google sign-in/i })).toBeNull();
+    });
+
+    it("keeps the Google button when discovery reports google mode", async () => {
+      renderLogin();
+      await waitFor(() => expect(fetchAuthMode).toHaveBeenCalled());
+      expect(screen.getByRole("button", { name: /Sign in with Google/i })).toBeTruthy();
+    });
   });
 
   // D800 — a rejected sign-in must land on a screen that SAYS WHAT HAPPENED.
