@@ -30,7 +30,9 @@ export type AiConversation = {
   updated_at?: string;
 };
 
-export type AiMessageRole = "user" | "assistant" | "tool";
+/** `system` (W1.4): UI-only server annotations — interrupted/stopped/never-
+ * started notes — rendered as the transcript's amber SystemLine. */
+export type AiMessageRole = "user" | "assistant" | "tool" | "system";
 export type AiMessage = {
   id: string;
   conversation_id: string;

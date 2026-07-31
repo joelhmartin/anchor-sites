@@ -12,6 +12,7 @@ import {
   listMessages,
   claimConversationTurn,
   releaseConversationTurn,
+  sweepStalledConversation,
 } from "../ai/agent/repo.js";
 import { getBoss, AGENT_TURN } from "../jobs/index.js";
 import type { AgentTurnInput } from "../jobs/agent-turn.js";
@@ -493,6 +494,20 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         inFlight = true;
         void (async () => {
           try {
+            // W1.4 / D601+D309+D1103 — tail-side stall reconciliation. A
+            // worker death mid-turn strands `running` forever (the client
+            // shows an infinite typing pulse with Publish locked); a queued
+            // job that never starts strands `active` with an unanswered user
+            // message (the client's `sending` spinner never ends). The tail
+            // IS the surface where those strands are visible, so it's where
+            // they get reconciled: `sweepStalledConversation` atomically
+            // flips a stale row to 'error' and appends the explanatory
+            // system note — both of which then flow out through this same
+            // tick's message/status emission below. Gated on the last
+            // OBSERVED status so idle tails don't run pointless UPDATEs.
+            if (lastStatus === "running" || lastStatus === "active") {
+              await sweepStalledConversation(pool, conversationId);
+            }
             const newMessages = lastSeenId
               ? await listMessages(pool, conversationId, { afterId: lastSeenId })
               : await listMessages(pool, conversationId, {});

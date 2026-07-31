@@ -146,6 +146,30 @@ d("runAgentTurn", () => {
     return { site, page, conv };
   }
 
+  it("W1.4/D601: role-'system' transcript rows are never replayed into the model context", async () => {
+    const { site, conv } = await seedConvo(`loop-system-filter-${runId}`);
+    // A reconciler note lands between two user turns — the model must never
+    // see it (the API has no 'system' message role; it's a UI-only row).
+    await appendMessage(db.getPool(), conv.id, "system", [
+      { type: "text", text: "Build was interrupted — press Resume to continue." },
+    ]);
+    await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "resume please" }]);
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({ content: [textBlock("ok")], stop_reason: "end_turn", usage: usage(10, 5) }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+    expect(result.endReason).toBe("completed");
+
+    const params = create.mock.calls[0][0] as { messages: { role: string }[] };
+    expect(params.messages.length).toBeGreaterThan(0);
+    expect(params.messages.every((m) => m.role === "user" || m.role === "assistant")).toBe(true);
+    expect(JSON.stringify(params.messages)).not.toMatch(/interrupted/i);
+  });
+
   it("happy path: get_site_overview -> update_page -> end_turn", async () => {
     const { site, page, conv } = await seedConvo(`loop-happy-${runId}`);
 

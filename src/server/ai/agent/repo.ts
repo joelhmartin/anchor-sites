@@ -16,7 +16,15 @@ export type AiConversation = {
   created_at: string;
   updated_at: string;
 };
-export type AiMessageRole = "user" | "assistant" | "tool";
+/**
+ * `system` (W1.4 / D601+D303+D1103): a UI-only transcript annotation — e.g.
+ * "Build was interrupted — press Resume to continue." Rendered as the amber
+ * SystemLine in the chat client (src/admin/components/agent-chat/history.ts)
+ * and NEVER replayed into the Anthropic context (loop.ts's buildApiMessages
+ * filters it out — the API has no such role and the model shouldn't see
+ * infrastructure notes as conversation content).
+ */
+export type AiMessageRole = "user" | "assistant" | "tool" | "system";
 export type AiMessage = {
   id: string;
   conversation_id: string;
@@ -179,6 +187,76 @@ export async function releaseConversationTurn(
   } else {
     await setConversationStatus(pool, id, "error");
   }
+}
+
+/**
+ * W1.4 / D601+D309+D1103 — active reconciliation for builds that died
+ * silently. Two stranded shapes, both otherwise invisible until an operator
+ * happens to send another message:
+ *
+ *  - "interrupted": a worker death mid-turn leaves `status='running'`
+ *    forever. The ONLY recovery used to be the lazy claim takeover in
+ *    `claimConversationTurn` (>10 min stale), which requires a NEW message —
+ *    meanwhile the workspace shows a busy build indefinitely. The staleness
+ *    window here is the SAME 10 minutes as that takeover (a genuinely active
+ *    turn re-arms `updated_at` on every persisted message, well under 10
+ *    minutes even for slow model calls).
+ *
+ *  - "never_started": a message was appended and its AGENT_TURN job enqueued
+ *    (202 to the client), but no worker ever picked it up — the conversation
+ *    sits `active` with an unanswered trailing user message and the client's
+ *    `sending` spinner runs forever. 5 minutes is comfortably past pg-boss's
+ *    ~2s poll while still bounded; NOTE pg-boss works AGENT_TURN jobs one at
+ *    a time, so a job queued behind another conversation's very long build
+ *    can false-positive — that's self-healing (the sweep flips to 'error',
+ *    the late job's own claim re-claims from 'error' and runs normally), and
+ *    the honest "hasn't started" note beats an infinite spinner.
+ *
+ * Both flips are atomic single-statement UPDATEs guarded by the same
+ * predicate that selects them, so N concurrent tail pollers produce exactly
+ * one flip + one transcript row. Called from the SSE tail's poll loop
+ * (admin-ai-agent.ts) — the reconciler runs wherever someone is watching,
+ * which is exactly where the strand is visible.
+ */
+export const RUNNING_STALE_MINUTES = 10;
+export const QUEUED_STALL_MINUTES = 5;
+
+export type StallSweepResult = "interrupted" | "never_started" | null;
+
+export async function sweepStalledConversation(
+  pool: Pool, id: string,
+): Promise<StallSweepResult> {
+  const interrupted = await pool.query(
+    `UPDATE ai_conversations SET status = 'error'
+     WHERE id = $1 AND status = 'running'
+       AND updated_at < now() - make_interval(mins => $2)
+     RETURNING id`,
+    [id, RUNNING_STALE_MINUTES],
+  );
+  if ((interrupted.rowCount ?? 0) > 0) {
+    await appendMessage(pool, id, "system", [
+      { type: "text", text: "Build was interrupted — press Resume to continue." },
+    ]);
+    return "interrupted";
+  }
+
+  const neverStarted = await pool.query(
+    `UPDATE ai_conversations c SET status = 'error'
+     WHERE c.id = $1 AND c.status = 'active'
+       AND c.updated_at < now() - make_interval(mins => $2)
+       AND (SELECT m.role FROM ai_messages m WHERE m.conversation_id = c.id
+            ORDER BY m.created_at DESC, m.id DESC LIMIT 1) = 'user'
+     RETURNING id`,
+    [id, QUEUED_STALL_MINUTES],
+  );
+  if ((neverStarted.rowCount ?? 0) > 0) {
+    await appendMessage(pool, id, "system", [
+      { type: "text", text: "The build never started — the job queue may be down. Press Resume to try again." },
+    ]);
+    return "never_started";
+  }
+
+  return null;
 }
 
 export async function addTokenUsage(

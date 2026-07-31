@@ -77,6 +77,66 @@ describe("sseSend dead-socket guard (fix round 1, reviewer extra #3)", () => {
   });
 });
 
+/**
+ * W1.4 / D601: like `fetchFirstSseEvent`, but keeps reading frames until
+ * `until(events)` is satisfied (or `timeoutMs` elapses — the test then fails
+ * on its own assertions against whatever arrived). Needed because the
+ * stall-reconciliation events (message + status) ride the tail's 1s poll
+ * tick, one or two frames AFTER the initial snapshot.
+ */
+async function fetchSseEventsUntil(
+  appToServe: express.Express,
+  path: string,
+  headers: Record<string, string>,
+  until: (events: unknown[]) => boolean,
+  timeoutMs = 6000,
+): Promise<unknown[]> {
+  const server: Server = appToServe.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+  const events: unknown[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let buffer = "";
+      const req = http.get({ host: "127.0.0.1", port, path, headers }, (res) => {
+        const finish = () => {
+          req.on("error", () => undefined);
+          req.destroy();
+          resolve();
+        };
+        const timer = setTimeout(finish, timeoutMs);
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString("utf8");
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+          for (const frame of frames) {
+            const line = frame.trim();
+            if (!line || line.startsWith(":")) continue; // heartbeat
+            const payload = line.startsWith("data:") ? line.slice("data:".length).trim() : line;
+            try {
+              events.push(JSON.parse(payload));
+            } catch {
+              // partial/malformed frame — skip
+            }
+          }
+          if (until(events)) {
+            clearTimeout(timer);
+            finish();
+          }
+        });
+        res.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+      req.on("error", reject);
+    });
+    return events;
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 d("agent HTTP API (integration, Task 10)", () => {
   const db = setupAgentDb();
   let app: express.Express;
@@ -393,6 +453,61 @@ d("agent HTTP API (integration, Task 10)", () => {
       const ids = event.messages.map((m) => m.id);
       expect(ids).toEqual([m2.id, m3.id]);
       expect(ids).not.toContain(m1.id);
+    });
+
+    it("W1.4/D601 — the tail reconciles a stale 'running' conversation itself: 'error' status + interrupted note stream out", async () => {
+      const site = await db.seedSite("agent-routes-stale-reconcile");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "build it" }]);
+      await setConversationStatus(db.getPool(), conversationId, "running");
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '11 minutes' WHERE id = $1`,
+        [conversationId],
+      );
+
+      const events = (await fetchSseEventsUntil(
+        app,
+        `/api/sites/${site.id}/agent/conversations/${conversationId}/events`,
+        { "X-Admin-Token": ADMIN_TOKEN },
+        (evts) => evts.some((e) => (e as { type?: string; status?: string }).type === "status"
+          && (e as { status?: string }).status === "error"),
+      )) as { type: string; status?: string; message?: { role: string; content: unknown } }[];
+
+      expect(events.some((e) => e.type === "status" && e.status === "error")).toBe(true);
+      const systemMessages = events.filter((e) => e.type === "message" && e.message?.role === "system");
+      expect(JSON.stringify(systemMessages)).toMatch(/interrupted/i);
+
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("error");
+    });
+
+    it("W1.4/D1103 — the tail reconciles an 'active' conversation whose queued job never started: 'error' + never-started note", async () => {
+      const site = await db.seedSite("agent-routes-neverstarted-reconcile");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      // The runJobTurn shape: user message appended, released back to
+      // 'active', job enqueued — but no worker ever picked it up.
+      await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "build it" }]);
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '6 minutes' WHERE id = $1`,
+        [conversationId],
+      );
+
+      const events = (await fetchSseEventsUntil(
+        app,
+        `/api/sites/${site.id}/agent/conversations/${conversationId}/events`,
+        { "X-Admin-Token": ADMIN_TOKEN },
+        (evts) => evts.some((e) => (e as { type?: string; status?: string }).type === "status"
+          && (e as { status?: string }).status === "error"),
+      )) as { type: string; status?: string; message?: { role: string } }[];
+
+      expect(events.some((e) => e.type === "status" && e.status === "error")).toBe(true);
+      const systemMessages = events.filter((e) => e.type === "message" && e.message?.role === "system");
+      expect(JSON.stringify(systemMessages)).toMatch(/never started/i);
+
+      const convAfter = await getConversation(db.getPool(), conversationId, site.id);
+      expect(convAfter!.status).toBe("error");
     });
 
     it("Important 3 — no longer authenticates via ?token=: the drawer's tail always sends X-Admin-Token, so the query-string shim is 401'd here to keep the admin token out of URLs/logs (unlike the preview route, which still needs it for its <iframe>)", async () => {

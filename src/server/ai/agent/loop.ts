@@ -161,13 +161,20 @@ function mapRowsToApiMessages(rows: AiMessage[]): Anthropic.MessageParam[] {
 async function buildApiMessages(
   pool: Pool, conversationId: string,
 ): Promise<Anthropic.MessageParam[] | null> {
-  const rows = await listMessages(pool, conversationId, { limit: 40 });
+  // W1.4 / D601: role-'system' rows are UI-only transcript annotations (the
+  // stall reconciler's "Build was interrupted" notes, Stop confirmations,
+  // continuation-failure notes — see repo.ts). The Anthropic API has no
+  // 'system' message role and the model must not see infrastructure notes
+  // as conversation content, so they're dropped BEFORE any windowing/
+  // trimming below.
+  const rows = (await listMessages(pool, conversationId, { limit: 40 }))
+    .filter((m) => m.role !== "system");
   const windowUserIdx = rows.findIndex((m) => m.role === "user");
   if (windowUserIdx !== -1) {
     return mapRowsToApiMessages(rows.slice(windowUserIdx));
   }
 
-  const allRows = await listMessages(pool, conversationId);
+  const allRows = (await listMessages(pool, conversationId)).filter((m) => m.role !== "system");
   let lastUserIdx = -1;
   for (let i = allRows.length - 1; i >= 0; i--) {
     if (allRows[i].role === "user") {

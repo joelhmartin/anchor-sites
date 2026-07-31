@@ -54,6 +54,19 @@ export function deriveChangeFromToolData(data: unknown): AgentChangeEvent | null
 
 export function deriveItemsFromMessage(m: AiMessage): DisplayItem[] {
   const blocks = Array.isArray(m.content) ? (m.content as Record<string, unknown>[]) : [];
+  // W1.4 / D601+D303: a persisted role-'system' row (stall reconciler notes,
+  // Stop confirmations, continuation-failure notes) renders as the same
+  // amber SystemLine the client already uses for its local system items —
+  // so an interrupted/stopped build explains itself even after a reload.
+  if (m.role === "system") {
+    const items: DisplayItem[] = [];
+    blocks.forEach((b, i) => {
+      if (b?.type === "text" && typeof b.text === "string") {
+        items.push({ id: `${m.id}-${i}`, kind: "system", text: b.text });
+      }
+    });
+    return items;
+  }
   if (m.role === "user" || m.role === "assistant") {
     const kind = m.role;
     const items: DisplayItem[] = [];

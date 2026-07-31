@@ -3,7 +3,7 @@ import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
   createConversation, getConversation, listConversations, appendMessage,
   listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
-  claimConversationTurn, releaseConversationTurn,
+  claimConversationTurn, releaseConversationTurn, sweepStalledConversation,
 } from "./repo.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -99,6 +99,84 @@ d("ai agent repo", () => {
       const conv = await createConversation(db.getPool(), siteId, "t");
       await claimConversationTurn(db.getPool(), conv.id);
       expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(false);
+    });
+  });
+
+  // ── W1.4 / D601+D303+D1103: system transcript rows + stall sweeper ──
+
+  it("appendMessage accepts role 'system' (UI-only transcript annotations)", async () => {
+    const conv = await createConversation(db.getPool(), siteId, "t");
+    const m = await appendMessage(db.getPool(), conv.id, "system", [
+      { type: "text", text: "Build was interrupted — press Resume to continue." },
+    ]);
+    expect(m.role).toBe("system");
+    const all = await listMessages(db.getPool(), conv.id);
+    expect(all.map((x) => x.role)).toEqual(["system"]);
+  });
+
+  describe("sweepStalledConversation (D601/D309 stale-running, D1103 queued-never-started)", () => {
+    it("flips a stale 'running' conversation (>10 min) to 'error' and appends an interrupted system row", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '11 minutes' WHERE id = $1`,
+        [conv.id],
+      );
+
+      expect(await sweepStalledConversation(db.getPool(), conv.id)).toBe("interrupted");
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("error");
+      const all = await listMessages(db.getPool(), conv.id);
+      const last = all[all.length - 1];
+      expect(last.role).toBe("system");
+      expect(JSON.stringify(last.content)).toMatch(/interrupted/i);
+      expect(JSON.stringify(last.content)).toMatch(/resume/i);
+    });
+
+    it("leaves a fresh 'running' conversation alone", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+
+      expect(await sweepStalledConversation(db.getPool(), conv.id)).toBeNull();
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
+      expect(await listMessages(db.getPool(), conv.id)).toHaveLength(0);
+    });
+
+    it("flips a stale 'active' conversation whose newest message is an unanswered user message (queued job never ran)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "build it" }]);
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '6 minutes' WHERE id = $1`,
+        [conv.id],
+      );
+
+      expect(await sweepStalledConversation(db.getPool(), conv.id)).toBe("never_started");
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("error");
+      const all = await listMessages(db.getPool(), conv.id);
+      const last = all[all.length - 1];
+      expect(last.role).toBe("system");
+      expect(JSON.stringify(last.content)).toMatch(/never started/i);
+      expect(JSON.stringify(last.content)).toMatch(/resume/i);
+    });
+
+    it("leaves a stale 'active' conversation alone when the newest message is NOT a user message (turn genuinely finished)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "build it" }]);
+      await appendMessage(db.getPool(), conv.id, "assistant", [{ type: "text", text: "done" }]);
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '6 minutes' WHERE id = $1`,
+        [conv.id],
+      );
+
+      expect(await sweepStalledConversation(db.getPool(), conv.id)).toBeNull();
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("active");
+    });
+
+    it("leaves a fresh 'active' conversation with an unanswered user message alone (job just queued)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "build it" }]);
+
+      expect(await sweepStalledConversation(db.getPool(), conv.id)).toBeNull();
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("active");
     });
   });
 });
