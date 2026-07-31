@@ -9,6 +9,8 @@ import { resolveDnsProvider } from "../dns/resolve.js";
 import type { DnsProvider } from "../dns/provider.js";
 import { ManualDnsProvider } from "../dns/manual.js";
 import { CloudRunDomainsClient } from "../gcloud/run-domains.js";
+import { applyDomainStatus, statusFromMappingConditions } from "../domains/status.js";
+import { explainProvisionError } from "../domains/provision-error.js";
 
 /** Classify a hostname as managed (our DNS) or client-owned (external DNS). */
 function domainClass(hostname: string): "managed" | "client-owned" {
@@ -40,9 +42,17 @@ type DomainRow = {
   is_primary: boolean;
   verification_status: string;
   ssl_status: string;
+  /** D609: why the row is 'failed' (annotated with the Webmaster-Central
+   *  instruction when that's the cause). Null unless failed. */
+  last_error: string | null;
   created_at: string;
+  updated_at: string;
+  verified_at: string | null;
   domain_class: "managed" | "client-owned";
 };
+
+const DOMAIN_COLUMNS = `id, site_id, hostname, is_primary, verification_status, ssl_status,
+       last_error, created_at, updated_at, verified_at`;
 
 function toDomainRow(row: Omit<DomainRow, "domain_class">): DomainRow {
   return { ...row, domain_class: domainClass(row.hostname) };
@@ -74,7 +84,7 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
           return;
         }
         const result = await pool.query<Omit<DomainRow, "domain_class">>(
-          `SELECT id, site_id, hostname, is_primary, verification_status, ssl_status, created_at
+          `SELECT ${DOMAIN_COLUMNS}
              FROM site_domains
             WHERE site_id = $1
             ORDER BY is_primary DESC, created_at ASC`,
@@ -115,7 +125,7 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
         const ins = await pool.query<Omit<DomainRow, "domain_class">>(
           `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
            VALUES ($1, $2, false, 'pending', 'pending')
-           RETURNING id, site_id, hostname, is_primary, verification_status, ssl_status, created_at`,
+           RETURNING ${DOMAIN_COLUMNS}`,
           [siteId, hostname.toLowerCase()],
         );
         res.status(201).json({ domain: toDomainRow(ins.rows[0]) });
@@ -213,7 +223,17 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
         try {
           mapping = await cloudRun.createIfMissing(hostname);
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
+          // D609: annotate the known Webmaster-Central PermissionDenied with
+          // its fix instruction, and persist it (authoritative failed) so the
+          // failure survives a page reload — not just this response body.
+          const detail = explainProvisionError(err instanceof Error ? err.message : String(err));
+          await applyDomainStatus(
+            pool,
+            { id: domainId },
+            { verification_status: "failed", ssl_status: "failed", error: detail },
+            "authoritative",
+          );
+          evictSiteCache(hostname);
           res.json({
             steps: [{ step: "cloud_run", status: "error", detail }],
             required_records: [],
@@ -264,18 +284,26 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
           }
         }
 
-        // Update site_domains status from current mapping conditions
-        const cReady =
-          mapping.status?.conditions?.find((c) => c.type === "Ready")?.status === "True";
-        const cCert =
-          mapping.status?.conditions?.find((c) => c.type === "CertificateProvisioned")?.status ===
-          "True";
-        await pool.query(
-          `UPDATE site_domains
-              SET verification_status = $1, ssl_status = $2
-            WHERE id = $3`,
-          [cReady ? "verified" : "pending", cCert ? "active" : "pending", domainId],
-        );
+        // Update site_domains status through the D608 transition helper.
+        // Authoritative: this attempt really ran against Cloud Run/DNS.
+        // A DNS step error is a genuine failure (persist it as such, with
+        // the detail — D609); otherwise project the mapping conditions.
+        const dnsError = steps.find((s) => s.step === "dns" && s.status === "error");
+        if (dnsError) {
+          await applyDomainStatus(
+            pool,
+            { id: domainId },
+            { verification_status: "failed", ssl_status: "failed", error: `dns: ${dnsError.detail}` },
+            "authoritative",
+          );
+        } else {
+          await applyDomainStatus(
+            pool,
+            { id: domainId },
+            statusFromMappingConditions(mapping.status?.conditions),
+            "authoritative",
+          );
+        }
         evictSiteCache(hostname);
 
         res.json({ steps, required_records: requiredRecords });
@@ -293,7 +321,7 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
       try {
         const { siteId, domainId } = req.params;
         const row = await pool.query<Omit<DomainRow, "domain_class">>(
-          `SELECT id, site_id, hostname, is_primary, verification_status, ssl_status, created_at
+          `SELECT ${DOMAIN_COLUMNS}
              FROM site_domains
             WHERE id = $1 AND site_id = $2`,
           [domainId, siteId],
@@ -305,23 +333,29 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
         const domain = row.rows[0];
 
         // Best-effort Cloud Run poll — if it fails just return current DB state.
+        // D608: this is a PASSIVE observation, so the write is upgrade-only —
+        // it may move pending→verified/active but must never rewrite a
+        // terminal 'failed' back to 'pending' (that erased an exhausted-retry
+        // verdict, and its last_error, the moment anyone opened the Domains
+        // tab). A real re-check that CAN walk back 'failed' is the explicit
+        // POST …/verify route.
         try {
           const cloudRun = getCloudRun();
           const mapping = await cloudRun.get(domain.hostname);
           if (mapping?.status?.conditions) {
-            const cReady =
-              mapping.status.conditions.find((c) => c.type === "Ready")?.status === "True";
-            const cCert =
-              mapping.status.conditions.find((c) => c.type === "CertificateProvisioned")
-                ?.status === "True";
-            await pool.query(
-              `UPDATE site_domains
-                  SET verification_status = $1, ssl_status = $2
-                WHERE id = $3`,
-              [cReady ? "verified" : "pending", cCert ? "active" : "pending", domainId],
+            const updated = await applyDomainStatus(
+              pool,
+              { id: domainId },
+              statusFromMappingConditions(mapping.status.conditions),
+              "upgrade-only",
             );
-            domain.verification_status = cReady ? "verified" : "pending";
-            domain.ssl_status = cCert ? "active" : "pending";
+            if (updated) {
+              domain.verification_status = updated.verification_status;
+              domain.ssl_status = updated.ssl_status;
+              domain.last_error = updated.last_error;
+              domain.updated_at = updated.updated_at;
+              domain.verified_at = updated.verified_at;
+            }
             evictSiteCache(domain.hostname);
           }
         } catch {

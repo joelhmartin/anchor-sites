@@ -158,9 +158,11 @@ describe("handleSiteProvision — deps.provision override (pure unit)", () => {
       handleSiteProvision({ siteId: "s1", domainId: "d1" }, { pool: fakePool, provision }),
     ).rejects.toThrow(/cloud_run failed for acme\.sites\.anchorcorps\.com/);
 
+    // D608/D609: the write goes through applyDomainStatus (guarded
+    // transition) and carries the failing step's detail into last_error.
     expect(fakePool.query).toHaveBeenCalledWith(
-      expect.stringContaining("verification_status = 'failed'"),
-      ["d1"],
+      expect.stringContaining("UPDATE site_domains"),
+      ["d1", "failed", "failed", "PermissionDenied"],
     );
   });
 
@@ -175,8 +177,8 @@ describe("handleSiteProvision — deps.provision override (pure unit)", () => {
     ).rejects.toThrow(/site not found/);
 
     expect(fakePool.query).toHaveBeenCalledWith(
-      expect.stringContaining("verification_status = 'failed'"),
-      ["d1"],
+      expect.stringContaining("UPDATE site_domains"),
+      ["d1", "failed", "failed", "site not found: s1"],
     );
   });
 });
@@ -270,6 +272,17 @@ d("handleSiteProvision — real orchestration, fake DNS/Cloud Run (integration)"
     // The DNS step never runs — cloud_run must succeed first (Cloud Run is
     // the source of the records DNS would write).
     expect(dns.ensureRecord).not.toHaveBeenCalled();
+
+    // D609: the failure carries the instruction. last_error persists the
+    // PermissionDenied detail, annotated with the Search Console fix.
+    const err = await db
+      .getPool()
+      .query<{ last_error: string | null }>(
+        `SELECT last_error FROM site_domains WHERE id = $1`,
+        [domainId],
+      );
+    expect(err.rows[0].last_error).toMatch(/PermissionDenied/);
+    expect(err.rows[0].last_error).toMatch(/search\.google\.com\/search-console/);
   });
 
   it("the KinstaDnsProvider upserts idempotently even when the Cloud Run step has already failed on a retry", async () => {

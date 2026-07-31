@@ -6,6 +6,7 @@ import {
   type ProvisionResult,
   type ProvisionOptions,
 } from "../provisioning/orchestrator.js";
+import { applyDomainStatus } from "../domains/status.js";
 
 /**
  * pg-boss handler for `site.provision` (Task D1 — Kinsta DNS + auto-provision
@@ -71,10 +72,19 @@ export type SiteProvisionDeps = {
   waitTimeoutMs?: number;
 };
 
-async function markFailed(pool: Pool, domainId: string): Promise<void> {
-  await pool.query(
-    `UPDATE site_domains SET verification_status = 'failed', ssl_status = 'failed' WHERE id = $1`,
-    [domainId],
+/**
+ * D608/D609: route the failure write through the guarded transition helper
+ * and persist WHY (the failing step's detail — already annotated with the
+ * Webmaster-Central instruction by the orchestrator when it applies) into
+ * `site_domains.last_error`, so DomainsTab can render a forward path
+ * instead of a bare 'failed' badge.
+ */
+async function markFailed(pool: Pool, domainId: string, detail: string): Promise<void> {
+  await applyDomainStatus(
+    pool,
+    { id: domainId },
+    { verification_status: "failed", ssl_status: "failed", error: detail },
+    "authoritative",
   );
 }
 
@@ -104,7 +114,7 @@ export async function handleSiteProvision(
     // should never happen in steady state, but a slow-committing
     // transaction racing a fast-polling worker is exactly what the retry
     // (enqueued with a retryDelay) exists to absorb.
-    await markFailed(pool, data.domainId);
+    await markFailed(pool, data.domainId, err instanceof Error ? err.message : String(err));
     throw err instanceof Error ? err : new Error(String(err));
   }
 
@@ -127,7 +137,7 @@ export async function handleSiteProvision(
         `site.provision: ${result.hostname} not ready yet (cert still provisioning) — ${failedStep.detail}`,
       );
     }
-    await markFailed(pool, data.domainId);
+    await markFailed(pool, data.domainId, failedStep.detail);
     evictSiteCache(result.hostname);
     throw new Error(
       `site.provision: ${failedStep.step} failed for ${result.hostname}: ${failedStep.detail}`,

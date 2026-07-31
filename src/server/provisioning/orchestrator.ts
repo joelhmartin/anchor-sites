@@ -31,6 +31,8 @@ import {
   CloudRunDomainsClient,
   type DomainMapping,
 } from "../gcloud/run-domains.js";
+import { applyDomainStatus, statusFromMappingConditions } from "../domains/status.js";
+import { explainProvisionError } from "../domains/provision-error.js";
 
 export type ProvisionStep = "lookup" | "site_domains" | "cloud_run" | "dns" | "wait_ready";
 
@@ -129,8 +131,19 @@ export async function provisionSiteHostname(
       data: mapping,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    // D609: the Webmaster-Central PermissionDenied is the known common
+    // failure here — annotate the detail with the fix instruction, and
+    // persist it onto the row (authoritative: this attempt genuinely ran
+    // and genuinely failed) so the UI can render more than "failed".
+    const msg = explainProvisionError(err instanceof Error ? err.message : String(err));
     steps.push({ step: "cloud_run", status: "error", detail: msg });
+    await applyDomainStatus(
+      pool,
+      { hostname },
+      { verification_status: "failed", ssl_status: "failed", error: msg },
+      "authoritative",
+    );
+    evictSiteCache(hostname);
     return { site_id: siteId, slug, hostname, steps, ready: false };
   }
 
@@ -169,6 +182,13 @@ export async function provisionSiteHostname(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     steps.push({ step: "dns", status: "error", detail: msg });
+    await applyDomainStatus(
+      pool,
+      { hostname },
+      { verification_status: "failed", ssl_status: "failed", error: `dns: ${msg}` },
+      "authoritative",
+    );
+    evictSiteCache(hostname);
     return { site_id: siteId, slug, hostname, steps, ready: false };
   }
 
@@ -189,15 +209,16 @@ export async function provisionSiteHostname(
   }
 
   // Flip the site_domains row's verification/ssl status to reflect the
-  // current Cloud Run mapping state if we waited.
+  // current Cloud Run mapping state. Authoritative (D608): a provision
+  // attempt that got this far created/confirmed the mapping and wrote DNS —
+  // real evidence, so even a previous 'failed' verdict is legitimately
+  // walked back to the current truth (pending clears last_error too).
   if (mapping) {
-    const cReady = mapping.status?.conditions?.find((c) => c.type === "Ready")?.status === "True";
-    const cCert = mapping.status?.conditions?.find((c) => c.type === "CertificateProvisioned")
-      ?.status === "True";
-    await pool.query(
-      `UPDATE site_domains SET verification_status = $1, ssl_status = $2
-        WHERE hostname = $3`,
-      [cReady ? "verified" : "pending", cCert ? "active" : "pending", hostname],
+    await applyDomainStatus(
+      pool,
+      { hostname },
+      statusFromMappingConditions(mapping.status?.conditions),
+      "authoritative",
     );
     evictSiteCache(hostname);
   }

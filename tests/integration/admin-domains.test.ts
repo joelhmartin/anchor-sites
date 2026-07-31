@@ -403,6 +403,148 @@ d("admin domains API — POST provision + GET status (10.6)", () => {
   });
 });
 
+d("admin domains API — status transitions (D608/D609)", () => {
+  let pool: Pool;
+  let muldoonId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM site_domains WHERE hostname LIKE '%.d608-test.example.com'`);
+    await pool.end().catch(() => undefined);
+  });
+
+  async function insertDomain(hostname: string, verification = "pending", ssl = "pending") {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
+       VALUES ($1, $2, false, $3, $4) RETURNING id`,
+      [muldoonId, hostname, verification, ssl],
+    );
+    return r.rows[0].id;
+  }
+
+  it("provision failure persists 'failed' + last_error with the Webmaster-Central instruction (D609)", async () => {
+    const domainId = await insertDomain("provfail.d608-test.example.com");
+    const failingCloudRun = {
+      async createIfMissing() {
+        throw new Error("Cloud Run 403 /: PermissionDenied — caller is not authorized to administer the domain");
+      },
+    } as unknown as CloudRunDomainsClient;
+    const app = buildApp(pool, { dns: makeMockDns(), cloudRun: failingCloudRun });
+
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${domainId}/provision`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    const step = r.body.steps.find((s: { step: string }) => s.step === "cloud_run");
+    expect(step.status).toBe("error");
+    // The response detail carries the instruction…
+    expect(step.detail).toMatch(/search\.google\.com\/search-console/);
+
+    // …and it survives a reload: persisted onto the row.
+    const row = await pool.query<{ verification_status: string; last_error: string | null }>(
+      `SELECT verification_status, last_error FROM site_domains WHERE id = $1`,
+      [domainId],
+    );
+    expect(row.rows[0].verification_status).toBe("failed");
+    expect(row.rows[0].last_error).toMatch(/PermissionDenied/);
+    expect(row.rows[0].last_error).toMatch(/verified OWNER/i);
+  });
+
+  it("GET list returns last_error so the UI can render the forward path", async () => {
+    const app = buildApp(pool, { dns: makeMockDns(), cloudRun: makeMockCloudRun() });
+    const r = await request(app)
+      .get(`/api/sites/${muldoonId}/domains`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    const failed = r.body.domains.find(
+      (d: { hostname: string }) => d.hostname === "provfail.d608-test.example.com",
+    );
+    expect(failed).toBeDefined();
+    expect(failed.last_error).toMatch(/PermissionDenied/);
+    expect(failed.updated_at).toBeDefined();
+  });
+
+  it("the status poll NEVER downgrades a terminal 'failed' back to 'pending' (D608)", async () => {
+    const domainId = await insertDomain("polldown.d608-test.example.com", "failed", "failed");
+    await pool.query(`UPDATE site_domains SET last_error = 'exhausted retries' WHERE id = $1`, [domainId]);
+
+    // Cloud Run reports a mapping that exists but is not ready — the old
+    // code projected that to pending/pending, silently erasing the verdict.
+    const app = buildApp(pool, {
+      dns: makeMockDns(),
+      cloudRun: {
+        async get() {
+          return {
+            apiVersion: "domains.cloudrun.com/v1",
+            kind: "DomainMapping",
+            metadata: { name: "polldown.d608-test.example.com", namespace: "test" },
+            spec: { routeName: "anchor-sites" },
+            status: {
+              conditions: [
+                { type: "Ready", status: "Unknown" },
+                { type: "CertificateProvisioned", status: "Unknown" },
+              ],
+            },
+          };
+        },
+      } as unknown as CloudRunDomainsClient,
+    });
+
+    const r = await request(app)
+      .get(`/api/sites/${muldoonId}/domains/${domainId}/status`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.verification_status).toBe("failed");
+    expect(r.body.domain.ssl_status).toBe("failed");
+    expect(r.body.domain.last_error).toBe("exhausted retries");
+
+    const row = await pool.query<{ verification_status: string }>(
+      `SELECT verification_status FROM site_domains WHERE id = $1`,
+      [domainId],
+    );
+    expect(row.rows[0].verification_status).toBe("failed");
+  });
+
+  it("the status poll DOES apply a genuine upgrade to verified/active", async () => {
+    const domainId = await insertDomain("pollup.d608-test.example.com", "pending", "pending");
+    const app = buildApp(pool, {
+      dns: makeMockDns(),
+      cloudRun: {
+        async get() {
+          return {
+            apiVersion: "domains.cloudrun.com/v1",
+            kind: "DomainMapping",
+            metadata: { name: "pollup.d608-test.example.com", namespace: "test" },
+            spec: { routeName: "anchor-sites" },
+            status: {
+              conditions: [
+                { type: "Ready", status: "True" },
+                { type: "CertificateProvisioned", status: "True" },
+              ],
+            },
+          };
+        },
+      } as unknown as CloudRunDomainsClient,
+    });
+
+    const r = await request(app)
+      .get(`/api/sites/${muldoonId}/domains/${domainId}/status`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.verification_status).toBe("verified");
+    expect(r.body.domain.ssl_status).toBe("active");
+    expect(r.body.domain.verified_at).not.toBeNull();
+  });
+});
+
 d("admin domains API — provision client-owned domain uses manual DNS (no opts.dns injection)", () => {
   let pool: Pool;
   let mockCloudRun: ReturnType<typeof makeMockCloudRun>;
