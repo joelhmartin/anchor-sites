@@ -10,7 +10,12 @@ const session: { status: "loading" | "authed" | "unauthed"; user: unknown } = {
   status: "authed",
   user: { id: "dev", email: "dev@studio.localhost" },
 };
-vi.mock("./auth/useStudioSession.js", () => ({ useStudioSession: () => session }));
+vi.mock("./auth/useStudioSession.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./auth/useStudioSession.js")>();
+  // Keep StudioSessionContext/useStudioSessionContext real (D813) — only the
+  // probing hook is stubbed.
+  return { ...actual, useStudioSession: () => session };
+});
 
 import { AdminApp } from "./AdminApp.js";
 
