@@ -30,6 +30,7 @@ import {
   type SiteProvisionInput,
 } from "./site-provision.js";
 import { pruneExpiredAuthRows } from "./auth-prune.js";
+import { DOMAIN_VERIFY_SWEEP, sweepPendingDomains } from "./domain-verify-sweep.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
@@ -39,6 +40,7 @@ export const GIT_IMPORT = "git.import";
 export const SITE_PROVISION = "site.provision";
 export const AUTH_PRUNE = "auth.prune-expired";
 export { CRM_SYNC_JOB };
+export { DOMAIN_VERIFY_SWEEP };
 
 /**
  * W2-CONC / D618 — git-export contention backoff. Exports for DIFFERENT
@@ -337,6 +339,23 @@ export async function registerHandlers(boss: PgBoss): Promise<void> {
     }
   });
   await boss.schedule(AUTH_PRUNE, "40 4 * * *", undefined, { tz: "UTC" });
+
+  // D515 (W2-DOM): automatic re-verification of stale-pending domains.
+  // Rows pending with no status write for >1h get an authoritative Cloud
+  // Run re-check (verified/active on success, honest 'failed' when the
+  // mapping is missing — see domain-verify-sweep.ts). Every 30 minutes:
+  // frequent enough that a recovered cert is noticed within the hour,
+  // cheap enough (≤25 Cloud Run GETs per run) to be negligible. Same
+  // min-instances=1 dependency as AUTH_PRUNE above.
+  await boss.createQueue(DOMAIN_VERIFY_SWEEP);
+  await boss.work(DOMAIN_VERIFY_SWEEP, async () => {
+    const counts = await sweepPendingDomains({ pool: defaultPool });
+    if (counts.checked > 0) {
+      // eslint-disable-next-line no-console
+      console.log("[domain-verify-sweep]", counts);
+    }
+  });
+  await boss.schedule(DOMAIN_VERIFY_SWEEP, "*/30 * * * *", undefined, { tz: "UTC" });
 }
 
 /**
