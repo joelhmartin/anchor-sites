@@ -5,6 +5,7 @@ import { resolveSite } from "../../middleware/resolveSite.js";
 import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { renderComingSoon, renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
+import { faviconColor, faviconSvg } from "../favicon.js";
 import { resolveOgImage } from "../seo/og-image.js";
 import { parseSeoLoose } from "../seo/schema.js";
 // Side-effect: register the three static block types so SSR can resolve them.
@@ -21,6 +22,23 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
   router.use(flagAdminHost);
 
   router.use(resolveSite({ pool, passThroughOnMiss: true }));
+
+  // D914 — terminate /favicon.ico BEFORE the catch-all: it used to render the
+  // full ~20 KB HTML 404 page on every browser tab-open. Serves the same
+  // brand-colored dot the shell inlines, long-cached (a day of staleness on a
+  // fallback icon is free; a rebrand just waits it out). Admin/unknown hosts
+  // fall through — the Studio SPA ships its own favicon from dist/.
+  router.get("/favicon.ico", (req: Request, res: Response, next: NextFunction) => {
+    if (req.isAdminHost || !req.site) {
+      next();
+      return;
+    }
+    res
+      .status(200)
+      .set("Cache-Control", "public, max-age=86400")
+      .type("image/svg+xml")
+      .send(faviconSvg(faviconColor(req.site.default_brand_tokens)));
+  });
 
   router.get(/.*/, async (req: Request, res: Response, next: NextFunction) => {
     if (req.isAdminHost || !req.site) {

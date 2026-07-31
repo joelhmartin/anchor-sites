@@ -11,6 +11,7 @@ import { mergeBrandTokens } from "../blocks/brand-tokens.js";
 import { EditModeProvider, MediaProvider, type MediaAssetData } from "@anchorcorps/components";
 import { hostnameForSlug } from "../config/domain.js";
 import { analyticsScriptTag } from "./analytics.js";
+import { faviconColor, faviconDataUri } from "./favicon.js";
 import { OVERLAY_CSS } from "./preview-overlay.js";
 import { rewriteSiteRelativeHrefs } from "./preview-links.js";
 import {
@@ -187,6 +188,9 @@ function shell(opts: {
 }): { html: string; status: number } {
   const merged = mergeBrandTokens(opts.site.default_brand_tokens, opts.pageOverride);
   const brandStyle = brandTokenCss(merged);
+  // D914 — default favicon: a dot in the site's brand main color, inlined as
+  // a data URI so the browser never has to fetch (and previously 404) it.
+  const faviconTag = `<link rel="icon" type="image/svg+xml" href="${faviconDataUri(faviconColor(merged))}" />`;
   const styles = `:root { ${brandStyle} }${SHELL_BASE_CSS}${PACKAGE_BLOCK_CSS}${RICH_TEXT_CSS}${opts.extraCss ?? ""}`;
 
   const ctmTag = opts.site.ctm_account_id ? `\n  ${ctmScriptTag(opts.site.ctm_account_id)}` : "";
@@ -220,6 +224,7 @@ function shell(opts: {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  ${faviconTag}
   <title>${escapeHtml(opts.title)}</title>
   ${opts.description ? `<meta name="description" content="${escapeHtml(opts.description)}" />` : ""}${ctmTag}${analyticsTag}${vitalsTag}
   ${opts.headExtra ?? ""}

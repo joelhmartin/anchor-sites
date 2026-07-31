@@ -350,4 +350,36 @@ d("page renderer catch-all (integration)", () => {
       );
     }
   });
+
+  // D914 — every tenant tab used to open icon-less AND fire a /favicon.ico
+  // request that the catch-all answered with the full ~20 KB HTML 404 page.
+  describe("D914 — tenant favicon", () => {
+    it("shell emits a brand-colored data-URI icon link", async () => {
+      const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,');
+      // Derived from the site's --theme-main brand token (#0a3d62, URI-encoded).
+      expect(res.text).toContain("%230a3d62");
+    });
+
+    it("GET /favicon.ico terminates with a tiny cacheable icon, not the HTML 404 page", async () => {
+      const res = await request(app)
+        .get("/favicon.ico")
+        .set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toMatch(/image\/svg\+xml/);
+      expect(res.headers["cache-control"]).toBe("public, max-age=86400");
+      // supertest buffers non-text content types — read the raw body.
+      const body = res.body instanceof Buffer ? res.body.toString("utf8") : String(res.text);
+      expect(body).toContain("#0a3d62");
+      expect(body).not.toContain("Page not found");
+    });
+
+    it("admin + unknown hosts fall through /favicon.ico to downstream (Studio serves its own)", async () => {
+      const admin = await request(app).get("/favicon.ico").set("Host", "studio.localhost");
+      expect(admin.text).toBe("DOWNSTREAM");
+      const unknown = await request(app).get("/favicon.ico").set("Host", "nope.example.com");
+      expect(unknown.text).toBe("DOWNSTREAM");
+    });
+  });
 });
