@@ -205,12 +205,15 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         // whose working copy diverged from the published snapshot. The
         // workspace Publish pill counts THIS flag, so it can never again
         // say "Nothing to publish" while edits are sitting unshipped.
+        // D702: authored order first (pages.sort_order, populated by
+        // materialize from the template), then creation order for pages
+        // added afterwards (NULL sort_order sorts last).
         const result = await pool.query(
-          `SELECT id, slug, title, status, updated_at,
+          `SELECT id, slug, title, status, updated_at, sort_order,
                   ${PAGE_HAS_UNPUBLISHED_CHANGES_SQL} AS has_unpublished_changes
              FROM pages
             WHERE site_id = $1
-            ORDER BY updated_at DESC`,
+            ORDER BY sort_order ASC NULLS LAST, created_at ASC, slug ASC`,
           [siteId],
         );
         res.json({ pages: result.rows });

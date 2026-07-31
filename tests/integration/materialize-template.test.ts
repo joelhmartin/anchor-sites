@@ -80,12 +80,19 @@ d("materialize-template job (integration, P7-T7.5)", () => {
       status: string;
       snapshot: { title: string; blocks: unknown[] } | null;
       published_at: string | null;
+      sort_order: number | null;
     }>(
-      `SELECT slug, status, published_snapshot AS snapshot, published_at
+      `SELECT slug, status, published_snapshot AS snapshot, published_at, sort_order
          FROM pages WHERE site_id = $1 ORDER BY slug`,
       [siteId],
     );
     expect(pages.rows.map((p) => p.slug)).toEqual(["about", "home"]);
+
+    // D702: the authored template page order survives materialization —
+    // createTemplate assigned home=0, about=1.
+    const bySlug = new Map(pages.rows.map((p) => [p.slug, p.sort_order]));
+    expect(bySlug.get("home")).toBe(0);
+    expect(bySlug.get("about")).toBe(1);
 
     // D716: create-from-template must yield a BROWSABLE live URL — the
     // provision job has already been enqueued for a public hostname, so

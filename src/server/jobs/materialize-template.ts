@@ -75,16 +75,19 @@ export async function handleMaterializeTemplate(
       // (template + prompt) rides the same path: the agent's follow-up
       // edits touch only the working columns, so they stay draft until the
       // operator publishes.
+      // D702: the authored page order (template_pages.sort_order) survives
+      // into pages.sort_order, so nav/list/switcher ordering reflects the
+      // template author's intent instead of insertion accident.
       const ins = await client.query<{ id: string }>(
-        `INSERT INTO pages (site_id, slug, title, blocks, seo, status, published_snapshot, published_at)
+        `INSERT INTO pages (site_id, slug, title, blocks, seo, status, published_snapshot, published_at, sort_order)
          VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'published',
                  jsonb_build_object(
                    'title', $3::text, 'blocks', $4::jsonb, 'seo', $5::jsonb,
                    'brand_tokens_override', NULL),
-                 now())
+                 now(), $6)
          ON CONFLICT (site_id, slug) DO NOTHING
          RETURNING id`,
-        [siteId, page.slug, page.title, JSON.stringify(page.blocks ?? []), JSON.stringify(page.seo ?? {})],
+        [siteId, page.slug, page.title, JSON.stringify(page.blocks ?? []), JSON.stringify(page.seo ?? {}), page.sort_order ?? null],
       );
       if (ins.rowCount && ins.rowCount > 0) {
         created++;

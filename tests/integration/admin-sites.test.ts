@@ -143,7 +143,7 @@ d("admin sites API — detail + pages (P4-T4.3)", () => {
     expect(r.status).toBe(404);
   });
 
-  it("GET /api/sites/:id/pages lists pages (updated_at desc)", async () => {
+  it("GET /api/sites/:id/pages lists pages (authored order first — D702)", async () => {
     const r = await request(app)
       .get(`/api/sites/${muldoonId}/pages`)
       .set("X-Admin-Token", ADMIN_TOKEN);
@@ -152,6 +152,33 @@ d("admin sites API — detail + pages (P4-T4.3)", () => {
     const home = r.body.pages.find((p: { slug: string }) => p.slug === "home");
     expect(home).toMatchObject({ slug: "home", status: "published" });
     expect(home.title).toBeTruthy();
+  });
+
+  it("D702: pages with sort_order come first in authored order; NULLs follow in creation order", async () => {
+    try {
+      // Two extra pages whose authored order contradicts slug, creation, and
+      // updated_at order — the assertion can only pass via sort_order. The
+      // seeded home page keeps sort_order NULL and must sort after them.
+      await pool.query(
+        `INSERT INTO pages (site_id, slug, title, blocks, seo, status, sort_order)
+         VALUES ($1, 'd702-zz-first', 'ZZ First', '[]'::jsonb, '{}'::jsonb, 'draft', 0),
+                ($1, 'd702-aa-second', 'AA Second', '[]'::jsonb, '{}'::jsonb, 'draft', 1)`,
+        [muldoonId],
+      );
+
+      const r = await request(app)
+        .get(`/api/sites/${muldoonId}/pages`)
+        .set("X-Admin-Token", ADMIN_TOKEN);
+      const ordered: string[] = r.body.pages.map((p: { slug: string }) => p.slug);
+      expect(ordered[0]).toBe("d702-zz-first");
+      expect(ordered[1]).toBe("d702-aa-second");
+      // Pages without sort_order (the seeded ones) come after the authored ones.
+      expect(ordered.slice(2)).toContain("home");
+      // The column is exposed to the client (page switcher / lists).
+      expect(r.body.pages[0]).toHaveProperty("sort_order", 0);
+    } finally {
+      await pool.query(`DELETE FROM pages WHERE site_id = $1 AND slug LIKE 'd702-%'`, [muldoonId]);
+    }
   });
 
   it("D301: pages list carries has_unpublished_changes — false for a clean published page, true after a working-copy edit, true for drafts", async () => {

@@ -179,11 +179,13 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
           const byId = new Map(rows.rows.map((r) => [r.id, r]));
           pages = ids.map((id) => byId.get(id)!);
         } else {
+          // D702: capture in display order (authored sort_order first) so a
+          // site saved as a template preserves the order its pages appear in.
           const rows = await pool.query<SourcePageRow>(
             `SELECT id, slug, title, blocks, seo
                FROM pages
               WHERE site_id = $1
-              ORDER BY created_at ASC`,
+              ORDER BY sort_order ASC NULLS LAST, created_at ASC`,
             [siteId],
           );
           pages = rows.rows;

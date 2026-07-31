@@ -21,11 +21,13 @@ const getSiteOverview: AgentTool = {
     if (siteResult.rowCount === 0) {
       return { ok: false, error: "site not found" };
     }
+    // D702: mirror the admin pages list — authored order (sort_order from
+    // the materialized template) first, then creation order.
     const pagesResult = await ctx.pool.query(
       `SELECT id, slug, title, status, updated_at
          FROM pages
         WHERE site_id = $1
-        ORDER BY updated_at DESC`,
+        ORDER BY sort_order ASC NULLS LAST, created_at ASC, slug ASC`,
       [ctx.siteId],
     );
     const mediaResult = await ctx.pool.query(
