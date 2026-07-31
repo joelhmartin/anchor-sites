@@ -73,7 +73,7 @@ const footer = (pageSlug: string) => ({
       { platform: "facebook", href: "#" },
     ],
     hours: "Mon–Fri 8:30 AM – 5:30 PM",
-    small_print: "© 2026 Fieldstone Advisory. All rights reserved.",
+    small_print: "© {year} Fieldstone Advisory. All rights reserved.",
   },
 });
 

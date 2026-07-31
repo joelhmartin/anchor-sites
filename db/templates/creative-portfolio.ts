@@ -77,8 +77,8 @@ const footer = (pageSlug: string) => ({
       { platform: "instagram", href: "#" },
       { platform: "twitter", href: "#" },
     ],
-    hours: "Currently booking into Q1 2027 — inquire for availability.",
-    small_print: "© 2026 Marlowe Studio. All rights reserved.",
+    hours: "Currently booking new projects — inquire for availability.",
+    small_print: "© {year} Marlowe Studio. All rights reserved.",
   },
 });
 
@@ -173,7 +173,7 @@ export const creativePortfolio: TemplateSeed = {
           type: "cta",
           props: {
             heading: "Have a brief worth obsessing over?",
-            body: "Q1 2027 slots are open. Tell me what you're building and I'll tell you honestly whether I'm the right fit.",
+            body: "A limited number of project slots are open. Tell me what you're building and I'll tell you honestly whether I'm the right fit.",
             button_label: "Start a Project",
             button_href: "/contact",
             variant: "primary",
@@ -349,7 +349,7 @@ export const creativePortfolio: TemplateSeed = {
       seo: {
         title: "Contact | Marlowe Studio",
         description:
-          "Start a project with Marlowe Studio. Independent designer Sable Marlowe is currently booking into Q1 2027 — send a brief by email or the form below.",
+          "Start a project with Marlowe Studio. Independent designer Sable Marlowe is currently booking new client work — send a brief by email or the form below.",
       },
       blocks: [
         navBar("contact"),
@@ -368,7 +368,7 @@ export const creativePortfolio: TemplateSeed = {
           type: "rich-text",
           props: {
             html:
-              "<h2>Before you write</h2><p>I take on a small number of projects at a time, currently booking into Q1 2027. The best briefs tell me three things: what you're making, who it's for, and why the version that exists right now isn't working.</p><p>Based in Austin, Texas. Calls happen by appointment only — text or email gets the fastest reply, and most of the work itself happens remotely.</p>",
+              "<h2>Before you write</h2><p>I take on a small number of projects at a time, and the calendar fills a season or two out. The best briefs tell me three things: what you're making, who it's for, and why the version that exists right now isn't working.</p><p>Based in Austin, Texas. Calls happen by appointment only — text or email gets the fastest reply, and most of the work itself happens remotely.</p>",
             max_width: "medium",
           },
         },

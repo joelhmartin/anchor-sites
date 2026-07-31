@@ -65,7 +65,7 @@ function footer(id: string) {
       columns: FOOTER_COLUMNS,
       social_links: SOCIAL_LINKS,
       hours: HOURS,
-      small_print: "© 2026 Rowhouse Records. All rights reserved.",
+      small_print: "© {year} Rowhouse Records. All rights reserved.",
     },
   };
 }
@@ -238,7 +238,7 @@ export const localRetail: TemplateSeed = {
           props: {
             eyebrow: "In the Shop",
             title: "What's on the shelves",
-            subtitle: "Genre-sorted vinyl up front, a turntable bar you can actually test drive, and a trade counter that's always buying. Here's what's on the shelves this month.",
+            subtitle: "Genre-sorted vinyl up front, a turntable bar you can actually test drive, and a trade counter that's always buying. Here's what's always on the shelves.",
             cta_label: "Plan Your Visit",
             cta_href: "/visit",
             align: "left",
@@ -294,7 +294,7 @@ export const localRetail: TemplateSeed = {
           id: "events-announcement",
           type: "announcement-bar",
           props: {
-            text: "First Friday Listening Party — August 7, 7–9pm. Doors open early for dollar-crate diggers.",
+            text: "First Friday Listening Party — first Friday of every month, 7–9pm. Doors open early for dollar-crate diggers.",
             link_label: "Get Directions",
             link_href: "/visit",
           },

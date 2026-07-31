@@ -82,4 +82,32 @@ describe("template catalog invariants (W1.6)", () => {
       }
     });
   });
+
+  describe("D711 — no copy that rots on a calendar", () => {
+    it("no hardcoded copyright years — footers use the render-time {year} token", () => {
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(/(©|\(c\)|&copy;)\s*20\d\d/i);
+      }
+    });
+
+    it("no quarter-year booking promises (e.g. 'Q1 2027')", () => {
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(/\bQ[1-4]\s*20\d\d\b/);
+      }
+    });
+
+    it("no 'this month' / 'this week' promo copy frozen at authoring time", () => {
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(/\bthis (month|week)\b/i);
+      }
+    });
+
+    it("no month-plus-day dated events (e.g. 'August 7')", () => {
+      const monthDay =
+        /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b/;
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(monthDay);
+      }
+    });
+  });
 });

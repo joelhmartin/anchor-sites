@@ -89,6 +89,26 @@ describe("ac-rich-footer", () => {
     expect(container.querySelector(".ac-rich-footer__bottom")).toBeNull();
   });
 
+  it("substitutes {year} in small_print with the render-time year (D711)", () => {
+    const props = richFooterSchema.parse({ small_print: "© {year} Acme Co" });
+    const { container } = render(<RichFooter {...props} />);
+    expect(container.querySelector('[data-field="small_print"]')?.textContent).toBe(
+      `© ${new Date().getFullYear()} Acme Co`,
+    );
+  });
+
+  it("edit mode keeps the raw {year} token so inline edits never bake in a stale year", () => {
+    const props = richFooterSchema.parse({ small_print: "© {year} Acme Co" });
+    const { container } = render(
+      <EditModeProvider>
+        <RichFooter {...props} />
+      </EditModeProvider>,
+    );
+    expect(container.querySelector('[data-field="small_print"]')?.textContent).toBe(
+      "© {year} Acme Co",
+    );
+  });
+
   it("edit mode: empty fields become clickable data-empty markers and the small-print row still renders", () => {
     const props = richFooterSchema.parse({
       brand_name: "",

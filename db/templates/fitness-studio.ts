@@ -67,7 +67,7 @@ function richFooter(id: string) {
         { platform: "facebook" as const, href: "#" },
       ],
       hours: "Mon–Fri 5:00am–9:00pm\nSat 7:00am–3:00pm\nSun 8:00am–1:00pm",
-      small_print: "© 2026 Pulse Fitness Studio. 2020 Larimer Street, Denver, CO 80205.",
+      small_print: "© {year} Pulse Fitness Studio. 2020 Larimer Street, Denver, CO 80205.",
     },
   };
 }
@@ -229,7 +229,7 @@ export const fitnessStudio: TemplateSeed = {
           type: "cta",
           props: {
             heading: "Your First Class Is On Us",
-            body: "New to Pulse? Grab a free class this week — no strings, no pressure, just sweat.",
+            body: "New to Pulse? Your first class is free — no strings, no pressure, just sweat.",
             button_label: "Claim Your Free Class",
             button_href: "/contact",
             variant: "primary",

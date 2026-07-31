@@ -67,7 +67,7 @@ const footer = (pageSlug: string) => ({
       { platform: "instagram", href: "#" },
     ],
     hours: "Mon–Thu 7:30am–5pm · Fri 8am–1pm · Sat–Sun Closed",
-    small_print: "© 2026 Willowbrook Dental & TMJ Care. All rights reserved.",
+    small_print: "© {year} Willowbrook Dental & TMJ Care. All rights reserved.",
   },
 });
 
@@ -105,7 +105,7 @@ export const dentalPractice: TemplateSeed = {
           id: "home-announcement",
           type: "announcement-bar",
           props: {
-            text: "New patients: complimentary whitening consultation with your first exam this month.",
+            text: "New patients: complimentary whitening consultation with your first exam.",
             link_label: "Learn more",
             link_href: "/new-patients",
           },

@@ -13,6 +13,14 @@ export function RichFooter({
 }: RichFooterProps) {
   const editMode = React.useContext(EditModeContext);
 
+  // D711 — copyright years must not rot: authored content writes "{year}" and
+  // the block substitutes the render-time year on every SSR/live render. Edit
+  // mode shows the raw token so inline edits round-trip it instead of baking
+  // in whatever year the edit happened to occur in.
+  const displaySmallPrint = editMode
+    ? small_print
+    : small_print.replace(/\{year\}/g, String(new Date().getFullYear()));
+
   return (
     <footer className="ac-rich-footer bg-theme-main text-theme-on-main">
       <div className="ac-rich-footer__inner max-w-6xl mx-auto px-6 py-16">
@@ -90,7 +98,7 @@ export function RichFooter({
               field="small_print"
               as="p"
               className="ac-rich-footer__small-print text-xs opacity-70"
-              value={small_print}
+              value={displaySmallPrint}
               placeholder="Add copyright / small print…"
             />
           </div>
