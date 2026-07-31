@@ -7,7 +7,7 @@ export const heroSliderEntry: BlockManifestEntry<typeof heroSliderSchema> = {
   schema: heroSliderSchema,
   component: HeroSlider,
   label: "Hero slider",
-  description: "Multi-slide hero with optional autoplay, Embla under the hood.",
+  description: "Multi-slide hero with optional autoplay; scroll-snap slides that work without JS.",
   aiHints:
     "Prefer 2-4 slides. Each slide title should stay under 8 words. Use only at top of page.",
   category: "header",

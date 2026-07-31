@@ -1,5 +1,4 @@
 import * as React from "react";
-import Autoplay from "embla-carousel-autoplay";
 import {
   Carousel,
   CarouselContent,
@@ -64,16 +63,18 @@ function SlideBackground({
 }
 
 export function HeroSlider({ slides, autoplay, interval_ms, align }: HeroSliderProps) {
-  const plugins = React.useMemo(
-    () => (autoplay ? [Autoplay({ delay: interval_ms, stopOnInteraction: true })] : []),
-    [autoplay, interval_ms],
-  );
   const ctx = useMediaContext();
   const resolveAsset = (id: string) => ctx?.getAsset(id);
 
   return (
     <section className="ac-hero-slider relative bg-theme-main text-theme-on-main">
-      <Carousel opts={{ loop: true }} plugins={plugins} className="ac-hero-slider__carousel">
+      {/* D1200 — scroll-snap carousel: swiping works with zero JS; the
+          primitive's inline island adds arrows/loop/autoplay where allowed. */}
+      <Carousel
+        loop
+        autoplayMs={autoplay ? interval_ms : undefined}
+        className="ac-hero-slider__carousel"
+      >
         <CarouselContent>
           {slides.map((s, i) => {
             const { style, showOverlay } = SlideBackground({ slide: s, resolveAsset });

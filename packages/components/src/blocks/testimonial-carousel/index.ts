@@ -7,7 +7,7 @@ export const testimonialCarouselEntry: BlockManifestEntry<typeof testimonialCaro
   schema: testimonialCarouselSchema,
   component: TestimonialCarousel,
   label: "Testimonial carousel",
-  description: "Rotating quotes from clients, with optional avatar + role.",
+  description: "Rotating quotes from clients, with optional avatar + role; scroll-snap slides that work without JS.",
   aiHints: "3-5 testimonials is the sweet spot. Quotes under 30 words read best.",
   category: "content",
 };

@@ -1,187 +1,127 @@
 import * as React from "react";
-import useEmblaCarousel, {
-  type UseEmblaCarouselType,
-} from "embla-carousel-react";
 import { cn } from "../lib/cn.js";
+import { CAROUSEL_ISLAND_JS } from "./carousel-island.js";
 
-type EmblaApi = UseEmblaCarouselType[1];
-type EmblaOptions = Parameters<typeof useEmblaCarousel>[0];
-type EmblaPlugins = Parameters<typeof useEmblaCarousel>[1];
-
-type CarouselContextValue = {
-  emblaRef: ReturnType<typeof useEmblaCarousel>[0];
-  api: EmblaApi;
-  canScrollPrev: boolean;
-  canScrollNext: boolean;
-  scrollPrev: () => void;
-  scrollNext: () => void;
-  orientation: "horizontal" | "vertical";
-};
-
-const CarouselContext = React.createContext<CarouselContextValue | null>(null);
-
-function useCarousel() {
-  const ctx = React.useContext(CarouselContext);
-  if (!ctx) {
-    throw new Error("useCarousel must be used inside <Carousel>");
-  }
-  return ctx;
-}
+/**
+ * JS-free-first carousel (D1200 — spec:
+ * docs/superpowers/specs/2026-07-31-published-page-interactivity.md).
+ *
+ * Published tenant pages ship zero client JavaScript (renderToString, no
+ * hydration) and preview iframes run under a hash-restricted CSP, so the
+ * carousel's BASE behavior must be native: the viewport is a CSS scroll-snap
+ * strip — swipe (touch), trackpad scroll, scrollbar drag, and arrow-key
+ * scrolling (the viewport is focusable) all work with no script at all.
+ *
+ * The three behaviors CSS cannot express — arrow buttons, loop wrap-around,
+ * autoplay — come from a tiny inline vanilla-JS island (CAROUSEL_ISLAND_JS)
+ * each Carousel embeds in its own SSR output. Arrows are CSS-hidden until
+ * the island marks the root `data-ac-ready`, so a script-blocked context
+ * degrades to a clean swipeable strip — never dead controls (the Embla-era
+ * bug this replaces: permanently `disabled` SSR'd arrows).
+ *
+ * No Embla, no React state, no context: every subcomponent is a pure
+ * server-renderable element; the island finds them via `data-ac-*` hooks.
+ */
 
 export type CarouselProps = React.HTMLAttributes<HTMLDivElement> & {
-  opts?: EmblaOptions;
-  plugins?: EmblaPlugins;
-  orientation?: "horizontal" | "vertical";
-  setApi?: (api: EmblaApi) => void;
+  /** Wrap from last slide back to first (arrows + autoplay). */
+  loop?: boolean;
+  /** Auto-advance interval in ms; omit (or 0) for no autoplay. */
+  autoplayMs?: number;
 };
 
-export const Carousel = React.forwardRef<HTMLDivElement, CarouselProps>(
-  ({ opts, plugins, orientation = "horizontal", setApi, className, children, ...props }, ref) => {
-    const [emblaRef, api] = useEmblaCarousel(
-      { ...opts, axis: orientation === "horizontal" ? "x" : "y" },
-      plugins,
-    );
-    const [canScrollPrev, setCanScrollPrev] = React.useState(false);
-    const [canScrollNext, setCanScrollNext] = React.useState(false);
+export function Carousel({ loop, autoplayMs, className, children, ...props }: CarouselProps) {
+  return (
+    <div
+      role="region"
+      aria-roledescription="carousel"
+      data-ac-carousel=""
+      data-loop={loop ? "" : undefined}
+      data-autoplay={autoplayMs && autoplayMs > 0 ? String(autoplayMs) : undefined}
+      className={cn("ac-carousel relative", className)}
+      {...props}
+    >
+      {children}
+      {/* Inline enhancement island. Placed after the carousel's own content
+          so it can initialize immediately — no DOMContentLoaded dependency.
+          Idempotent across multiple carousel blocks on one page. Allowed by
+          'unsafe-inline' on live pages and by sha256 hash in preview CSPs. */}
+      <script dangerouslySetInnerHTML={{ __html: CAROUSEL_ISLAND_JS }} />
+    </div>
+  );
+}
 
-    const onSelect = React.useCallback((emblaApi: NonNullable<EmblaApi>) => {
-      setCanScrollPrev(emblaApi.canScrollPrev());
-      setCanScrollNext(emblaApi.canScrollNext());
-    }, []);
+export type CarouselContentProps = React.HTMLAttributes<HTMLDivElement>;
 
-    const scrollPrev = React.useCallback(() => api?.scrollPrev(), [api]);
-    const scrollNext = React.useCallback(() => api?.scrollNext(), [api]);
+export function CarouselContent({ className, children, ...props }: CarouselContentProps) {
+  return (
+    <div
+      data-ac-viewport=""
+      // Focusable so keyboard users can arrow-scroll the snap container
+      // natively — no JS key handling required.
+      tabIndex={0}
+      className={cn(
+        "ac-carousel__viewport flex overflow-x-auto snap-x snap-mandatory scroll-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-theme-accent",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
 
-    React.useEffect(() => {
-      if (!api) return;
-      onSelect(api);
-      api.on("select", onSelect);
-      api.on("reInit", onSelect);
-      return () => {
-        api.off("select", onSelect);
-        api.off("reInit", onSelect);
-      };
-    }, [api, onSelect]);
+export type CarouselItemProps = React.HTMLAttributes<HTMLDivElement>;
 
-    React.useEffect(() => {
-      if (api && setApi) setApi(api);
-    }, [api, setApi]);
+export function CarouselItem({ className, children, ...props }: CarouselItemProps) {
+  return (
+    <div
+      role="group"
+      aria-roledescription="slide"
+      className={cn("ac-carousel__slide min-w-0 shrink-0 grow-0 basis-full snap-start", className)}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
 
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        scrollPrev();
-      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        scrollNext();
-      }
-    };
-
-    return (
-      <CarouselContext.Provider
-        value={{ emblaRef, api, canScrollPrev, canScrollNext, scrollPrev, scrollNext, orientation }}
-      >
-        <div
-          ref={ref}
-          role="region"
-          aria-roledescription="carousel"
-          onKeyDown={handleKeyDown}
-          tabIndex={0}
-          className={cn("relative outline-none", className)}
-          {...props}
-        >
-          {children}
-        </div>
-      </CarouselContext.Provider>
-    );
-  },
-);
-Carousel.displayName = "Carousel";
-
-export const CarouselContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => {
-    const { emblaRef, orientation } = useCarousel();
-    return (
-      <div ref={emblaRef} className="overflow-hidden">
-        <div
-          ref={ref}
-          className={cn("flex", orientation === "horizontal" ? "-ml-4" : "-mt-4 flex-col", className)}
-          {...props}
-        />
-      </div>
-    );
-  },
-);
-CarouselContent.displayName = "CarouselContent";
-
-export const CarouselItem = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => {
-    const { orientation } = useCarousel();
-    return (
-      <div
-        ref={ref}
-        role="group"
-        aria-roledescription="slide"
-        className={cn(
-          "min-w-0 shrink-0 grow-0 basis-full",
-          orientation === "horizontal" ? "pl-4" : "pt-4",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-);
-CarouselItem.displayName = "CarouselItem";
-
-type ArrowButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "type" | "aria-label"> & {
+type ArrowButtonProps = Omit<
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  "type" | "aria-label" | "disabled"
+> & {
   label?: string;
 };
 
-export const CarouselPrevious = React.forwardRef<HTMLButtonElement, ArrowButtonProps>(
-  ({ className, label = "Previous slide", children, ...props }, ref) => {
-    const { scrollPrev, canScrollPrev } = useCarousel();
-    return (
-      <button
-        ref={ref}
-        type="button"
-        aria-label={label}
-        disabled={!canScrollPrev}
-        onClick={scrollPrev}
-        className={cn(
-          "absolute left-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-10 w-10 rounded-full border border-theme-border bg-theme-surface text-theme-on-surface shadow-sm disabled:opacity-40 disabled:pointer-events-none",
-          className,
-        )}
-        {...props}
-      >
-        {children ?? <span aria-hidden="true">‹</span>}
-      </button>
-    );
-  },
-);
-CarouselPrevious.displayName = "CarouselPrevious";
+const arrowClass =
+  "ac-carousel__arrow absolute top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-10 w-10 rounded-full border border-theme-border bg-theme-surface text-theme-on-surface shadow-sm disabled:opacity-40 disabled:pointer-events-none";
 
-export const CarouselNext = React.forwardRef<HTMLButtonElement, ArrowButtonProps>(
-  ({ className, label = "Next slide", children, ...props }, ref) => {
-    const { scrollNext, canScrollNext } = useCarousel();
-    return (
-      <button
-        ref={ref}
-        type="button"
-        aria-label={label}
-        disabled={!canScrollNext}
-        onClick={scrollNext}
-        className={cn(
-          "absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-10 w-10 rounded-full border border-theme-border bg-theme-surface text-theme-on-surface shadow-sm disabled:opacity-40 disabled:pointer-events-none",
-          className,
-        )}
-        {...props}
-      >
-        {children ?? <span aria-hidden="true">›</span>}
-      </button>
-    );
-  },
-);
-CarouselNext.displayName = "CarouselNext";
+export function CarouselPrevious({ className, label = "Previous slide", children, ...props }: ArrowButtonProps) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      data-ac-prev=""
+      className={cn(arrowClass, "left-2", className)}
+      {...props}
+    >
+      {children ?? <span aria-hidden="true">‹</span>}
+    </button>
+  );
+}
 
-export { useCarousel };
+export function CarouselNext({ className, label = "Next slide", children, ...props }: ArrowButtonProps) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      data-ac-next=""
+      className={cn(arrowClass, "right-2", className)}
+      {...props}
+    >
+      {children ?? <span aria-hidden="true">›</span>}
+    </button>
+  );
+}
+
+export { CAROUSEL_ISLAND_JS } from "./carousel-island.js";

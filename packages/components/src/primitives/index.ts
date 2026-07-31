@@ -28,7 +28,7 @@ export {
   CarouselItem,
   CarouselPrevious,
   CarouselNext,
-  useCarousel,
+  CAROUSEL_ISLAND_JS,
   type CarouselProps,
 } from "./carousel.js";
 export { Slot } from "./slot.js";

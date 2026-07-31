@@ -39,3 +39,16 @@
    Firefox's ::marker needs a plain rule. Chevron rotates on open. */
 .ac-accordion__item > summary::marker { content: ""; }
 .ac-accordion__item[open] > summary .ac-chevron { transform: rotate(180deg); }
+
+/* ac-carousel — CSS scroll-snap base + inline-island enhancement (D1200).
+   The viewport scrolls/swipes natively; its scrollbar is hidden because
+   snap position is the visual state. Arrow buttons only appear once the
+   island has marked the root data-ac-ready — where scripts are blocked
+   (e.g. preview CSP) the carousel degrades to a clean swipeable strip and
+   never shows a dead control. */
+.ac-carousel__viewport {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.ac-carousel__viewport::-webkit-scrollbar { display: none; }
+[data-ac-carousel]:not([data-ac-ready]) .ac-carousel__arrow { display: none; }

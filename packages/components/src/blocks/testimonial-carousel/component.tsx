@@ -1,5 +1,3 @@
-import * as React from "react";
-import Autoplay from "embla-carousel-autoplay";
 import {
   Carousel,
   CarouselContent,
@@ -17,11 +15,6 @@ export function TestimonialCarousel({
   autoplay,
   interval_ms,
 }: TestimonialCarouselProps) {
-  const plugins = React.useMemo(
-    () => (autoplay ? [Autoplay({ delay: interval_ms, stopOnInteraction: true })] : []),
-    [autoplay, interval_ms],
-  );
-
   return (
     <section className="ac-testimonial-carousel py-16 px-6 bg-theme-surface text-theme-on-surface">
       <div className="ac-testimonial-carousel__inner max-w-4xl mx-auto">
@@ -31,7 +24,9 @@ export function TestimonialCarousel({
           className="ac-testimonial-carousel__heading text-3xl text-center mb-8"
           value={heading}
         />
-        <Carousel opts={{ loop: items.length > 1 }} plugins={plugins}>
+        {/* D1200 — scroll-snap carousel: swiping works with zero JS; the
+            primitive's inline island adds arrows/loop/autoplay where allowed. */}
+        <Carousel loop={items.length > 1} autoplayMs={autoplay ? interval_ms : undefined}>
           <CarouselContent>
             {items.map((t, i) => (
               <CarouselItem key={i}>
