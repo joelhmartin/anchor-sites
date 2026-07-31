@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { FeatureGrid } from "./component.js";
-import { featureGridSchema } from "./schema.js";
+import { featureGridSchema, featureItemSchema } from "./schema.js";
+import { CURATED_ICONS } from "./icons.js";
 import { EditModeProvider } from "../../editable.js";
 
 describe("ac-feature-grid", () => {
@@ -57,6 +58,58 @@ describe("ac-feature-grid", () => {
     });
     const { container } = render(<FeatureGrid {...props} />);
     expect(screen.getByText("🚀")).toBeInTheDocument();
+  });
+
+  it("D1202: renders every template-authored name (book, sun, home, dollar, briefcase) as an SVG glyph", () => {
+    const items = [
+      { icon: "book", title: "A" },
+      { icon: "sun", title: "B" },
+      { icon: "home", title: "C" },
+      { icon: "dollar", title: "D" },
+      { icon: "briefcase", title: "E" },
+    ];
+    const props = featureGridSchema.parse({ items });
+    const { container } = render(<FeatureGrid {...props} />);
+    expect(container.querySelectorAll(".ac-feature-grid__icon svg")).toHaveLength(5);
+    for (const { icon } of items) {
+      expect(screen.queryByText(icon)).toBeNull();
+    }
+  });
+
+  it("D1202: an unknown icon NAME renders a neutral SVG glyph, never the literal word", () => {
+    const props = featureGridSchema.parse({
+      items: [
+        { icon: "wrench", title: "A" },
+        { icon: "star", title: "B" },
+        { icon: "star", title: "C" },
+      ],
+    });
+    const { container } = render(<FeatureGrid {...props} />);
+    // The unknown name still yields an SVG (the neutral fallback dot) …
+    expect(container.querySelectorAll(".ac-feature-grid__icon svg")).toHaveLength(3);
+    // … and the raw word is never printed in the icon square.
+    expect(screen.queryByText("wrench")).toBeNull();
+  });
+
+  it("D1202: deliberate short text ('01', '◆') still renders verbatim — only word-like names divert to the neutral glyph", () => {
+    const props = featureGridSchema.parse({
+      items: [
+        { icon: "01", title: "A" },
+        { icon: "◆", title: "B" },
+        { icon: "star", title: "C" },
+      ],
+    });
+    render(<FeatureGrid {...props} />);
+    expect(screen.getByText("01")).toBeInTheDocument();
+    expect(screen.getByText("◆")).toBeInTheDocument();
+  });
+
+  it("D1202: the icon field's schema description publishes every curated name (reaches the AI catalog)", () => {
+    const description = featureItemSchema.shape.icon.description;
+    expect(description).toBeTruthy();
+    for (const name of Object.keys(CURATED_ICONS)) {
+      expect(description).toContain(name);
+    }
   });
 
   it("marks eyebrow/heading with data-field; item title/body render as plain text (array items aren't top-level editable)", () => {

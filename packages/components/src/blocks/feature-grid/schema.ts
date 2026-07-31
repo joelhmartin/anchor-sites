@@ -12,7 +12,17 @@ import { z } from "zod";
  * precedent for hand-rolled SVGs over a dependency).
  */
 export const featureItemSchema = z.object({
-  icon: z.string().max(40).default("sparkles"),
+  // D1202: the curated vocabulary is published here so it reaches every
+  // author — the AI catalog derives its JSON schema from this field via
+  // zod-to-json-schema, which carries `.describe()` through as `description`.
+  // A test asserts this list stays in sync with CURATED_ICONS (./icons.tsx).
+  icon: z
+    .string()
+    .max(40)
+    .default("sparkles")
+    .describe(
+      'Curated icon name — one of: "bolt", "shield", "sparkles", "heart", "clock", "users", "award", "target", "check", "star", "book", "sun", "home", "dollar", "briefcase" — or a literal emoji/short text (e.g. "🚀", "01") rendered verbatim. Any other word renders as a neutral dot, so prefer a curated name.',
+    ),
   title: z.string().min(1).max(80).default("Feature title"),
   body: z.string().max(300).default(""),
 });
