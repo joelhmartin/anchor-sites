@@ -735,6 +735,122 @@ d("admin domains API — status transitions (D608/D609)", () => {
   });
 });
 
+d("admin domains API — POST verify: explicit re-check (D404)", () => {
+  let pool: Pool;
+  let muldoonId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM site_domains WHERE hostname LIKE '%.d404-test.example.com'`);
+    await pool.end().catch(() => undefined);
+  });
+
+  async function insertDomain(hostname: string, verification = "pending", ssl = "pending") {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
+       VALUES ($1, $2, false, $3, $4) RETURNING id`,
+      [muldoonId, hostname, verification, ssl],
+    );
+    return r.rows[0].id;
+  }
+
+  function cloudRunReturning(mapping: unknown) {
+    return { async get() { return mapping; } } as unknown as CloudRunDomainsClient;
+  }
+
+  it("verify against a Ready mapping upgrades to verified/active", async () => {
+    const domainId = await insertDomain("ok.d404-test.example.com");
+    const app = buildApp(pool, {
+      dns: makeMockDns(),
+      cloudRun: cloudRunReturning({
+        status: {
+          conditions: [
+            { type: "Ready", status: "True" },
+            { type: "CertificateProvisioned", status: "True" },
+          ],
+        },
+      }),
+    });
+
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${domainId}/verify`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.verification_status).toBe("verified");
+    expect(r.body.domain.ssl_status).toBe("active");
+    expect(r.body.domain.verified_at).not.toBeNull();
+  });
+
+  it("verify writes an honest 'failed' + instruction when NO mapping exists (the eternal-pending fix)", async () => {
+    const domainId = await insertDomain("gone.d404-test.example.com", "pending", "pending");
+    const app = buildApp(pool, { dns: makeMockDns(), cloudRun: cloudRunReturning(null) });
+
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${domainId}/verify`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.verification_status).toBe("failed");
+    expect(r.body.domain.last_error).toMatch(/no Cloud Run domain mapping/i);
+  });
+
+  it("verify is a REAL re-check: it may walk failed back to pending and clear last_error", async () => {
+    const domainId = await insertDomain("recover.d404-test.example.com", "failed", "failed");
+    await pool.query(`UPDATE site_domains SET last_error = 'old permission error' WHERE id = $1`, [domainId]);
+    const app = buildApp(pool, {
+      dns: makeMockDns(),
+      cloudRun: cloudRunReturning({
+        status: {
+          conditions: [
+            { type: "Ready", status: "Unknown" },
+            { type: "CertificateProvisioned", status: "Unknown" },
+          ],
+        },
+      }),
+    });
+
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${domainId}/verify`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.domain.verification_status).toBe("pending");
+    expect(r.body.domain.last_error).toBeNull();
+  });
+
+  it("502 when Cloud Run is unreachable (an explicit check must not silently no-op)", async () => {
+    const domainId = await insertDomain("unreachable.d404-test.example.com");
+    const app = buildApp(pool, {
+      dns: makeMockDns(),
+      cloudRun: {
+        async get() {
+          throw new Error("Cloud Run 500 /: upstream unavailable");
+        },
+      } as unknown as CloudRunDomainsClient,
+    });
+
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/${domainId}/verify`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(502);
+    expect(r.body.error).toMatch(/Cloud Run/);
+  });
+
+  it("404 for unknown domain", async () => {
+    const app = buildApp(pool, { dns: makeMockDns(), cloudRun: makeMockCloudRun() });
+    const r = await request(app)
+      .post(`/api/sites/${muldoonId}/domains/00000000-0000-0000-0000-000000000000/verify`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+});
+
 d("admin domains API — provision client-owned domain uses manual DNS (no opts.dns injection)", () => {
   let pool: Pool;
   let mockCloudRun: ReturnType<typeof makeMockCloudRun>;

@@ -431,6 +431,81 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
     },
   );
 
+  // POST /api/sites/:siteId/domains/:domainId/verify — explicit re-check
+  // (D404: a pending badge needs a path to resolution beyond re-clicking
+  // Provision; the UI's "Check now").
+  //
+  // Unlike the passive GET status poll (upgrade-only, D608), this is an
+  // AUTHORITATIVE re-check: the operator asked for the truth, we fetched
+  // it from Cloud Run, and we write exactly what we found — including
+  // walking a stale 'failed' back to 'pending' (clearing last_error), and
+  // writing an honest 'failed' when the mapping doesn't exist at all (the
+  // one state the old poll could never reach: a mapping deleted out-of-band
+  // read as eternal 'pending').
+  router.post(
+    "/sites/:siteId/domains/:domainId/verify",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId, domainId } = req.params;
+        const row = await pool.query<{ hostname: string }>(
+          `SELECT hostname FROM site_domains WHERE id = $1 AND site_id = $2`,
+          [domainId, siteId],
+        );
+        if (row.rowCount === 0) {
+          res.status(404).json({ error: "domain not found" });
+          return;
+        }
+        const { hostname } = row.rows[0];
+        const cloudRun = getCloudRun();
+
+        let mapping;
+        try {
+          mapping = await cloudRun.get(hostname);
+        } catch (err) {
+          // An explicit check must not silently no-op — tell the operator
+          // the check itself failed, leave the row untouched.
+          const detail = err instanceof Error ? err.message : String(err);
+          res.status(502).json({ error: `Cloud Run check failed: ${detail}` });
+          return;
+        }
+
+        const updated = mapping
+          ? await applyDomainStatus(
+              pool,
+              { id: domainId },
+              statusFromMappingConditions(mapping.status?.conditions),
+              "authoritative",
+            )
+          : await applyDomainStatus(
+              pool,
+              { id: domainId },
+              {
+                verification_status: "failed",
+                ssl_status: "failed",
+                error:
+                  `no Cloud Run domain mapping exists for ${hostname} — provisioning has not ` +
+                  `completed (or the mapping was removed). Use Provision to create it.`,
+              },
+              "authoritative",
+            );
+        if (!updated) {
+          res.status(404).json({ error: "domain not found" });
+          return;
+        }
+        evictSiteCache(hostname);
+
+        const full = await pool.query<Omit<DomainRow, "domain_class">>(
+          `SELECT ${DOMAIN_COLUMNS} FROM site_domains WHERE id = $1`,
+          [domainId],
+        );
+        res.json({ domain: toDomainRow(full.rows[0]) });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // GET /api/sites/:siteId/domains/:domainId/status — poll Cloud Run → update DB.
   router.get(
     "/sites/:siteId/domains/:domainId/status",
