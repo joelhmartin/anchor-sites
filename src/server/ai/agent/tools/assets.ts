@@ -141,12 +141,15 @@ const searchStockImages: AgentTool = {
 const importImageParams = z.object({
   url: z.string().url(),
   alt: z.string().min(3),
+  // W1.5 / D1117 — photographer credit from the search_stock_images hit,
+  // persisted on the media_assets row so attribution survives the import.
+  credit: z.string().optional(),
 });
 
 const importImage: AgentTool = {
   name: "import_image",
   description:
-    "Download an image from a URL (e.g. a search_stock_images download_url) and import it into this site's media library with the given alt text. After importing, place the image with the image block using this asset_id and the same alt text.",
+    "Download an image from a URL (e.g. a search_stock_images download_url) and import it into this site's media library with the given alt text. Pass the search hit's `credit` (photographer name) so attribution is preserved. Importing the same URL twice returns the EXISTING asset instead of a duplicate. After importing, place the image using the returned asset_id and the same alt text.",
   paramsSchema: importImageParams,
   async execute(
     ctx: AgentToolCtx,
@@ -161,15 +164,21 @@ const importImage: AgentTool = {
     try {
       const result = await ingestImageFromUrl(
         ctx.pool,
-        { siteId: ctx.siteId, url: input.url, alt: input.alt },
+        { siteId: ctx.siteId, url: input.url, alt: input.alt, credit: input.credit },
         deps,
       );
-      const summary = `Imported image (asset ${result.asset_id}).`;
+      // D1117 — an honest summary: a dedupe hit reused an existing asset,
+      // nothing new was downloaded or imported.
+      const summary = result.deduped
+        ? `Reused already-imported image (asset ${result.asset_id}).`
+        : `Imported image (asset ${result.asset_id}).`;
       return {
         ok: true,
-        data: { asset_id: result.asset_id, alt: input.alt },
+        data: { asset_id: result.asset_id, alt: input.alt, deduped: result.deduped === true },
         summary,
-        change: { kind: "image_imported", summary },
+        // Reusing an existing asset changes nothing — only a real import
+        // gets a change card in the transcript.
+        ...(result.deduped ? {} : { change: { kind: "image_imported", summary } }),
       };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "image import failed" };

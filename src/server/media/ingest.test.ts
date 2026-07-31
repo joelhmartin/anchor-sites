@@ -389,9 +389,11 @@ d("ingestImageFromUrl bounded download (item 3)", () => {
   it("passes a 30s AbortSignal.timeout to the fetch call", async () => {
     const { storage } = fakeStorage();
     const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    // URL unique to this test — a repeat of photo.png (imported above) would
+    // dedupe (D1117) and never reach the fetch this test inspects.
     await ingestImageFromUrl(
       db.getPool(),
-      { siteId, url: "https://images.example.com/photo.png", alt: "x" },
+      { siteId, url: "https://images.example.com/photo-signal.png", alt: "x" },
       { fetchFn: fetchSpy, storage, enqueue: async () => "job-1" },
     );
     const call = fetchSpy.mock.calls[0] as unknown as [string, { signal?: AbortSignal }];
@@ -407,5 +409,93 @@ d("ingestImageFromUrl bounded download (item 3)", () => {
     );
     expect(result.asset_id).toBeTruthy();
     expect(calls).toHaveLength(1);
+  });
+
+  // ── W1.5 / D1117: provenance + dedupe ──
+
+  it("D1117: persists the source URL and photographer credit on the asset row", async () => {
+    const { storage } = fakeStorage();
+    const url = `https://images.example.com/provenance-${Date.now()}.png`;
+    const result = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url, alt: "a credited photo", credit: "Jane Photographer" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+
+    const row = await db.getPool().query(
+      `SELECT source_url, credit FROM media_assets WHERE id = $1`,
+      [result.asset_id],
+    );
+    expect(row.rows[0]).toEqual({ source_url: url, credit: "Jane Photographer" });
+    expect(result.deduped).toBeUndefined();
+  });
+
+  it("D1117: re-importing the same URL for the same site returns the existing asset — no download, no duplicate row", async () => {
+    const { storage, calls } = fakeStorage();
+    const url = `https://images.example.com/dedupe-${Date.now()}.png`;
+    const first = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url, alt: "first import" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+
+    const fetchSpy = vi.fn(fakeFetch(200, "image/png", PNG_BUF));
+    const second = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url, alt: "second import attempt" },
+      { fetchFn: fetchSpy, storage, enqueue: async () => "job-1" },
+    );
+
+    expect(second).toEqual({ asset_id: first.asset_id, gcs_key: first.gcs_key, deduped: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1); // only the first import touched storage
+
+    const rows = await db.getPool().query(
+      `SELECT COUNT(*)::int AS n FROM media_assets WHERE site_id = $1 AND source_url = $2`,
+      [siteId, url],
+    );
+    expect(rows.rows[0].n).toBe(1);
+  });
+
+  it("D1117: the dedupe is site-scoped — another site importing the same URL gets its own asset", async () => {
+    const { storage } = fakeStorage();
+    const otherSite = await db.seedSite(`agent-ingest-other-${Date.now()}`);
+    const url = `https://images.example.com/cross-site-${Date.now()}.png`;
+
+    const first = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url, alt: "site A copy" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+    const second = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId: otherSite.id, url, alt: "site B copy" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+
+    expect(second.deduped).toBeUndefined();
+    expect(second.asset_id).not.toBe(first.asset_id);
+  });
+
+  it("D1117: an archived asset does not satisfy the dedupe — the re-import creates a fresh row", async () => {
+    const { storage } = fakeStorage();
+    const url = `https://images.example.com/archived-${Date.now()}.png`;
+    const first = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url, alt: "soon archived" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+    await db.getPool().query(
+      `UPDATE media_assets SET archived_at = now() WHERE id = $1`,
+      [first.asset_id],
+    );
+
+    const second = await ingestImageFromUrl(
+      db.getPool(),
+      { siteId, url, alt: "fresh import" },
+      { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+    );
+    expect(second.deduped).toBeUndefined();
+    expect(second.asset_id).not.toBe(first.asset_id);
   });
 });

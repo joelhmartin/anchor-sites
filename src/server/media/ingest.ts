@@ -191,10 +191,26 @@ export type IngestDeps = {
 
 export async function ingestImageFromUrl(
   pool: Pool,
-  input: { siteId: string; url: string; alt: string; contentType?: string },
+  input: { siteId: string; url: string; alt: string; contentType?: string; credit?: string },
   deps: IngestDeps = {},
-): Promise<{ asset_id: string; gcs_key: string }> {
+): Promise<{ asset_id: string; gcs_key: string; deduped?: boolean }> {
   assertSafeImageUrl(input.url);
+
+  // W1.5 / D1117 — dedupe by (site_id, source_url) BEFORE any network work:
+  // a resumed/re-run build asking for the same Pixabay hit gets the
+  // already-imported asset back instead of a duplicate download + row +
+  // GCS object + variants job. Archived assets don't count (an operator who
+  // archived the image shouldn't have it silently resurrected by id — a
+  // fresh import row is the honest behavior there).
+  const existing = await pool.query<{ id: string; gcs_key: string }>(
+    `SELECT id, gcs_key FROM media_assets
+      WHERE site_id = $1 AND source_url = $2 AND archived_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [input.siteId, input.url],
+  );
+  if ((existing.rowCount ?? 0) > 0) {
+    return { asset_id: existing.rows[0].id, gcs_key: existing.rows[0].gcs_key, deduped: true };
+  }
 
   const fetchFn = deps.fetchFn ?? fetch;
   // Round 2 fix (Important 3a): `assertSafeImageUrl` above only validates
@@ -235,12 +251,14 @@ export async function ingestImageFromUrl(
 
   // Mirrors the media.ts route insert (site_id, gcs_key placeholder,
   // content_type, alt, focal_point) — alt is NOT NULL in the schema, and
-  // focal_point is nullable jsonb (the agent never picks one).
+  // focal_point is nullable jsonb (the agent never picks one). D1117 adds
+  // source_url + credit so attribution/provenance survive the import and
+  // the dedupe lookup above has something to match on.
   const ins = await pool.query<{ id: string }>(
-    `INSERT INTO media_assets (site_id, gcs_key, content_type, alt, focal_point)
-     VALUES ($1, 'pending', $2, $3, NULL)
+    `INSERT INTO media_assets (site_id, gcs_key, content_type, alt, focal_point, source_url, credit)
+     VALUES ($1, 'pending', $2, $3, NULL, $4, $5)
      RETURNING id`,
-    [input.siteId, contentType, input.alt],
+    [input.siteId, contentType, input.alt, input.url, input.credit ?? null],
   );
   const assetId = ins.rows[0].id;
   const gcsKey = `originals/${input.siteId}/${assetId}.${ext}`;

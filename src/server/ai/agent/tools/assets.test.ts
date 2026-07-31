@@ -215,6 +215,41 @@ d("agent asset tools", () => {
       expect(enqueued[0].data).toEqual({ asset_id: data.asset_id });
     });
 
+    it("D1117: passes the credit through and dedupes a repeat import (honest 'reused' summary, no change card)", async () => {
+      const { storage, calls } = fakeStorage();
+      __setIngestDepsForTests({ storage, enqueue: async () => "job-1" });
+
+      const url = `https://example.invalid/stub-dedupe-${runId}.jpg`;
+      const first = await executeAgentTool(ctx, "import_image", {
+        url, alt: "a credited stub photo", credit: "Stub Photographer",
+      });
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error("unreachable");
+      const firstData = first.data as { asset_id: string; deduped: boolean };
+      expect(firstData.deduped).toBe(false);
+      expect(first.change).toBeDefined();
+
+      const row = await db.getPool().query(
+        `SELECT source_url, credit FROM media_assets WHERE id = $1`,
+        [firstData.asset_id],
+      );
+      expect(row.rows[0]).toEqual({ source_url: url, credit: "Stub Photographer" });
+
+      const second = await executeAgentTool(ctx, "import_image", {
+        url, alt: "same image again",
+      });
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error("unreachable");
+      const secondData = second.data as { asset_id: string; deduped: boolean };
+      expect(secondData.asset_id).toBe(firstData.asset_id);
+      expect(secondData.deduped).toBe(true);
+      expect(second.summary).toMatch(/reused/i);
+      // No change card — nothing new landed in the media library.
+      expect(second.change).toBeUndefined();
+      // Storage was only written once.
+      expect(calls).toHaveLength(1);
+    });
+
     it("rejects a too-short alt via the dispatcher", async () => {
       const result = await executeAgentTool(ctx, "import_image", {
         url: "https://example.invalid/x.jpg",
