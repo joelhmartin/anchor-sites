@@ -122,6 +122,32 @@ export function describeAnthropicError(err: unknown): string {
   return "The site agent hit an unexpected error and stopped.";
 }
 
+/**
+ * W1.4 / D1101 — errors whose own label says "retry shortly" must actually
+ * be retried before becoming terminal. 429 (rate limit), 529 / "overloaded"
+ * (capacity blips) routinely clear within seconds; without this, a
+ * 60-second Anthropic overload killed a 4-batch build (`retryLimit: 0` on
+ * the job means nothing else retries) and waited for a human to click
+ * Resume. Same duck-typing rationale as `describeAnthropicError` above.
+ */
+export function isRetryableAnthropicError(err: unknown): boolean {
+  const status =
+    typeof err === "object" && err !== null && "status" in err
+      ? (err as { status?: unknown }).status
+      : undefined;
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null && typeof (err as { message?: unknown }).message === "string"
+        ? (err as { message: string }).message
+        : "";
+  return status === 429 || status === 529 || /overloaded/i.test(message);
+}
+
+/** Total model-call attempts (initial + retries) before a retryable error
+ * goes terminal. Bounded — this is an in-loop courtesy, not a queue. */
+const ANTHROPIC_MAX_ATTEMPTS = 3;
+
 type ToolResultContent = {
   type: "tool_result";
   tool_use_id: string;
@@ -377,10 +403,27 @@ export async function runAgentTurn(input: {
     }
     let message: Anthropic.Message;
     try {
-      ({ message } = await runMessage(
-        { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
-        { client: input.client, env },
-      ));
+      // W1.4 / D1101 — bounded in-loop retry for transient errors (429/529/
+      // overloaded) with exponential backoff before anything goes terminal.
+      // Base delay is env-tunable (tests pass 1ms); production default 2s →
+      // 2s, 4s between the three attempts. Retries are silent: nothing is
+      // persisted unless the LAST attempt still fails, in which case the
+      // existing `describeAnthropicError` terminal path below runs as ever.
+      const retryBaseMs = parsePositiveIntEnv(env.AI_AGENT_RETRY_BASE_MS, 2000);
+      let attempt = 0;
+      for (;;) {
+        try {
+          ({ message } = await runMessage(
+            { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
+            { client: input.client, env },
+          ));
+          break;
+        } catch (err) {
+          attempt += 1;
+          if (attempt >= ANTHROPIC_MAX_ATTEMPTS || !isRetryableAnthropicError(err)) throw err;
+          await new Promise((resolve) => setTimeout(resolve, retryBaseMs * 2 ** (attempt - 1)));
+        }
+      }
     } catch (err) {
       // Task A4: a thrown Anthropic SDK error (auth/billing/rate-limit/
       // overload) previously propagated straight past this loop to
@@ -408,7 +451,27 @@ export async function runAgentTurn(input: {
       if (block.type === "text") onEvent({ type: "assistant_text", text: block.text });
     }
 
-    if (message.stop_reason !== "tool_use") {
+    // W1.4 / D1102 — `stop_reason: "max_tokens"` must never masquerade as a
+    // completed turn (the transcript used to end on a chopped sentence with
+    // the conversation flipped to 'active' and the UI reading "done").
+    //  - Truncated mid-TEXT (no tool_use blocks): persist an honest system
+    //    note and end the round as `tool_limit`, which `handleAgentTurn`
+    //    auto-continues exactly like a tool-cap round; the persisted history
+    //    ends on the truncated assistant message, so the next round's
+    //    context is a trailing-assistant prefill the model continues from.
+    //  - Truncated AFTER complete tool_use blocks: the API only includes
+    //    finished blocks, so fall through and execute them — the loop then
+    //    continues naturally (and history stays API-valid: every persisted
+    //    tool_use gets its tool_result below).
+    if (message.stop_reason === "max_tokens") {
+      const truncatedToolUses = message.content.filter((b) => b.type === "tool_use");
+      if (truncatedToolUses.length === 0) {
+        const text = "The response hit the output limit and was cut short — continuing in a new round.";
+        await appendMessage(pool, conversationId, "system", [{ type: "text", text }]);
+        onEvent({ type: "turn_done", reason: "max_tools", message: text });
+        return { endReason: "tool_limit", toolCalls };
+      }
+    } else if (message.stop_reason !== "tool_use") {
       onEvent({ type: "turn_done", reason: "end_turn" });
       return { endReason: "completed", toolCalls };
     }

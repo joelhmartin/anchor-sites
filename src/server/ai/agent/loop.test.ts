@@ -147,6 +147,122 @@ d("runAgentTurn", () => {
     return { site, page, conv };
   }
 
+  // ── W1.4 / D1101: transient Anthropic errors retry before going terminal ──
+
+  it("D1101: a 429 blip is retried with backoff and the turn completes — no human Resume needed", async () => {
+    const { site, conv } = await seedConvo(`loop-retry-429-${runId}`);
+
+    const create = vi.fn()
+      .mockRejectedValueOnce({ status: 429, message: "rate limited" })
+      .mockRejectedValueOnce({ status: 529, message: "overloaded_error" })
+      .mockResolvedValueOnce(cannedMessage({
+        content: [textBlock("Done.")], stop_reason: "end_turn", usage: usage(10, 5),
+      }));
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ...API_ENV, AI_AGENT_RETRY_BASE_MS: "1" } as NodeJS.ProcessEnv, client,
+    });
+
+    expect(result.endReason).toBe("completed");
+    expect(create).toHaveBeenCalledTimes(3);
+
+    // The retries were silent — no error text persisted, no error status.
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("active"); // untouched by the loop
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect(JSON.stringify(msgs.map((m) => m.content))).not.toMatch(/rate-limiting|overloaded/i);
+  });
+
+  it("D1101: a persistent overload goes terminal AFTER the bounded attempts, with the existing label persisted", async () => {
+    const { site, conv } = await seedConvo(`loop-retry-exhausted-${runId}`);
+
+    const create = vi.fn().mockRejectedValue({ status: 529, message: "overloaded_error" });
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ...API_ENV, AI_AGENT_RETRY_BASE_MS: "1" } as NodeJS.ProcessEnv, client,
+    });
+
+    expect(result.endReason).toBe("error");
+    expect(create).toHaveBeenCalledTimes(3);
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("error");
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect(JSON.stringify(msgs[msgs.length - 1].content)).toMatch(/overloaded — retry shortly/i);
+  });
+
+  it("D1101: a non-retryable error (401) is terminal immediately — exactly one attempt", async () => {
+    const { site, conv } = await seedConvo(`loop-retry-nonretryable-${runId}`);
+
+    const create = vi.fn().mockRejectedValue({ status: 401, message: "invalid x-api-key" });
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ...API_ENV, AI_AGENT_RETRY_BASE_MS: "1" } as NodeJS.ProcessEnv, client,
+    });
+
+    expect(result.endReason).toBe("error");
+    expect(create).toHaveBeenCalledTimes(1);
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect(JSON.stringify(msgs[msgs.length - 1].content)).toMatch(/API key rejected/i);
+  });
+
+  // ── W1.4 / D1102: stop_reason 'max_tokens' must not masquerade as completed ──
+
+  it("D1102: a text response truncated by max_tokens ends 'tool_limit' (auto-continue) with an honest cut-short note, never 'completed'", async () => {
+    const { site, conv } = await seedConvo(`loop-maxtokens-text-${runId}`);
+
+    const { client } = makeFakeClient([
+      cannedMessage({
+        content: [textBlock("Here is the plan, which gets chopped mid-sen")],
+        stop_reason: "max_tokens",
+        usage: usage(100, 8192),
+      }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result.endReason).toBe("tool_limit"); // handleAgentTurn auto-continues this
+    const msgs = await listMessages(db.getPool(), conv.id);
+    const last = msgs[msgs.length - 1];
+    expect(last.role).toBe("system");
+    expect(JSON.stringify(last.content)).toMatch(/cut short/i);
+    expect(JSON.stringify(last.content)).toMatch(/continuing/i);
+  });
+
+  it("D1102: max_tokens WITH complete tool_use blocks executes them and keeps looping (truncation hit after the calls)", async () => {
+    const { site, conv } = await seedConvo(`loop-maxtokens-tools-${runId}`);
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({
+        content: [toolUseBlock("t1", "get_site_overview", {})],
+        stop_reason: "max_tokens",
+        usage: usage(100, 8192),
+      }),
+      cannedMessage({
+        content: [textBlock("All done.")], stop_reason: "end_turn", usage: usage(50, 10),
+      }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ endReason: "completed", toolCalls: 1 });
+    expect(create).toHaveBeenCalledTimes(2);
+    const msgs = await listMessages(db.getPool(), conv.id);
+    // user, assistant(tool_use), tool(result), assistant(done) — the
+    // tool_use got its matching result, so history stayed API-valid.
+    expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+  });
+
   // ── W1.4 / D300+D1105+D612: real Stop — the loop honors cancel_requested ──
 
   it("W1.4 Stop: a cancel requested before the first model call ends the turn 'stopped' without calling the API", async () => {
@@ -779,34 +895,38 @@ d("runAgentTurn", () => {
     );
   });
 
-  it("Anthropic rate-limit error (429): persists the retry-shortly label (Task A4)", async () => {
+  it("Anthropic rate-limit error (429): retried (D1101), then persists the retry-shortly label once attempts are exhausted (Task A4)", async () => {
     const { site, conv } = await seedConvo(`loop-anthropic-429-${runId}`);
     const err = Object.assign(new Error("rate limited"), { status: 429 });
-    const create = vi.fn().mockRejectedValueOnce(err);
+    const create = vi.fn().mockRejectedValue(err); // persistent — every attempt fails
     const client = { messages: { create } } as unknown as Anthropic;
 
     const result = await runAgentTurn({
-      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ...API_ENV, AI_AGENT_RETRY_BASE_MS: "1" } as NodeJS.ProcessEnv, client,
     });
 
     expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+    expect(create).toHaveBeenCalledTimes(3); // D1101 — bounded in-loop retries first
     const msgs = await listMessages(db.getPool(), conv.id);
     expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe(
       "Anthropic is rate-limiting — retry shortly",
     );
   });
 
-  it("Anthropic overload error (529): persists the overloaded/retry label (Task A4)", async () => {
+  it("Anthropic overload error (529): retried (D1101), then persists the overloaded/retry label once attempts are exhausted (Task A4)", async () => {
     const { site, conv } = await seedConvo(`loop-anthropic-529-${runId}`);
     const err = Object.assign(new Error("Overloaded"), { status: 529 });
-    const create = vi.fn().mockRejectedValueOnce(err);
+    const create = vi.fn().mockRejectedValue(err); // persistent — every attempt fails
     const client = { messages: { create } } as unknown as Anthropic;
 
     const result = await runAgentTurn({
-      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      env: { ...API_ENV, AI_AGENT_RETRY_BASE_MS: "1" } as NodeJS.ProcessEnv, client,
     });
 
     expect(result).toEqual({ endReason: "error", toolCalls: 0 });
+    expect(create).toHaveBeenCalledTimes(3); // D1101 — bounded in-loop retries first
     const msgs = await listMessages(db.getPool(), conv.id);
     expect((msgs[1].content as { type: string; text: string }[])[0].text).toBe(
       "Anthropic is overloaded — retry shortly",
