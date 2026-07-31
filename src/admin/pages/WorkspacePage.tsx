@@ -138,6 +138,13 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const aiError = searchParams.get("ai_error") === "1";
   // `?page=<id>` (B5 — PagesTab "preview" deep link) preselects a page.
   const initialPageParam = searchParams.get("page");
+  // W1.1 / D213 — a from-template create navigates here IMMEDIATELY (no
+  // blind client-side wait on NewSitePage); `?materializing=<n>&template=…`
+  // tells this page to show a "materializing pages" state driven by pages
+  // actually appearing, polling the pages list until they do.
+  const materializingParam = searchParams.get("materializing");
+  const materializeTemplateName = searchParams.get("template");
+  const expectedPageCount = materializingParam ? Number(materializingParam) || 0 : 0;
 
   const [previewPageId, setPreviewPageId] = useState<string | null>(initialPageParam);
   const [previewNonce, setPreviewNonce] = useState(0);
@@ -252,6 +259,18 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     setPreviewPageId(home.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages]);
+
+  // W1.1 / D213 — while the create hand-off says pages are materializing and
+  // none have appeared yet, poll the pages list; the banner (and this
+  // polling) retire themselves the moment pages exist. `pagesData` (not
+  // `pages.length`) gates so the very first fetch settling with 0 pages
+  // still counts as "none yet" rather than "not loaded".
+  const materializing = materializingParam !== null && pagesData !== null && pages.length === 0;
+  useEffect(() => {
+    if (!materializing) return;
+    const timer = setInterval(() => reloadPages(), 1200);
+    return () => clearInterval(timer);
+  }, [materializing, reloadPages]);
 
   const { data: gitData } = useApi<GitStatus>(`/api/sites/${siteId}/git`);
   const gitUrl =
@@ -645,6 +664,25 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
             <UserMenu />
           </div>
         </div>
+
+        {/* W1.1 / D213 — honest materialization state: shown until pages
+            actually appear (which also stops the poll), instead of the old
+            8-second blind wait on the create screen. */}
+        {materializing && (
+          <div
+            data-testid="materializing-banner"
+            className="flex shrink-0 items-center gap-2 border-b border-zinc-200 bg-white px-5 py-2 text-xs text-zinc-600"
+          >
+            <Spinner />
+            <span>
+              {`Materializing ${
+                expectedPageCount > 0
+                  ? `${expectedPageCount} ${expectedPageCount === 1 ? "page" : "pages"}`
+                  : "pages"
+              }${materializeTemplateName ? ` from “${materializeTemplateName}”` : ""}…`}
+            </span>
+          </div>
+        )}
 
         {/* Small control strip above the preview frame — current page name
             (still the switcher; a quiet bordered pill now, not a bare

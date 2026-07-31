@@ -630,4 +630,48 @@ describe("WorkspacePage (Task B2)", () => {
       expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/auth/sign-out")).toBe(true),
     );
   });
+
+  it("W1.1/D213 — ?materializing shows an honest banner (count + template), polls the pages list, and retires itself when pages appear", async () => {
+    mockWorkspaceFetch({ pages: [] });
+    // Pages "materialize" ~1s in — so the mount fetches (WorkspaceView AND
+    // SitePreviewPanel both hit this URL) see an empty site, and only the
+    // 1.2s poll's refetch sees the landed pages.
+    const start = Date.now();
+    let pagesCalls = 0;
+    const inner = global.fetch;
+    global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/sites/s1/pages") {
+        pagesCalls++;
+        return json({ pages: Date.now() - start > 1000 ? [HOME_PAGE, ABOUT_PAGE] : [] });
+      }
+      return (inner as typeof fetch)(input, init);
+    }) as unknown as typeof fetch;
+
+    renderAt("/sites/acme?materializing=2&template=Starter");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("materializing-banner").textContent).toContain(
+        "Materializing 2 pages from “Starter”",
+      ),
+    );
+
+    // The poll (1.2s interval) refetches; once pages land the banner is gone.
+    await waitFor(() => expect(screen.queryByTestId("materializing-banner")).toBeNull(), {
+      timeout: 5000,
+    });
+    expect(pagesCalls).toBeGreaterThanOrEqual(3);
+  }, 10_000);
+
+  it("W1.1/D213 — no banner (and no polling) without the query param, even for a pageless site", async () => {
+    const fetchMock = mockWorkspaceFetch({ pages: [] });
+    renderAt("/sites/acme");
+    await waitFor(() => expect(screen.getByTestId("workspace-preview-frame")).toBeTruthy());
+    expect(screen.queryByTestId("materializing-banner")).toBeNull();
+    const pagesFetches = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input) === "/api/sites/s1/pages").length;
+    const before = pagesFetches();
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(pagesFetches()).toBe(before);
+  }, 10_000);
 });
