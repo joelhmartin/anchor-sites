@@ -1,7 +1,7 @@
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { requireAdmin } from "./requireAdmin.js";
+import { requireAdmin, __resetRequireAdminLogThrottleForTests } from "./requireAdmin.js";
 import type { StudioAuth } from "../server/auth/studio-auth.js";
 
 /** Fake Studio auth whose getSession returns a fixed result (or throws). */
@@ -94,5 +94,40 @@ describe("requireAdmin dual-mode (P8-T8.4 / D-034)", () => {
     expect(ok.body.user.id).toBe("service-token");
     const denied = await request(appWith(gate)).get("/probe");
     expect(denied.status).toBe(401);
+  });
+
+  // D803 — the token compare must be constant-time (same shape as
+  // preview-token.ts's length-guarded timingSafeEqual). The compare itself
+  // isn't observable through HTTP, but the length-mismatch path is the one
+  // that would THROW if the guard were missing — so it must 401, not 500.
+  it("8. [D803] rejects a wrong-length token cleanly (length-guarded compare)", async () => {
+    vi.stubEnv("ADMIN_API_TOKEN", "secret-token");
+    const gate = requireAdmin({ getAuth: () => null, getMode: () => "disabled" });
+    const shorter = await request(appWith(gate)).get("/probe").set("X-Admin-Token", "x");
+    expect(shorter.status).toBe(401);
+    const longer = await request(appWith(gate))
+      .get("/probe")
+      .set("X-Admin-Token", "secret-token-plus-extra");
+    expect(longer.status).toBe(401);
+    const exact = await request(appWith(gate)).get("/probe").set("X-Admin-Token", "secret-token");
+    expect(exact.status).toBe(200);
+  });
+
+  // D816 — a broken session backend must leave log evidence (throttled so a
+  // burst of polling requests doesn't flood the log with one line each).
+  it("9. [D816] logs a swallowed getSession error, at most once per burst", async () => {
+    __resetRequireAdminLogThrottleForTests();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("ADMIN_API_TOKEN", "secret-token");
+    const gate = requireAdmin({ getAuth: () => throwingAuth(), getMode: () => "disabled" });
+    const app = appWith(gate);
+    await request(app).get("/probe").set("X-Admin-Token", "secret-token");
+    await request(app).get("/probe").set("X-Admin-Token", "secret-token");
+    const requireAdminLogs = errSpy.mock.calls.filter(
+      (c) => typeof c[0] === "string" && c[0].includes("[requireAdmin]"),
+    );
+    expect(requireAdminLogs).toHaveLength(1);
+    expect(requireAdminLogs[0][0]).toMatch(/getSession/i);
+    errSpy.mockRestore();
   });
 });

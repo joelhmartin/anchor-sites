@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { fromNodeHeaders } from "better-auth/node";
 import {
@@ -44,6 +45,47 @@ const TOKEN_USER: StudioUser = {
   name: "Service Token",
 };
 
+/**
+ * D803 — constant-time secret compare, length-guarded first (timingSafeEqual
+ * THROWS on unequal lengths; unequal lengths can never match anyway). Same
+ * shape as `verifyPreviewToken` (src/server/preview-token.ts) and
+ * `verifyGithubSignature` (routes/git-webhook.ts). The previous `===` compare
+ * was the one variable-time comparison of the long-lived admin token left in
+ * the codebase.
+ */
+function timingSafeTokenEqual(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * D816 — a failing `getSession` (broken DB, misconfigured Better-auth)
+ * degrades every Google-session operator to 401; before this, the `catch {}`
+ * left zero log evidence of why. Log it, throttled to once per burst so
+ * workspace polling doesn't emit one line per request while the backend is
+ * down.
+ */
+const GET_SESSION_ERROR_LOG_INTERVAL_MS = 30_000;
+let lastGetSessionErrorLogAt = 0;
+
+function logGetSessionError(err: unknown): void {
+  const now = Date.now();
+  if (now - lastGetSessionErrorLogAt < GET_SESSION_ERROR_LOG_INTERVAL_MS) return;
+  lastGetSessionErrorLogAt = now;
+  // eslint-disable-next-line no-console
+  console.error(
+    "[requireAdmin] getSession failed — Google-session operators will see 401s until this clears (falling through to token/dev paths; further occurrences suppressed for 30s)",
+    err,
+  );
+}
+
+/** Test hook — resets the D816 log throttle so tests can assert the first log. */
+export function __resetRequireAdminLogThrottleForTests(): void {
+  lastGetSessionErrorLogAt = 0;
+}
+
 export type RequireAdminOptions = {
   /** Injectable for tests; defaults to the process singleton `getStudioAuth`. */
   getAuth?: () => StudioAuth | null;
@@ -69,14 +111,18 @@ export function requireAdmin(opts: RequireAdminOptions = {}): RequestHandler {
           };
           return next();
         }
-      } catch {
-        // session check failed → fall through to token / dev
+      } catch (err) {
+        // Session check failed → fall through to token / dev, but leave
+        // evidence (D816): silence here made a broken auth backend look like
+        // a mass sign-out with nothing in the logs.
+        logGetSessionError(err);
       }
     }
 
-    // 2. X-Admin-Token (CI / service / break-glass).
+    // 2. X-Admin-Token (CI / service / break-glass). Constant-time compare (D803).
     const expected = process.env.ADMIN_API_TOKEN;
-    if (expected && req.header("x-admin-token") === expected) {
+    const provided = req.header("x-admin-token");
+    if (expected && provided && timingSafeTokenEqual(provided, expected)) {
       req.studioUser = TOKEN_USER;
       return next();
     }
