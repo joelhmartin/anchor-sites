@@ -275,6 +275,35 @@ describe("WorkspacePage (Task B2)", () => {
     expect(screen.getByText(/domain still provisioning/i)).toBeTruthy();
   });
 
+  // Final-review item 3 follow-up: a FAILED provision must not hide behind the
+  // reassuring "will go live shortly" note — that was exactly the state
+  // (Cloud Run PermissionDenied → verification_status 'failed') that motivated
+  // the finding.
+  it("renders a failure note pointing at Manage → Domains when provisioning failed", async () => {
+    mockWorkspaceFetch({
+      publish: {
+        status: 200,
+        body: {
+          published: 1,
+          live_url: "https://acme.example.com",
+          live_url_ready: false,
+          live_url_status: { verification_status: "failed", ssl_status: "pending" },
+        },
+      },
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText("Published 1 page.");
+    expect(screen.queryByRole("link", { name: /acme\.example\.com/ })).toBeNull();
+    expect(screen.getByText(/provisioning failed/i)).toBeTruthy();
+    expect(screen.queryByText(/will go live shortly/i)).toBeNull();
+  });
+
   it("Fix round 1 (Critical finding 1) — disables Publish (and shows an explanatory title) when every page is already published", async () => {
     mockWorkspaceFetch({ pages: [HOME_PAGE] }); // HOME_PAGE.status === "published"
     renderAt("/sites/acme");

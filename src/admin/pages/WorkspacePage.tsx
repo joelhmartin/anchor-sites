@@ -217,6 +217,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     published: number;
     live_url: string | null;
     live_url_ready?: boolean;
+    live_url_status?: { verification_status?: string; ssl_status?: string };
   } | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   // Fix round 1 (Critical finding 1): outside-click/Escape close + initial
@@ -581,9 +582,16 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                             <span className="break-all text-xs font-medium text-zinc-500">
                               {publishResult.live_url}
                             </span>
-                            <span className="text-xs text-amber-600">
-                              Domain still provisioning — the link will go live shortly.
-                            </span>
+                            {publishResult.live_url_status?.verification_status === "failed" ||
+                            publishResult.live_url_status?.ssl_status === "failed" ? (
+                              <span className="text-xs text-red-600">
+                                Domain provisioning failed — see Manage → Domains for details.
+                              </span>
+                            ) : (
+                              <span className="text-xs text-amber-600">
+                                Domain still provisioning — the link will go live shortly.
+                              </span>
+                            )}
                           </div>
                         ))}
                       <div className="flex justify-end">
