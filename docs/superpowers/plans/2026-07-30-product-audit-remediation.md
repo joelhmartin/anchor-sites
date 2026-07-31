@@ -1,7 +1,7 @@
 # Product Audit Remediation Plan — 2026-07-30
 
 **Source:** whole-product big-picture audit of studio.anchorcorps.com against prod.
-**Coverage:** 12 census slices, 732+ units × ~20 lenses ≈ 14,700+ cells examined, **296 directives** (plus blocks-package slice, folded in on completion). Full catalog: `docs/superpowers/audits/2026-07-30-product-audit/` (one report per slice; every directive has file:line evidence).
+**Coverage:** 13 census slices, 772 units × ~20 lenses = 15,458 cells examined, **325 directives**, blank cells: 0 (the one disclosed deferral: live *authenticated* UI click-through, blocked by this session's permission classifier — closed by operator screenshots or a permission grant). Full catalog: `docs/superpowers/audits/2026-07-30-product-audit/` (one report per slice; every directive has file:line evidence).
 **Method:** big-picture skill (enumerate × interrogate). Nothing was fixed during the audit.
 
 ## Session status of the two one-liners
@@ -72,6 +72,12 @@ Root cause confirmed: the create path **works** in code; clicking a card only ar
 - D806 Studio login tab says "Site Template" + lorem meta (prod!) — real title/description.
 - D914 favicon (tenant tabs + 20KB HTML per favicon request); D911 placeholder-name gate at publish; D902 301 `/home`→`/`; D913 default title template; D908 explicit Cache-Control; D923 branded "site not ready" story: don't present `live_url` as live until mapping Ready (full catch-all host is W3).
 **Directives:** D806, D902, D908, D911, D913, D914, D923.
+
+### W1.8 Blocks-critic urgencies (added on critic completion — evidence in `blocks-critic.md`)
+- **D1290 — the previous product is still live.** The full pre-pivot Brainfood SPA (marketing/auth/app) is served to any non-admin host hitting the SPA fallback, and its assets are public on the studio origin — verified live, including 33 photos of real people. Delete the legacy tree + assets. (Cheap, privacy-relevant, do immediately.)
+- **D1200 — interactive blocks are dead on every published site.** Published pages ship zero client JS while faq-accordion (Radix) and both carousels (Embla) require it: live FAQs are dead buttons with answers absent from the HTML, sliders frozen on slide 1. Decision + implementation: islands runtime vs JS-free rebuilds (`<details>`, scroll-snap). Spec first; templates use these blocks, so this gates template quality.
+- **D1202 — icon names render as literal words** on live sites (nonprofit et al. use names outside the curated 10-glyph set). Add missing glyphs + publish the vocabulary to schema + AI catalog.
+- Remaining D1200-series directives are assigned within Wave 2/3 workstreams by topic: D1201 (live embeds execute in editor preview) → W2-SEC; D1203/D1214 (asset-hydration family beyond D901) → W2-CONC hydration fix; D1206 (nested content has no inline-edit surface — hero-slider none at all) → W2-WORK; catalog/registry/docs items (incl. D1220, split-registry coherence, phantom `buildPuckConfig` references) → W3 per the report.
 
 ---
 
