@@ -143,6 +143,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // boot-verified set; omitted → every registered plugin.
   loadPlugins(app, { only: opts.activePlugins });
 
+  // D101 — JSON 404 terminator for unknown /api paths, all methods. Every API
+  // router is mounted above; without this, unmatched /api requests fell
+  // through the tenant page renderer into index.ts's SPA fallback and
+  // returned 200 + HTML.
+  app.all("/api/*", (_req: Request, res: Response) => {
+    res.status(404).json({ error: "not_found" });
+  });
+
   // Admin-only debug endpoint for tenant resolution. P3-T3.2.
   app.use(siteResolveRouter());
 

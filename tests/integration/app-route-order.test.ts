@@ -116,4 +116,46 @@ d("createApp() /api route composition (D100)", () => {
     expect(res.body.page).toMatchObject({ id: scratchPageId, site_id: siteId });
     expect(res.body.revision?.id).toBeTruthy();
   });
+
+  // ---- unknown /api paths terminate as JSON 404 (D101) --------------------
+  // index.ts's SPA fallback (`app.get(/.*/)` in prod) is registered AFTER
+  // createApp's routers, so before the terminator an unknown /api path fell
+  // through the tenant page renderer and returned 200 + SPA HTML.
+
+  describe("unknown /api paths (D101)", () => {
+    // Mirrors index.ts's prod composition: createApp() + catch-all SPA route.
+    let spaApp: ReturnType<typeof createApp>;
+
+    beforeAll(() => {
+      spaApp = createApp();
+      spaApp.get(/.*/, (_req, res) => {
+        res.status(200).type("html").send('<div id="spa-fallback"></div>');
+      });
+    });
+
+    it("GET to an unknown /api path returns 404 JSON, not the SPA", async () => {
+      const res = await request(spaApp).get("/api/definitely/not/a/route");
+      expect(res.status).toBe(404);
+      expect(res.headers["content-type"]).toMatch(/application\/json/);
+      expect(res.body).toEqual({ error: "not_found" });
+    });
+
+    it("POST to an unknown /api path returns 404 JSON", async () => {
+      const res = await request(spaApp).post("/api/definitely/not/a/route").send({ any: "thing" });
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: "not_found" });
+    });
+
+    it("real /api routes still resolve ahead of the terminator", async () => {
+      const res = await auth(request(spaApp).get("/api/templates"));
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.templates)).toBe(true);
+    });
+
+    it("non-API unknown paths still reach the SPA fallback", async () => {
+      const res = await request(spaApp).get("/some/random/page");
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('id="spa-fallback"');
+    });
+  });
 });
