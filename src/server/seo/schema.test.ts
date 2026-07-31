@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyTitleTemplate,
+  defaultTitleTemplate,
   effectiveRobots,
   normalizeTwitterHandle,
   parseSeoLoose,
@@ -141,6 +142,26 @@ describe("applyTitleTemplate", () => {
   it("inserts a title containing $ specials literally (no replace-pattern interpretation)", () => {
     expect(applyTitleTemplate("%s — Acme", "Save $$ Today")).toBe("Save $$ Today — Acme");
     expect(applyTitleTemplate("%s — Acme", "A $& B")).toBe("A $& B — Acme");
+  });
+});
+
+// D913 — bare "Blog"/"Events"/page titles shipped without site identity when
+// no titleTemplate was configured (verified live: <title>Blog</title>).
+describe("defaultTitleTemplate (D913)", () => {
+  it("suffixes the site name when the title doesn't carry it", () => {
+    expect(applyTitleTemplate(defaultTitleTemplate("Muldoon Dental", "Blog"), "Blog")).toBe(
+      "Blog — Muldoon Dental",
+    );
+  });
+
+  it("returns no template when the title already contains the site name (no doubling)", () => {
+    expect(defaultTitleTemplate("Muldoon Dental", "Muldoon Dental — Family Dentistry")).toBeUndefined();
+    expect(defaultTitleTemplate("Muldoon Dental", "muldoon dental")).toBeUndefined();
+  });
+
+  it("returns no template for an empty site name", () => {
+    expect(defaultTitleTemplate("", "Blog")).toBeUndefined();
+    expect(defaultTitleTemplate("   ", "Blog")).toBeUndefined();
   });
 });
 

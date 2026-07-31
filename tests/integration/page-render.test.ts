@@ -127,6 +127,14 @@ d("page renderer catch-all (integration)", () => {
     __clearResolveSiteCacheForTests();
   });
 
+  it("D913 — no doubling: a page title that IS the site name gets no default suffix", async () => {
+    // demo-site has no titleTemplate; its home seo.title equals display_name.
+    const res = await request(app).get("/").set("Host", "demo-site.sites.anchorcorps.com");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("<title>AnchorCorps Demo Site</title>");
+    expect(res.text).not.toContain("AnchorCorps Demo Site — AnchorCorps Demo Site");
+  });
+
   it("returns 404 (site-shelled) for an unknown slug on a known site", async () => {
     const res = await request(app)
       .get("/this-page-does-not-exist")

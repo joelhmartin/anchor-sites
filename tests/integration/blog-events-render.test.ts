@@ -56,6 +56,15 @@ d("public blog/events rendering (P8-T8.11)", () => {
 
   beforeEach(() => __clearResolveSiteCacheForTests());
 
+  // D913 — with no seo_defaults.titleTemplate configured, index/detail titles
+  // shipped bare ("Blog") with zero site identity (verified live).
+  it("blog index + post titles carry the site name by default (D913)", async () => {
+    const list = await request(app).get("/blog").set("Host", HOST);
+    expect(list.text).toContain("<title>Blog — Muldoon Dental</title>");
+    const post = await request(app).get("/blog/hello-world").set("Host", HOST);
+    expect(post.text).toContain("<title>Hello World — Muldoon Dental</title>");
+  });
+
   it("/blog lists published posts (not drafts) on the tenant host", async () => {
     const res = await request(app).get("/blog").set("Host", HOST);
     expect(res.status).toBe(200);

@@ -104,6 +104,24 @@ export function applyTitleTemplate(template: string | undefined, pageTitle: stri
   return template.replace("%s", () => pageTitle);
 }
 
+/**
+ * D913 — every public page title carries site identity by default. When no
+ * `seo_defaults.titleTemplate` is configured, index routes shipped bare
+ * titles ("Blog", "Events") with zero site identity (verified live). This
+ * builds the fallback template `%s — <display name>` — UNLESS the page title
+ * already contains the site name (a home page titled "Acme — Dentistry"
+ * must not become "Acme — Dentistry — Acme").
+ */
+export function defaultTitleTemplate(
+  displayName: string,
+  pageTitle: string,
+): string | undefined {
+  const name = displayName.trim();
+  if (!name) return undefined;
+  if (pageTitle.toLowerCase().includes(name.toLowerCase())) return undefined;
+  return `%s — ${name}`;
+}
+
 /** Normalize a twitter handle to its `@handle` form (or undefined). */
 export function normalizeTwitterHandle(handle: string | undefined): string | undefined {
   if (!handle) return undefined;

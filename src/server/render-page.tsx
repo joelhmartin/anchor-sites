@@ -16,6 +16,7 @@ import { OVERLAY_CSS } from "./preview-overlay.js";
 import { rewriteSiteRelativeHrefs } from "./preview-links.js";
 import {
   applyTitleTemplate,
+  defaultTitleTemplate,
   effectiveRobots,
   normalizeTwitterHandle,
   parseSeoLoose,
@@ -290,7 +291,11 @@ export function renderPage(
   const description = pageSeo.description ?? siteDefaults.defaultDescription;
   const seo: SeoFields = { ...pageSeo, description };
   const baseTitle = pageSeo.title || page.title || site.display_name;
-  const title = applyTitleTemplate(siteDefaults.titleTemplate, baseTitle);
+  // D913 — when no titleTemplate is configured, fall back to
+  // "%s — <display name>" so blog/page titles still carry site identity.
+  const titleTemplate =
+    siteDefaults.titleTemplate ?? defaultTitleTemplate(site.display_name, baseTitle);
+  const title = applyTitleTemplate(titleTemplate, baseTitle);
   const canonical = canonicalUrl(site, seo, opts.path);
   const ogImage = opts.ogImage;
 
