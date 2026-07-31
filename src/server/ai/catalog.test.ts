@@ -63,10 +63,13 @@ describe("buildBlockCatalog (P6-T6.2)", () => {
     const catalog = buildBlockCatalog();
 
     const crmForm = catalog.find((c) => c.type === "crm_form")!;
-    // The model must learn the block is dead without a configured CRM embed,
-    // and what to reach for instead.
-    expect(crmForm.aiHints).toMatch(/CRM embed is configured/i);
-    expect(crmForm.aiHints).toMatch(/instead/i);
+    // W1.6/D700 refresh: templates ship WORKING platform lead forms posting
+    // to /api/leads — the model must learn to reuse/adapt that pattern and
+    // never invent third-party embeds (the old hint claimed the block
+    // rendered nothing without an operator CRM embed, which is now false).
+    expect(crmForm.aiHints).toMatch(/\/api\/leads/);
+    expect(crmForm.aiHints).toMatch(/never invent/i);
+    expect(crmForm.aiHints).not.toMatch(/renders as an empty gap/i);
     // No internal-architecture leakage in the model-facing description.
     expect(crmForm.description).not.toMatch(/D-006|anchor-hub/);
 
