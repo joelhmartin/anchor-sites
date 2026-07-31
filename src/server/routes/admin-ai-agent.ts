@@ -65,8 +65,26 @@ export function sseSend(res: Response, data: unknown): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-/** iframes/EventSource can't set headers; lift ?token= into the header requireAdmin reads. */
+/**
+ * iframes/EventSource can't set headers; lift ?token= into the header
+ * requireAdmin reads.
+ *
+ * D117 (W2-SEC) — NON-PRODUCTION ONLY. The surviving consumers of this shim
+ * are curl/dev workflows and the legacy paste-token login's preview fallback
+ * (SitePreviewPanel/TemplatesPage only reach for it when the pv1/ptv1 mint
+ * endpoint is unconfigured — impossible in prod, where the mint works
+ * whenever BETTER_AUTH_SECRET or ADMIN_API_TOKEN exists, and without both
+ * there is no admin token to lift either). Gating the lift means the
+ * long-lived ADMIN_API_TOKEN can never authenticate FROM A URL in
+ * production — URLs land in access logs, browser history, and Referers,
+ * which is exactly where a long-lived credential must not live. Headers
+ * (X-Admin-Token) keep working everywhere.
+ */
 export function tokenFromQuery(req: Request, _res: Response, next: NextFunction): void {
+  if (process.env.NODE_ENV === "production") {
+    next();
+    return;
+  }
   if (!req.headers["x-admin-token"] && typeof req.query.token === "string") {
     req.headers["x-admin-token"] = req.query.token;
   }

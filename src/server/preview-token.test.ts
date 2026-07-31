@@ -276,6 +276,44 @@ describe("previewQueryAuth middleware", () => {
     const res = await request(a).get(`/api/sites/${SITE_A}/preview?token=static-admin-token`);
     expect(res.body.header).toBe("static-admin-token");
   });
+
+  // D117 (W2-SEC) — in production the shim is off: a long-lived admin token
+  // must never authenticate FROM A URL there (access logs, history,
+  // Referers). pv1/ptv1 tokens — the only credentials prod puts in preview
+  // URLs — are unaffected, and X-Admin-Token as a HEADER keeps working.
+  describe("[D117] the legacy query-token lift is non-production only", () => {
+    it("does NOT lift ?token= into the header in production", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      try {
+        const a = express();
+        a.get(
+          "/api/sites/:siteId/preview",
+          previewQueryAuth(
+            (req: Request, res: Response) =>
+              res.status(401).json({ header: req.headers["x-admin-token"] ?? null }),
+            { env: SECRET_ENV },
+          ),
+        );
+        const res = await request(a).get(`/api/sites/${SITE_A}/preview?token=static-admin-token`);
+        expect(res.status).toBe(401);
+        expect(res.body.header).toBeNull();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("a valid pv1 preview token still authorizes in production", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      try {
+        const { token } = mint(SITE_A);
+        const res = await request(app()).get(`/api/sites/${SITE_A}/preview?token=${token}`);
+        expect(res.status).toBe(200);
+        expect(res.body.user).toBe("preview-token");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
 });
 
 // -----------------------------------------------------------------------------
