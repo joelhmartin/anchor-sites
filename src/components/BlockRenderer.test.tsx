@@ -60,6 +60,19 @@ describe("BlockRenderer", () => {
     expect(html).toContain("X");
   });
 
+  it("D706: prod mode emits id={block.id} on the wrapper so #anchor links resolve", () => {
+    const blocks: Block[] = [{ id: "contact-form", type: "hero", props: { title: "X" } }];
+    const html = renderToString(createElement(BlockRenderer, { blocks, editable: false }));
+    expect(html).toContain('id="contact-form"');
+  });
+
+  it("D706: editable mode carries the same DOM id so anchors resolve in preview too", () => {
+    const blocks: Block[] = [{ id: "contact-form", type: "hero", props: { title: "X" } }];
+    const html = renderToString(createElement(BlockRenderer, { blocks, editable: true }));
+    expect(html).toContain('id="contact-form"');
+    expect(html).toContain('data-block-id="contact-form"');
+  });
+
   it("BlockError is silent (no visible markup) when NODE_ENV=production", () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";

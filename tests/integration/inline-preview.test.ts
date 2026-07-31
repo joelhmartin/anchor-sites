@@ -100,7 +100,9 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
   // used to navigate the frame to the admin SPA. See src/server/preview-links.ts.
 
   const internalLinkBlocks = [
-    { id: "h1", type: "hero", props: { title: "Welcome", align: "center", cta_href: "/about" } },
+    // cta_label is explicit: since D713 an omitted label means "no CTA"
+    // (schemas no longer default a phantom "Get started" button into being).
+    { id: "h1", type: "hero", props: { title: "Welcome", align: "center", cta_label: "About", cta_href: "/about" } },
     {
       id: "r1",
       type: "rich-text",

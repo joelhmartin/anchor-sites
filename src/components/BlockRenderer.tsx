@@ -1,4 +1,4 @@
-import { createElement, Fragment } from "react";
+import { createElement } from "react";
 import type { Block } from "../blocks/types.js";
 import { getBlock } from "../blocks/registry.js";
 import { BlockError } from "./BlockError.js";
@@ -69,15 +69,19 @@ function Wrap({
 }) {
   // The wrapper carries the data-block-* attrs so the Phase 5 editor can
   // resolve clicks back to a block id without the inner component having
-  // to thread props for it. Use a Fragment-like passthrough by attaching
-  // attrs to a div only when editable; in prod render the child as-is.
+  // to thread props for it.
+  //
+  // D706 — BOTH paths emit `id={block.id}`: templates author in-page anchors
+  // (`#new-patients-forms`, hero CTAs targeting a block) and the prod path
+  // used to render a bare Fragment, so no `#block-id` link ever resolved on
+  // a live site. A plain block-level div adds no layout of its own; the id
+  // makes every block an addressable anchor target in prod and preview alike.
   if (editable) {
     return (
-      <div data-block-id={block.id} data-block-type={block.type}>
+      <div id={block.id} data-block-id={block.id} data-block-type={block.type}>
         {children}
       </div>
     );
   }
-  // Use Fragment to avoid adding markup noise in prod.
-  return <Fragment>{children}</Fragment>;
+  return <div id={block.id}>{children}</div>;
 }

@@ -83,6 +83,42 @@ describe("template catalog invariants (W1.6)", () => {
     });
   });
 
+  describe("D706 — every authored in-page anchor has a target", () => {
+    // Collect every *href-suffixed string prop (recursively — covers nav
+    // links, footer columns, hero-slider slides) that points at "#something"
+    // and require a block with that id on the SAME page. BlockRenderer emits
+    // id={block.id} on both prod and editor wrappers, so a matching block id
+    // is exactly what makes the anchor resolve.
+    function collectAnchorHrefs(value: unknown, out: string[]): void {
+      if (Array.isArray(value)) {
+        for (const v of value) collectAnchorHrefs(v, out);
+        return;
+      }
+      if (value && typeof value === "object") {
+        for (const [k, v] of Object.entries(value)) {
+          if (/href$/i.test(k) && typeof v === "string" && /^#.+/.test(v)) out.push(v);
+          else collectAnchorHrefs(v, out);
+        }
+      }
+    }
+
+    it("every #anchor href targets a block id on the same page", () => {
+      for (const t of allTemplates) {
+        for (const p of t.pages) {
+          const ids = new Set(p.blocks.map((b) => b.id));
+          const anchors: string[] = [];
+          for (const b of p.blocks) collectAnchorHrefs(b.props, anchors);
+          for (const a of anchors) {
+            expect(
+              ids.has(a.slice(1)),
+              `${t.slug}/${p.slug}: anchor "${a}" has no matching block id on that page`,
+            ).toBe(true);
+          }
+        }
+      }
+    });
+  });
+
   describe("D712/D713 — no placeholder artifacts", () => {
     it("no standalone image block ships without an asset (permanently empty box)", () => {
       for (const t of allTemplates) {
