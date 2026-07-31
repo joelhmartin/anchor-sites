@@ -375,8 +375,11 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           display_name: siteRow.display_name,
           default_brand_tokens: siteRow.default_brand_tokens ?? {},
           seo_defaults: siteRow.seo_defaults ?? {},
-          ctm_account_id: siteRow.ctm_account_id ?? null,
-          analytics_disabled: siteRow.analytics_disabled ?? false,
+          // Previews never load third-party tracking: the sandboxed iframe
+          // (no allow-same-origin) makes CTM/analytics scripts throw on every
+          // cookie write, and a draft view is not real traffic anyway.
+          ctm_account_id: null,
+          analytics_disabled: true,
           matched_via: "domain",
           plugins: [],
         };
