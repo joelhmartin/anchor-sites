@@ -7,7 +7,7 @@ export const faqAccordionEntry: BlockManifestEntry<typeof faqAccordionSchema> = 
   schema: faqAccordionSchema,
   component: FaqAccordion,
   label: "FAQ accordion",
-  description: "Question + answer list, expand/collapse via Radix accordion.",
+  description: "Question + answer list, native details/summary expand/collapse (works without JS).",
   aiHints: "5-10 items reads cleanest. Keep questions under 12 words.",
   category: "content",
 };

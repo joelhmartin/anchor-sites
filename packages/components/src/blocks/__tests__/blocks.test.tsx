@@ -340,7 +340,7 @@ describe("ac-logo-reel", () => {
 });
 
 describe("ac-faq-accordion", () => {
-  it("renders ac-faq-accordion root + one trigger per item", () => {
+  it("renders ac-faq-accordion root + one native <summary> trigger per item", () => {
     const props = faqAccordionSchema.parse({
       items: [
         { question: "Q1", answer: "A1" },
@@ -349,8 +349,63 @@ describe("ac-faq-accordion", () => {
     });
     const { container } = render(<FaqAccordion {...props} />);
     expect(container.querySelector("section.ac-faq-accordion")).not.toBeNull();
-    expect(screen.getByRole("button", { name: /Q1/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Q2/ })).toBeInTheDocument();
+    const summaries = [...container.querySelectorAll("details > summary")];
+    expect(summaries.map((s) => s.textContent)).toEqual([
+      expect.stringContaining("Q1"),
+      expect.stringContaining("Q2"),
+    ]);
+  });
+
+  it("D1200: answers are in the DOM even while items are closed", () => {
+    const props = faqAccordionSchema.parse({
+      items: [
+        { question: "Q1", answer: "Answer one" },
+        { question: "Q2", answer: "Answer two" },
+      ],
+    });
+    render(<FaqAccordion {...props} />);
+    expect(screen.getByText("Answer one")).toBeInTheDocument();
+    expect(screen.getByText("Answer two")).toBeInTheDocument();
+  });
+
+  it("multiple=false shares a <details name> group; multiple=true does not", () => {
+    const items = [
+      { question: "Q1", answer: "A1" },
+      { question: "Q2", answer: "A2" },
+    ];
+    const single = render(
+      <FaqAccordion {...faqAccordionSchema.parse({ items, multiple: false })} />,
+    );
+    const names = [...single.container.querySelectorAll("details")].map((d) =>
+      d.getAttribute("name"),
+    );
+    expect(names[0]).toBeTruthy();
+    expect(new Set(names).size).toBe(1);
+    single.unmount();
+
+    const multi = render(
+      <FaqAccordion {...faqAccordionSchema.parse({ items, multiple: true })} />,
+    );
+    for (const d of multi.container.querySelectorAll("details")) {
+      expect(d.hasAttribute("name")).toBe(false);
+    }
+  });
+
+  it("edit mode: items render open so editors see every answer", () => {
+    const props = faqAccordionSchema.parse({
+      items: [
+        { question: "Q1", answer: "A1" },
+        { question: "Q2", answer: "A2" },
+      ],
+    });
+    const { container } = render(
+      <EditModeProvider>
+        <FaqAccordion {...props} />
+      </EditModeProvider>,
+    );
+    const details = [...container.querySelectorAll("details")];
+    expect(details).toHaveLength(2);
+    for (const d of details) expect((d as HTMLDetailsElement).open).toBe(true);
   });
 
   it("renders heading when present", () => {

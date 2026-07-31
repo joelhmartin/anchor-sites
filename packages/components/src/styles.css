@@ -33,3 +33,9 @@
 @media (prefers-reduced-motion: reduce) {
   .ac-logo-reel__track { animation: none; }
 }
+
+/* ac-accordion — native <details>/<summary> (D1200). The summary's default
+   disclosure marker is suppressed via Tailwind utilities on the element;
+   Firefox's ::marker needs a plain rule. Chevron rotates on open. */
+.ac-accordion__item > summary::marker { content: ""; }
+.ac-accordion__item[open] > summary .ac-chevron { transform: rotate(180deg); }
