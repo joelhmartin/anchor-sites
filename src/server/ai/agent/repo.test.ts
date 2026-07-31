@@ -119,11 +119,11 @@ d("ai agent repo", () => {
   describe("claimConversationTurn / releaseConversationTurn (bot-review fix wave, item 1)", () => {
     it("claims from 'active', a second claim while running fails, and release returns it to 'active'", async () => {
       const conv = await createConversation(db.getPool(), siteId, "t");
-      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).not.toBeNull();
       expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
 
       // A second claim attempt while genuinely running (fresh updated_at) fails.
-      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(false);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBeNull();
 
       await releaseConversationTurn(db.getPool(), conv.id, "active");
       expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("active");
@@ -132,7 +132,7 @@ d("ai agent repo", () => {
     it("claims from 'error' too (resume semantics)", async () => {
       const conv = await createConversation(db.getPool(), siteId, "t");
       await setConversationStatus(db.getPool(), conv.id, "error");
-      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).not.toBeNull();
       expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
     });
 
@@ -151,13 +151,110 @@ d("ai agent repo", () => {
         `UPDATE ai_conversations SET updated_at = now() - interval '11 minutes' WHERE id = $1`,
         [conv.id],
       );
-      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).not.toBeNull();
     });
 
     it("a fresh 'running' row (updated_at < 10 minutes old) is NOT claimable", async () => {
       const conv = await createConversation(db.getPool(), siteId, "t");
       await claimConversationTurn(db.getPool(), conv.id);
-      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(false);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBeNull();
+    });
+  });
+
+  // ── W2-CONC / D1119: fencing token ── + ── D621: status-axis guards ──
+
+  describe("claim fencing (D1119) + archived/lifecycle guards (D621)", () => {
+    async function status(id: string): Promise<string> {
+      const r = await db.getPool().query<{ status: string }>(
+        `SELECT status FROM ai_conversations WHERE id = $1`, [id],
+      );
+      return r.rows[0].status;
+    }
+    /** Simulate a hung worker: age the running claim past the takeover window. */
+    async function ageClaim(id: string): Promise<void> {
+      await db.getPool().query(
+        `UPDATE ai_conversations SET updated_at = now() - interval '11 minutes' WHERE id = $1`, [id],
+      );
+    }
+
+    it("each successful claim returns a fresh, increasing token", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      const t1 = await claimConversationTurn(db.getPool(), conv.id);
+      await releaseConversationTurn(db.getPool(), conv.id, "active", t1!);
+      const t2 = await claimConversationTurn(db.getPool(), conv.id);
+      expect(t1).not.toBeNull();
+      expect(t2).not.toBeNull();
+      expect(BigInt(t2!)).toBeGreaterThan(BigInt(t1!));
+    });
+
+    it("a superseded claim's release-to-'active' no-ops — the takeover's turn stays running", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      const stale = await claimConversationTurn(db.getPool(), conv.id);
+      await ageClaim(conv.id);
+      const takeover = await claimConversationTurn(db.getPool(), conv.id);
+      expect(takeover).not.toBeNull();
+
+      // The hung worker wakes up and releases with its stale token: no-op.
+      await releaseConversationTurn(db.getPool(), conv.id, "active", stale!);
+      expect(await status(conv.id)).toBe("running");
+
+      // The takeover's own (current) token still releases normally.
+      await releaseConversationTurn(db.getPool(), conv.id, "active", takeover!);
+      expect(await status(conv.id)).toBe("active");
+    });
+
+    it("a superseded claim's release-to-'error' and markConversationStopped both no-op", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      const stale = await claimConversationTurn(db.getPool(), conv.id);
+      await ageClaim(conv.id);
+      await claimConversationTurn(db.getPool(), conv.id);
+
+      await releaseConversationTurn(db.getPool(), conv.id, "error", stale!);
+      expect(await status(conv.id)).toBe("running");
+
+      await markConversationStopped(db.getPool(), conv.id, stale!);
+      expect(await status(conv.id)).toBe("running");
+      // The superseded stop left no stray note either (pre-check caught it).
+      expect(await listMessages(db.getPool(), conv.id)).toHaveLength(0);
+    });
+
+    it("fenced setConversationStatus('error') from a superseded claim no-ops", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      const stale = await claimConversationTurn(db.getPool(), conv.id);
+      await ageClaim(conv.id);
+      await claimConversationTurn(db.getPool(), conv.id);
+
+      await setConversationStatus(db.getPool(), conv.id, "error", { ifClaimToken: stale! });
+      expect(await status(conv.id)).toBe("running");
+    });
+
+    it("D621(a): no release or terminal write downgrades 'archived'", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      const token = await claimConversationTurn(db.getPool(), conv.id);
+      await db.getPool().query(
+        `UPDATE ai_conversations SET status = 'archived' WHERE id = $1`, [conv.id],
+      );
+
+      await releaseConversationTurn(db.getPool(), conv.id, "error", token!);
+      expect(await status(conv.id)).toBe("archived");
+      await releaseConversationTurn(db.getPool(), conv.id, "error"); // token-less error release
+      expect(await status(conv.id)).toBe("archived");
+      await markConversationStopped(db.getPool(), conv.id);
+      expect(await status(conv.id)).toBe("archived");
+      await setConversationStatus(db.getPool(), conv.id, "active");
+      expect(await status(conv.id)).toBe("archived");
+    });
+
+    it("D621(b): archiveConversation refuses while a turn is running, archives once settled", async () => {
+      const { archiveConversation } = await import("./repo.js");
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      expect(await archiveConversation(db.getPool(), conv.id)).toBe(false);
+      expect(await status(conv.id)).toBe("running");
+
+      await releaseConversationTurn(db.getPool(), conv.id, "active");
+      expect(await archiveConversation(db.getPool(), conv.id)).toBe(true);
+      expect(await status(conv.id)).toBe("archived");
     });
   });
 
@@ -218,7 +315,7 @@ d("ai agent repo", () => {
     it("a 'stopped' conversation is claimable again (a follow-up message resumes)", async () => {
       const conv = await createConversation(db.getPool(), siteId, "t");
       await setConversationStatus(db.getPool(), conv.id, "stopped");
-      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect(await claimConversationTurn(db.getPool(), conv.id)).not.toBeNull();
       expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
     });
 

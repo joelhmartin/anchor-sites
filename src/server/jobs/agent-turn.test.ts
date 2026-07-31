@@ -55,6 +55,9 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
 
     expect(runTurn).toHaveBeenCalledWith({
       pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      // D1119 — the claim's fencing token rides into the loop ("1": this
+      // conversation's first-ever claim).
+      claimToken: "1",
       // D1111 — round counters always ride along (round 1 of cap+1 here).
       continuationHint: { round: 1, maxRounds: 4 },
     });

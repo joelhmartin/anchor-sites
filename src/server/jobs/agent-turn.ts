@@ -141,14 +141,19 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
   const maxContinuations = parsePositiveIntEnv(
     process.env.AI_AGENT_MAX_CONTINUATIONS, DEFAULT_MAX_CONTINUATIONS,
   );
-  const claimed = await claimConversationTurn(deps.pool, data.conversationId);
-  if (!claimed) return; // duplicate/re-delivery — another turn already owns this conversation
+  // D1119: the claim's fencing token rides through every status write this
+  // delivery makes (directly below and inside the loop via `claimToken`) —
+  // if this worker hangs past the stale-takeover window and loses the
+  // conversation to a newer claim, all of its late writes no-op instead of
+  // clobbering the newer turn's state.
+  const claimToken = await claimConversationTurn(deps.pool, data.conversationId);
+  if (claimToken === null) return; // duplicate/re-delivery — another turn already owns this conversation
   try {
     // W1.4 Stop — a cancel requested while this job sat QUEUED (the loop's
     // own checks only run once a turn is executing). Consumed after the
     // claim so this delivery owns the conversation when it lands 'stopped'.
     if (await consumeCancelRequest(deps.pool, data.conversationId)) {
-      await markConversationStopped(deps.pool, data.conversationId);
+      await markConversationStopped(deps.pool, data.conversationId, claimToken);
       return;
     }
 
@@ -156,6 +161,7 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
       pool: deps.pool,
       conversationId: data.conversationId,
       siteId: data.siteId,
+      claimToken,
       // D1111 — 1-based round counters: round 0's job is round 1 of
       // (cap + 1) total possible rounds per user message.
       continuationHint: { round: continuation + 1, maxRounds: maxContinuations + 1 },
@@ -171,7 +177,7 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
       // round (after the loop's last own check) must halt the chain here,
       // not ride into another full round of spend.
       if (await consumeCancelRequest(deps.pool, data.conversationId)) {
-        await markConversationStopped(deps.pool, data.conversationId);
+        await markConversationStopped(deps.pool, data.conversationId, claimToken);
         return;
       }
 
@@ -182,7 +188,7 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
         // job dequeues and claims before THIS release commits, so a crash
         // between the two could strand the conversation at 'running' with
         // nothing left to release it.
-        await releaseConversationTurn(deps.pool, data.conversationId, "active");
+        await releaseConversationTurn(deps.pool, data.conversationId, "active", claimToken);
         const next: AgentTurnInput = {
           conversationId: data.conversationId,
           siteId: data.siteId,
@@ -215,7 +221,7 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
           await appendMessage(deps.pool, data.conversationId, "system", [
             { type: "text", text: "Couldn't queue the next build round — press Resume to continue." },
           ]).catch(() => undefined);
-          await releaseConversationTurn(deps.pool, data.conversationId, "error").catch(() => undefined);
+          await releaseConversationTurn(deps.pool, data.conversationId, "error", claimToken).catch(() => undefined);
           // No rethrow: this round's own work succeeded and the failure is
           // surfaced where the operator looks (the transcript + Resume).
         }
@@ -236,11 +242,11 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
             `send a message to continue.`,
         },
       ]);
-      await releaseConversationTurn(deps.pool, data.conversationId, "active");
+      await releaseConversationTurn(deps.pool, data.conversationId, "active", claimToken);
       return;
     }
 
-    await releaseConversationTurn(deps.pool, data.conversationId, "active");
+    await releaseConversationTurn(deps.pool, data.conversationId, "active", claimToken);
   } catch (err) {
     // D303 — every OTHER turn-ending failure persists explanatory text (the
     // loop's describeAnthropicError / failure-streak / budget branches);
@@ -254,7 +260,7 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
     // releaseConversationTurn (not bare setConversationStatus): also clears
     // a pending cancel flag so a Stop that raced this failure can't cancel
     // the NEXT, unrelated turn (W1.4).
-    await releaseConversationTurn(deps.pool, data.conversationId, "error").catch(() => undefined);
+    await releaseConversationTurn(deps.pool, data.conversationId, "error", claimToken).catch(() => undefined);
     throw err;
   }
 }

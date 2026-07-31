@@ -6,7 +6,7 @@ import { buildBlockCatalog } from "../catalog.js";
 import {
   getConversation, appendMessage, listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
   consumeCancelRequest, markConversationStopped, getFoundingUserMessage,
-  type AiMessage,
+  type AiMessage, type ClaimToken,
 } from "./repo.js";
 import { buildAgentToolDefs, executeAgentTool } from "./tools/index.js";
 import type { AgentChangeEvent, AgentToolCtx } from "./tools/types.js";
@@ -341,8 +341,10 @@ async function runStubTurn(params: {
   conversationId: string;
   toolCtx: AgentToolCtx;
   onEvent: (e: AgentTurnEvent) => void;
+  /** D1119 — fencing token from the caller's turn claim (see runAgentTurn). */
+  claimToken?: ClaimToken;
 }): Promise<AgentTurnResult> {
-  const { pool, siteId, conversationId, toolCtx, onEvent } = params;
+  const { pool, siteId, conversationId, toolCtx, onEvent, claimToken } = params;
 
   const pageCount = await pool.query<{ count: number }>(
     `SELECT COUNT(*)::int AS count FROM pages WHERE site_id = $1`, [siteId],
@@ -400,7 +402,7 @@ async function runStubTurn(params: {
       // does, the turn should report the failure, not a cheerful lie.
       const text = `Stub mode: failed to create the starter Home page (${result.error}).`;
       await persistAssistantText(pool, conversationId, text, onEvent);
-      await setConversationStatus(pool, conversationId, "error");
+      await setConversationStatus(pool, conversationId, "error", { ifClaimToken: claimToken });
       onEvent({ type: "turn_done", reason: "error", message: text });
       return { endReason: "error", toolCalls: 1 };
     }
@@ -443,9 +445,17 @@ export async function runAgentTurn(input: {
    * assistant text "…stopping here." on builds that then silently continue.
    */
   continuationHint?: { round: number; maxRounds: number };
+  /**
+   * D1119 (W2-CONC) — the fencing token the caller's `claimConversationTurn`
+   * returned. Threaded into every terminal status write this loop makes
+   * (error/stopped), so a turn whose claim was superseded by a
+   * stale-takeover can't clobber the newer claimant's state. Optional:
+   * direct/test callers without a claim run unfenced, exactly as before.
+   */
+  claimToken?: ClaimToken;
   genId?: () => string;
 }): Promise<AgentTurnResult> {
-  const { pool, conversationId, siteId } = input;
+  const { pool, conversationId, siteId, claimToken } = input;
   const env = input.env ?? process.env;
   const onEvent = input.onEvent ?? (() => undefined);
   const maxToolCalls =
@@ -459,7 +469,7 @@ export async function runAgentTurn(input: {
   const toolCtx: AgentToolCtx = { pool, siteId, conversationId, env, genId: input.genId };
 
   if (resolveAiMode(env) !== "api") {
-    return runStubTurn({ pool, siteId, conversationId, toolCtx, onEvent });
+    return runStubTurn({ pool, siteId, conversationId, toolCtx, onEvent, claimToken });
   }
 
   const system = [
@@ -484,7 +494,7 @@ export async function runAgentTurn(input: {
     // checker acts per Stop click. History is API-valid here: the previous
     // batch's tool_results (if any) are already persisted.
     if (await consumeCancelRequest(pool, conversationId)) {
-      await markConversationStopped(pool, conversationId);
+      await markConversationStopped(pool, conversationId, claimToken);
       onEvent({ type: "turn_done", reason: "stopped" });
       return { endReason: "stopped", toolCalls };
     }
@@ -558,7 +568,7 @@ export async function runAgentTurn(input: {
       // failure-streak/budget cases above.
       const text = describeAnthropicError(err);
       await persistAssistantText(pool, conversationId, text, onEvent);
-      await setConversationStatus(pool, conversationId, "error");
+      await setConversationStatus(pool, conversationId, "error", { ifClaimToken: claimToken });
       onEvent({ type: "turn_done", reason: "error", message: text });
       return { endReason: "error", toolCalls };
     }
@@ -692,7 +702,7 @@ export async function runAgentTurn(input: {
     await appendMessage(pool, conversationId, "tool", resultBlocks);
 
     if (cancelled) {
-      await markConversationStopped(pool, conversationId);
+      await markConversationStopped(pool, conversationId, claimToken);
       onEvent({ type: "turn_done", reason: "stopped" });
       return { endReason: "stopped", toolCalls };
     }
@@ -703,7 +713,7 @@ export async function runAgentTurn(input: {
       const text =
         `The "${toolName}" tool failed ${count} times in a row; stopping here rather than repeating the same mistake.`;
       await persistAssistantText(pool, conversationId, text, onEvent);
-      await setConversationStatus(pool, conversationId, "error");
+      await setConversationStatus(pool, conversationId, "error", { ifClaimToken: claimToken });
       onEvent({ type: "turn_done", reason: "error", message: text });
       return { endReason: "error", toolCalls };
     }

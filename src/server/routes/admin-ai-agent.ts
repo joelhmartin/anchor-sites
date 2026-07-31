@@ -226,13 +226,11 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
    * the claim (to `error`) before propagating, instead of leaving the
    * conversation stuck at `running` until the stale-takeover window.
    *
-   * DEFERRED (noted, not implemented — low probability): this claim has no
-   * fencing/lease token. A worker whose claim was itself invalidated by a
-   * stale-takeover (it hung past the 10-minute window, another delivery
-   * took over) could still run to completion and call `releaseConversationTurn`,
-   * incorrectly flipping the NEWER claim's `running` back to `active`
-   * before ITS turn finishes. Recorded here rather than fixed — closing it
-   * fully needs a lease token threaded through claim/release.
+   * D1119 (W2-CONC — closes the previously-DEFERRED no-fencing note): the
+   * claim now returns a fencing token (`claim_seq`), and every release here
+   * carries it. A worker whose claim was invalidated by a stale-takeover
+   * can no longer flip the NEWER claim's `running` back to `active` — its
+   * fenced release just no-ops.
    */
   async function runJobTurn(
     res: Response,
@@ -241,8 +239,8 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
   ): Promise<void> {
     const { conversationId, siteId, message } = input;
 
-    const claimed = await claimConversationTurn(pool, conversationId);
-    if (!claimed) {
+    const claimToken = await claimConversationTurn(pool, conversationId);
+    if (claimToken === null) {
       res.status(409).json({ error: "turn already running" });
       return;
     }
@@ -252,11 +250,11 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
       const appended = await appendMessage(pool, conversationId, "user", [{ type: "text", text: message }]);
       userMessageId = appended.id;
     } catch (err) {
-      await releaseConversationTurn(pool, conversationId, "error").catch(() => undefined);
+      await releaseConversationTurn(pool, conversationId, "error", claimToken).catch(() => undefined);
       throw err;
     }
 
-    await releaseConversationTurn(pool, conversationId, "active");
+    await releaseConversationTurn(pool, conversationId, "active", claimToken);
 
     // `continuation: 0` — this is round 0 of the conversation's AGENT_TURN
     // job chain (Task A2). A3 increments it on re-enqueued continuations

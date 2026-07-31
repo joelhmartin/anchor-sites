@@ -13,7 +13,18 @@ export type AiConversation = {
   title: string;
   /** `stopped` (W1.4 / D300+D1105+D612): an operator-cancelled turn's honest
    * terminal state — nothing failed ('error' would lie), nothing completed
-   * ('active' would lie). Claimable again like 'error' (a message resumes). */
+   * ('active' would lie). Claimable again like 'error' (a message resumes).
+   *
+   * KNOWN AXIS DEBT (W2-CONC / D621, deliberately not remodeled): this one
+   * enum multiplexes three axes — a turn MUTEX (`running`), a HEALTH flag
+   * (`error`/`stopped`), and a LIFECYCLE (`active`/`archived`). The two
+   * concrete hazards that multiplexing creates are guarded below rather than
+   * split into columns: (a) no release/terminal write may downgrade
+   * `archived` (every status-writing function carries a
+   * `status <> 'archived'` predicate), and (b) archiving refuses while a
+   * turn is running (`archiveConversation`). A full split (lock →
+   * `claim_seq`+lease column, lifecycle → its own column) is the W2-TERM
+   * archive surface's prerequisite work, not this milestone's. */
   status: "active" | "error" | "archived" | "running" | "stopped";
   token_usage: Record<string, { input: number; output: number }>;
   created_at: string;
@@ -189,10 +200,40 @@ export async function getFoundingUserMessage(
   return r.rows[0] ?? null;
 }
 
+/**
+ * D621 guard (a): a plain status write never downgrades `archived` — archived
+ * is terminal for every writer except an explicit future unarchive function.
+ * D1119: pass `opts.ifClaimToken` (from `claimConversationTurn`) to make the
+ * write a fenced one — it no-ops if the claim was superseded by a takeover.
+ */
 export async function setConversationStatus(
   pool: Pool, id: string, status: AiConversation["status"],
+  opts: { ifClaimToken?: ClaimToken } = {},
 ): Promise<void> {
-  await pool.query(`UPDATE ai_conversations SET status = $2 WHERE id = $1`, [id, status]);
+  await pool.query(
+    `UPDATE ai_conversations SET status = $2
+     WHERE id = $1 AND status <> 'archived'
+       AND ($3::bigint IS NULL OR claim_seq = $3::bigint)`,
+    [id, status, opts.ifClaimToken ?? null],
+  );
+}
+
+/**
+ * D621 guard (b): archive is the lifecycle's terminal transition and must
+ * not land mid-turn — a running build writing into an archived conversation
+ * is undefined territory (and the D302 unique index would let a NEW
+ * conversation be created while the old build still runs). Refuses while
+ * `running`; returns whether the archive landed. The future archive
+ * route/tool (W2-TERM D108/D517) must go through this, never a bare UPDATE.
+ */
+export async function archiveConversation(pool: Pool, id: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE ai_conversations SET status = 'archived', cancel_requested = false
+     WHERE id = $1 AND status <> 'running'
+     RETURNING id`,
+    [id],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /**
@@ -214,18 +255,31 @@ export async function setConversationStatus(
  * against the 10-minute stale-takeover window. A long-queued-but-not-yet-
  * started job could otherwise become "stale" and get its lock stolen out
  * from under it before its first model call ever persists anything.
+ *
+ * W2-CONC / D1119 — fencing token. The lock is stealable (the stale-takeover
+ * branch), so every successful claim now increments `claim_seq` and returns
+ * the new value as this claim's TOKEN (a string — node-postgres returns
+ * bigint as text). Fenced writes (`releaseConversationTurn`,
+ * `markConversationStopped`, `setConversationStatus` with `ifClaimToken`)
+ * compare it and no-op when superseded: a worker that hung past the
+ * 10-minute window, lost its claim to a takeover, and then woke up can no
+ * longer release the NEWER claimant's `running` back to `active` (which
+ * would have let two turns interleave writes + Anthropic history). Returns
+ * `null` iff the claim was not won.
  */
-export async function claimConversationTurn(pool: Pool, id: string): Promise<boolean> {
+export type ClaimToken = string;
+
+export async function claimConversationTurn(pool: Pool, id: string): Promise<ClaimToken | null> {
   // 'stopped' joins 'error' in the claimable set (W1.4 Stop): a follow-up
   // message after an operator cancel IS the resume.
-  const r = await pool.query(
-    `UPDATE ai_conversations SET status = 'running', updated_at = now()
+  const r = await pool.query<{ claim_seq: string }>(
+    `UPDATE ai_conversations SET status = 'running', updated_at = now(), claim_seq = claim_seq + 1
      WHERE id = $1
        AND (status IN ('active','error','stopped') OR (status = 'running' AND updated_at < now() - interval '10 minutes'))
-     RETURNING id`,
+     RETURNING claim_seq::text AS claim_seq`,
     [id],
   );
-  return (r.rowCount ?? 0) > 0;
+  return r.rows[0]?.claim_seq ?? null;
 }
 
 /**
@@ -233,11 +287,15 @@ export async function claimConversationTurn(pool: Pool, id: string): Promise<boo
  * update (only while still `running`) so it never clobbers an `error` status
  * some other code path already set for this same turn (the loop's failure-
  * streak/budget-exhaustion branches, or the route's own catch block) — those
- * already-set statuses win over this best-effort "done" flip. `status:"error"`
- * is unconditional (mirrors the existing `setConversationStatus` error paths).
+ * already-set statuses win over this best-effort "done" flip.
+ *
+ * D1119: `claimToken` (when the caller holds one) fences BOTH branches — a
+ * release from a superseded claim no-ops instead of flipping the newer
+ * claimant's `running`. D621 guard (a): the `error` branch, which used to be
+ * a bare unconditional UPDATE, now also refuses to downgrade `archived`.
  */
 export async function releaseConversationTurn(
-  pool: Pool, id: string, status: "active" | "error",
+  pool: Pool, id: string, status: "active" | "error", claimToken?: ClaimToken,
 ): Promise<void> {
   // Both branches also clear `cancel_requested` (W1.4 Stop): a Stop that
   // lost the race against the turn's natural end must not linger and cancel
@@ -245,13 +303,16 @@ export async function releaseConversationTurn(
   if (status === "active") {
     await pool.query(
       `UPDATE ai_conversations SET status = 'active', cancel_requested = false
-       WHERE id = $1 AND status = 'running'`,
-      [id],
+       WHERE id = $1 AND status = 'running'
+         AND ($2::bigint IS NULL OR claim_seq = $2::bigint)`,
+      [id, claimToken ?? null],
     );
   } else {
     await pool.query(
-      `UPDATE ai_conversations SET status = 'error', cancel_requested = false WHERE id = $1`,
-      [id],
+      `UPDATE ai_conversations SET status = 'error', cancel_requested = false
+       WHERE id = $1 AND status <> 'archived'
+         AND ($2::bigint IS NULL OR claim_seq = $2::bigint)`,
+      [id, claimToken ?? null],
     );
   }
 }
@@ -298,12 +359,31 @@ export async function consumeCancelRequest(pool: Pool, id: string): Promise<bool
  * 'stopped' (clearing any re-set flag). Note first, status second — the SSE
  * tail applies a terminal status immediately on the client, so the note must
  * already be in the DB when the status flip streams out.
+ *
+ * D1119: with a `claimToken`, both the note and the flip are skipped when
+ * the claim was superseded (pre-check) and the flip itself is fenced — a
+ * hung worker's late "stopped" can't overwrite the newer claimant's turn.
+ * The pre-check-then-write pair leaves a microscopic window where only the
+ * note lands (a stray transcript line, no state damage) — acceptable for
+ * the minimal fence; the STATUS write is the one that's atomic-guarded.
  */
-export async function markConversationStopped(pool: Pool, id: string): Promise<void> {
+export async function markConversationStopped(
+  pool: Pool, id: string, claimToken?: ClaimToken,
+): Promise<void> {
+  if (claimToken !== undefined) {
+    const check = await pool.query<{ claim_seq: string; status: string }>(
+      `SELECT claim_seq::text AS claim_seq, status FROM ai_conversations WHERE id = $1`,
+      [id],
+    );
+    const row = check.rows[0];
+    if (!row || row.claim_seq !== claimToken || row.status === "archived") return;
+  }
   await appendMessage(pool, id, "system", [{ type: "text", text: STOPPED_NOTE }]);
   await pool.query(
-    `UPDATE ai_conversations SET status = 'stopped', cancel_requested = false WHERE id = $1`,
-    [id],
+    `UPDATE ai_conversations SET status = 'stopped', cancel_requested = false
+     WHERE id = $1 AND status <> 'archived'
+       AND ($2::bigint IS NULL OR claim_seq = $2::bigint)`,
+    [id, claimToken ?? null],
   );
 }
 
