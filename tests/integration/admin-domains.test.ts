@@ -273,7 +273,11 @@ d("admin domains API — DELETE /api/sites/:siteId/domains/:domainId (10.5)", ()
       await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
     ).rows[0].id;
     mockDns = makeMockDns();
-    mockCloudRun = makeMockCloudRun();
+    mockCloudRun = makeMockCloudRun({
+      resourceRecords: [
+        { name: "todelete.sites.anchorcorps.com", type: "CNAME", rrdata: "ghs.googlehosted.com." },
+      ],
+    });
     app = buildApp(pool, { dns: mockDns, cloudRun: mockCloudRun });
   }, 60_000);
 
@@ -295,28 +299,137 @@ d("admin domains API — DELETE /api/sites/:siteId/domains/:domainId (10.5)", ()
     expect(r.body.error).toMatch(/primary/i);
   });
 
-  it("deletes a non-primary domain and calls Cloud Run + DNS removeRecord", async () => {
+  it("deletes a non-primary domain: 200 {removed:true, warnings:[]}; reads cleanup targets BEFORE unmapping (D1002)", async () => {
     const ins = await pool.query<{ id: string }>(
       `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
-       VALUES ($1, 'todelete.example.com', false, 'pending', 'pending')
+       VALUES ($1, 'todelete.sites.anchorcorps.com', false, 'pending', 'pending')
        RETURNING id`,
       [muldoonId],
     );
     const domId = ins.rows[0].id;
     const prevCallCount = mockCloudRun.calls.length;
+    const prevDnsCount = mockDns.calls.length;
 
     const r = await request(app)
       .delete(`/api/sites/${muldoonId}/domains/${domId}`)
       .set("X-Admin-Token", ADMIN_TOKEN);
-    expect(r.status).toBe(204);
+    expect(r.status).toBe(200);
+    expect(r.body.removed).toBe(true);
+    expect(r.body.warnings).toEqual([]);
 
     // Row deleted
     const check = await pool.query(`SELECT 1 FROM site_domains WHERE id = $1`, [domId]);
     expect(check.rowCount).toBe(0);
 
-    // Cloud Run deleteMapping was called
-    const delCalls = mockCloudRun.calls.slice(prevCallCount).filter((c) => c.method === "deleteMapping");
-    expect(delCalls.length).toBeGreaterThanOrEqual(1);
+    // D1002: the required-records read happens BEFORE deleteMapping —
+    // reading them off the just-deleted mapping always returned [] and DNS
+    // was never cleaned up.
+    const calls = mockCloudRun.calls.slice(prevCallCount);
+    const readIdx = calls.findIndex((c) => c.method === "getRequiredDnsRecords");
+    const delIdx = calls.findIndex((c) => c.method === "deleteMapping");
+    expect(readIdx).toBeGreaterThanOrEqual(0);
+    expect(delIdx).toBeGreaterThanOrEqual(0);
+    expect(readIdx).toBeLessThan(delIdx);
+
+    // The pre-read records were actually removed from DNS (managed domain).
+    const removes = mockDns.calls.slice(prevDnsCount).filter((c) => c.method === "removeRecord");
+    expect(removes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps the row (retryable) and 502s when the Cloud Run unmap genuinely fails (D119)", async () => {
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary)
+       VALUES ($1, 'unmapfail.sites.anchorcorps.com', false) RETURNING id`,
+      [muldoonId],
+    );
+    const domId = ins.rows[0].id;
+    const failingCloudRun = {
+      async getRequiredDnsRecords() {
+        return [];
+      },
+      async deleteMapping() {
+        throw new Error("Cloud Run 500 /unmapfail: internal error");
+      },
+    } as unknown as CloudRunDomainsClient;
+    const failApp = buildApp(pool, { dns: makeMockDns(), cloudRun: failingCloudRun });
+
+    const r = await request(failApp)
+      .delete(`/api/sites/${muldoonId}/domains/${domId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(502);
+    expect(r.body.error).toMatch(/not removed/i);
+    expect(r.body.warnings.join(" ")).toMatch(/Cloud Run 500/);
+
+    // Row survives so Remove can be retried once the transient failure clears.
+    const check = await pool.query(`SELECT 1 FROM site_domains WHERE id = $1`, [domId]);
+    expect(check.rowCount).toBe(1);
+    await pool.query(`DELETE FROM site_domains WHERE id = $1`, [domId]);
+  });
+
+  it("removes the row but returns warnings when DNS cleanup partially fails (D119)", async () => {
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary)
+       VALUES ($1, 'dnsfail.sites.anchorcorps.com', false) RETURNING id`,
+      [muldoonId],
+    );
+    const domId = ins.rows[0].id;
+    const failingDns = {
+      id: "kinsta" as const,
+      async ensureRecord() {
+        return "created" as const;
+      },
+      async verifyRecord() {
+        return true;
+      },
+      async removeRecord() {
+        throw new Error("Kinsta 500: boom");
+      },
+    };
+    const warnApp = buildApp(pool, {
+      dns: failingDns,
+      cloudRun: makeMockCloudRun({
+        resourceRecords: [
+          { name: "dnsfail.sites.anchorcorps.com", type: "CNAME", rrdata: "ghs.googlehosted.com." },
+        ],
+      }),
+    });
+
+    const r = await request(warnApp)
+      .delete(`/api/sites/${muldoonId}/domains/${domId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.removed).toBe(true);
+    expect(r.body.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(r.body.warnings.join(" ")).toMatch(/dnsfail\.sites\.anchorcorps\.com/);
+    expect(r.body.warnings.join(" ")).toMatch(/Kinsta 500/);
+
+    const check = await pool.query(`SELECT 1 FROM site_domains WHERE id = $1`, [domId]);
+    expect(check.rowCount).toBe(0);
+  });
+
+  it("treats a 404 on unmap as already-unmapped (no warning, removed)", async () => {
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO site_domains (site_id, hostname, is_primary)
+       VALUES ($1, 'already-unmapped.sites.anchorcorps.com', false) RETURNING id`,
+      [muldoonId],
+    );
+    const domId = ins.rows[0].id;
+    const cloudRun404 = {
+      async getRequiredDnsRecords() {
+        return [];
+      },
+      async deleteMapping() {
+        throw new Error("Cloud Run 404 /already-unmapped: not found");
+      },
+    } as unknown as CloudRunDomainsClient;
+    const app404 = buildApp(pool, { dns: makeMockDns(), cloudRun: cloudRun404 });
+
+    const r = await request(app404)
+      .delete(`/api/sites/${muldoonId}/domains/${domId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.removed).toBe(true);
+    expect(r.body.warnings).toEqual([]);
   });
 
   it("404 for domain not belonging to this site", async () => {

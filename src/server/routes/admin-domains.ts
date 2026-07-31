@@ -67,8 +67,14 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
   function getCloudRun() {
     return opts.cloudRun ?? new CloudRunDomainsClient();
   }
-  function getDns() {
-    return opts.dns ?? resolveDnsProvider();
+  // Per-class DNS provider selection (provision + delete): managed
+  // hostnames use the configured provider; client-owned zones are never
+  // auto-written (ManualDnsProvider surfaces records to the operator).
+  function dnsForHostname(hostname: string): DnsProvider {
+    return (
+      opts.dns ??
+      (domainClass(hostname) === "managed" ? resolveDnsProvider() : new ManualDnsProvider())
+    );
   }
 
   // GET /api/sites/:siteId/domains — list domains with status + class.
@@ -141,6 +147,17 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
   );
 
   // DELETE /api/sites/:siteId/domains/:domainId — remove + unprovision.
+  //
+  // D1002 + D119 (W2-DOM): honest, retryable unprovision.
+  //   1. Read the DNS cleanup targets BEFORE deleting the mapping — the old
+  //      order (deleteMapping first, then read required records off the
+  //      now-deleted mapping) always read [] and never removed DNS.
+  //   2. A genuine Cloud Run unmap failure keeps the row and 502s so
+  //      "Remove" is retryable (a deleted row would strand the orphaned
+  //      mapping with no retry surface). A 404 = already unmapped = fine.
+  //   3. Partial DNS cleanup failure still removes the row but reports
+  //      `warnings` — never a bare success that hides orphans.
+  // Response: 200 { removed: true, warnings: string[] } on success.
   router.delete(
     "/sites/:siteId/domains/:domainId",
     admin,
@@ -161,34 +178,63 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
           return;
         }
 
-        // Best-effort unprovision: remove Cloud Run mapping and DNS record.
         const cloudRun = getCloudRun();
-        const dns = getDns();
+        // Client-owned domains live in a zone we don't control — their DNS
+        // records were never auto-written (ManualDnsProvider), so removal is
+        // a no-op there too. Mirrors the provision route's selection.
+        const dns = dnsForHostname(hostname);
         const cfg = getDomainConfig();
+        const warnings: string[] = [];
 
-        await cloudRun.deleteMapping(hostname).catch(() => undefined);
-
-        // Ask Cloud Run what records were set; remove them from DNS.
-        // Fall back to a CNAME record guess if Cloud Run has no info.
+        // 1. Read cleanup targets while the mapping still exists (D1002).
+        let records: Array<{ name?: string; type?: string; rrdata?: string }> = [];
         try {
-          const records = await cloudRun.getRequiredDnsRecords(hostname).catch(() => []);
-          for (const rec of records) {
-            await dns
-              .removeRecord(cfg.registrable, {
-                name: rec.name ?? hostname,
-                type: (rec.type ?? "CNAME").toUpperCase(),
-                data: rec.rrdata ?? "",
-              })
-              .catch(() => undefined);
-          }
-        } catch {
-          // DNS removal is best-effort; never block delete.
+          records = await cloudRun.getRequiredDnsRecords(hostname);
+        } catch (err) {
+          warnings.push(
+            `could not read the mapping's DNS records before unmapping ${hostname}: ` +
+              `${err instanceof Error ? err.message : String(err)} — any DNS records for it must be removed manually`,
+          );
         }
 
+        // 2. Delete the Cloud Run mapping. 404 = already gone = success.
+        try {
+          await cloudRun.deleteMapping(hostname);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/\b404\b/.test(msg)) {
+            warnings.push(`Cloud Run unmap failed for ${hostname}: ${msg}`);
+            res.status(502).json({
+              error: `unprovision failed — ${hostname} was not removed (retry once the Cloud Run error clears)`,
+              removed: false,
+              warnings,
+            });
+            return;
+          }
+        }
+
+        // 3. Remove the pre-read DNS records; collect failures as warnings.
+        for (const rec of records) {
+          const dnsRecord = {
+            name: rec.name ?? hostname,
+            type: (rec.type ?? "CNAME").toUpperCase(),
+            data: rec.rrdata ?? "",
+          };
+          try {
+            await dns.removeRecord(cfg.registrable, dnsRecord);
+          } catch (err) {
+            warnings.push(
+              `DNS record not removed (${dnsRecord.type} ${dnsRecord.name} → ${dnsRecord.data}): ` +
+                `${err instanceof Error ? err.message : String(err)} — remove it manually at the DNS provider`,
+            );
+          }
+        }
+
+        // 4. Row last — cleanup already happened (or is reported above).
         await pool.query(`DELETE FROM site_domains WHERE id = $1`, [domainId]);
         evictSiteCache(hostname);
 
-        res.status(204).end();
+        res.status(200).json({ removed: true, warnings });
       } catch (err) {
         next(err);
       }
@@ -215,8 +261,7 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
         const cloudRun = getCloudRun();
         // Client-owned domains (outside the Anchor zone) must use ManualDnsProvider:
         // their records are surfaced to the operator rather than auto-written via GoDaddy.
-        const dns =
-          opts.dns ?? (domainClass(hostname) === "managed" ? resolveDnsProvider() : new ManualDnsProvider());
+        const dns = dnsForHostname(hostname);
 
         // Step 1: Cloud Run mapping
         let mapping;
