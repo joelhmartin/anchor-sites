@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../ui/dialog.js";
+import { Dialog, DialogContent, DialogDescription } from "../ui/dialog.js";
 import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
 import { Button } from "../ui/button.js";
@@ -42,8 +42,7 @@ export function LinkPopover({ open, initialValue, onClose, onSave }: LinkPopover
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogTitle>Edit link</DialogTitle>
+      <DialogContent title="Edit link" className="max-w-md">
         <DialogDescription>Where should this link go?</DialogDescription>
 
         <div className="mt-4 flex flex-col gap-1">

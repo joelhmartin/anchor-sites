@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../ui/dialog.js";
+import { Dialog, DialogContent, DialogDescription } from "../ui/dialog.js";
 import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
 import { Button } from "../ui/button.js";
@@ -47,8 +47,7 @@ export function ImagePickerDialog({ siteId, open, initialAlt, onClose, onPick }:
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-w-2xl">
-        <DialogTitle>Choose an image</DialogTitle>
+      <DialogContent title="Choose an image" className="max-w-2xl">
         <DialogDescription>Pick from your library, upload a new file, or search stock photos.</DialogDescription>
 
         <div className="mt-4 flex flex-col gap-1">

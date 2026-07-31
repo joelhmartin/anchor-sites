@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../ui/dialog.js";
+import { Dialog, DialogContent, DialogDescription } from "../ui/dialog.js";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
 import { Label } from "../ui/label.js";
@@ -92,8 +92,7 @@ export function SaveAsTemplateDialog({ siteId, siteName }: { siteId: string; sit
         Save as template
       </Button>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
-          <DialogTitle>Save as template</DialogTitle>
+        <DialogContent title="Save as template">
           <DialogDescription>
             Capture {siteName}’s pages and brand colors as a reusable template.
           </DialogDescription>
