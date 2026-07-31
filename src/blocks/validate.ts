@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getBlock } from "./registry.js";
+import { sanitizeBlockProps } from "./sanitize.js";
 
 /**
  * Structural shape of one persisted block (D-001). `props` defaults to `{}` so
@@ -34,6 +35,14 @@ export type ValidationFailure = {
  * Validate each block against the registry: unknown type → `"unknown_type"`;
  * props that fail the type's Zod schema → `"invalid_props"` with field paths.
  * Returns `[]` when every block is valid.
+ *
+ * D1109 (W2-SEC) — this gate ALSO SANITIZES free-HTML props IN PLACE
+ * (`rich-text`.html, `crm_form`.embed_code — see src/blocks/sanitize.ts for
+ * the settled policy) before schema validation. Deliberately a mutation:
+ * every write path (admin save, AI edit-ops/create_page, blog+events bodies,
+ * git import, template save + seeds) persists the very array it passes here,
+ * so sanitizing at the single existing choke point covers them all without
+ * touching any call site.
  */
 export function validateBlocks(blocks: BlockShape[]): ValidationFailure[] {
   const failures: ValidationFailure[] = [];
@@ -43,6 +52,7 @@ export function validateBlocks(blocks: BlockShape[]): ValidationFailure[] {
       failures.push({ index, id: block.id, type: block.type, reason: "unknown_type" });
       return;
     }
+    sanitizeBlockProps(block);
     const parsed = entry.schema.safeParse(block.props);
     if (!parsed.success) {
       failures.push({
