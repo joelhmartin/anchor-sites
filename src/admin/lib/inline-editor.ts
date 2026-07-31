@@ -20,7 +20,10 @@ type StudioMsg =
 export type InlineEditorEvents = {
   onImagePickRequest: (blockId: string, field: string) => void;
   onLinkEditRequest: (blockId: string, field: string, value: string) => void;
-  onSaveStateChange: (s: "idle" | "dirty" | "saving" | "saved" | "error") => void;
+  /** `conflict` (W2-CONC / D308): the server rejected a save because the
+   * page changed underneath this edit session (agent turn, second tab) —
+   * the operator must reload; retrying would clobber the newer content. */
+  onSaveStateChange: (s: "idle" | "dirty" | "saving" | "saved" | "error" | "conflict") => void;
 };
 
 export type InlineEditorHandle = {
@@ -73,6 +76,14 @@ export function createInlineEditor(opts: {
   let iframe: HTMLIFrameElement | null = null;
   let messageHandler: ((e: MessageEvent) => void) | null = null;
   let blocks: Block[] = [];
+  // D308 — the page's `updated_at` as of loadInitial, rebased from each save
+  // response. Sent with every whole-array POST so the server can 409 a save
+  // whose snapshot the page has moved past (agent turn, second tab) instead
+  // of silently accepting a clobber.
+  let baseUpdatedAt: string | null = null;
+  // Once a conflict is detected the session is dead — the local blocks no
+  // longer describe the server page. Saves stop; the operator reloads.
+  let conflicted = false;
   let dirty = false;
   const dirtyFields = new Set<string>();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -154,11 +165,25 @@ export function createInlineEditor(opts: {
     return b.error === "block validation failed" || Array.isArray(b.failures);
   }
 
+  /** D308: a 409 from the save route is the base-marker mismatch — the page
+   * changed underneath this edit session. Never retried, never treated as a
+   * validation revert. */
+  function isConflictReject(err: unknown): boolean {
+    return getStatus(err) === 409;
+  }
+
   async function post(): Promise<void> {
-    await fetchImpl(`/api/sites/${siteId}/pages/${pageId}`, {
-      method: "POST",
-      body: { blocks, source: "inline" },
-    });
+    const body: Record<string, unknown> = { blocks, source: "inline" };
+    if (baseUpdatedAt) body.base_updated_at = baseUpdatedAt;
+    const res = await fetchImpl<{ page?: { updated_at?: string } }>(
+      `/api/sites/${siteId}/pages/${pageId}`,
+      { method: "POST", body },
+    );
+    // Rebase: the save bumped the row's updated_at; the next save's marker
+    // must match the NEW value or every follow-up save would 409 on our own
+    // previous write.
+    const next = res?.page?.updated_at;
+    if (typeof next === "string") baseUpdatedAt = next;
   }
 
   async function handleValidationReject(fields: Set<string>): Promise<void> {
@@ -210,6 +235,15 @@ export function createInlineEditor(opts: {
         events.onSaveStateChange("saved");
       } catch (err) {
         if (destroyed) break;
+        // D308: a base-marker conflict is terminal for the session — the
+        // local snapshot no longer describes the server page, so a retry
+        // (or restoring the fields for a later resend) would clobber
+        // whatever landed underneath. Surface "reload" and stop saving.
+        if (isConflictReject(err)) {
+          conflicted = true;
+          events.onSaveStateChange("conflict");
+          break;
+        }
         if (isBlockValidationReject(err)) {
           await handleValidationReject(fields);
           if (destroyed) break;
@@ -223,6 +257,11 @@ export function createInlineEditor(opts: {
             events.onSaveStateChange("saved");
           } catch (retryErr) {
             if (destroyed) break;
+            if (isConflictReject(retryErr)) {
+              conflicted = true;
+              events.onSaveStateChange("conflict");
+              break;
+            }
             // Minor (c): the retry's own failure might ALSO be a real
             // block-validation reject (not just a transient error) — check
             // again rather than assuming "retry failed" always means
@@ -250,6 +289,9 @@ export function createInlineEditor(opts: {
   }
 
   function triggerSave(): Promise<void> {
+    // D308: after a conflict there is nothing safe to send — the session is
+    // over until the operator reloads.
+    if (conflicted) return Promise.resolve();
     if (saving) {
       queuedFollowUp = true;
       return currentSave ?? Promise.resolve();
@@ -305,10 +347,13 @@ export function createInlineEditor(opts: {
 
   async function loadInitial(): Promise<void> {
     try {
-      const res = await fetchImpl<{ page: { blocks: Block[] } }>(
+      const res = await fetchImpl<{ page: { blocks: Block[]; updated_at?: string } }>(
         `/api/sites/${siteId}/pages/${pageId}`,
       );
       blocks = res.page.blocks ?? [];
+      // D308: this GET is the edit session's snapshot point — its
+      // updated_at is the base marker every save carries.
+      baseUpdatedAt = typeof res.page.updated_at === "string" ? res.page.updated_at : null;
     } catch {
       // leave blocks empty — a subsequent edit will still attempt to save
       // whatever the overlay reports, but nothing to hydrate here.

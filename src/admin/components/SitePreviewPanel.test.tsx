@@ -584,6 +584,13 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     // exactly once then stops; a terminal failure is resent on the NEXT
     // edit or an explicit flush(), not by continuing to auto-retry.
     await waitFor(() => expect(screen.getByText("Save failed — will retry on next edit")).toBeTruthy());
+
+    // D308 — the base-marker 409: the page changed underneath the edit
+    // session; the chip says so and points at the reload path.
+    act(() => events.onSaveStateChange("conflict"));
+    await waitFor(() =>
+      expect(screen.getByText(/Page changed underneath you/)).toBeTruthy(),
+    );
   });
 
   it("shows a readonly banner and forces the inline editor readonly while the agent drawer reports busy", async () => {

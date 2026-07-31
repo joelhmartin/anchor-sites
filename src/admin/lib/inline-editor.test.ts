@@ -824,4 +824,108 @@ describe("createInlineEditor (Studio bridge + save engine)", () => {
     addSpy.mockRestore();
     removeSpy.mockRestore();
   });
+
+  // ── W2-CONC / D308: optimistic-concurrency base marker + conflict state ──
+
+  describe("D308 base marker", () => {
+    function editField(iframe: HTMLIFrameElement, token: string, value = "edited") {
+      postFromOverlay(iframe, token, {
+        type: "field-edit", blockId: "b1", field: "html", kind: "text", value,
+      });
+    }
+
+    it("sends the updated_at captured at loadInitial as base_updated_at, then rebases on each save response", async () => {
+      const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+        if (!opts?.method || opts.method === "GET") {
+          return { page: { blocks: makeBlocks(), updated_at: "2026-07-31T00:00:00.000Z" } };
+        }
+        return { page: { updated_at: "2026-07-31T00:00:05.000Z" }, revision: {} };
+      });
+      const events = makeEvents();
+      const handle = createInlineEditor({
+        siteId: "s1", pageId: "p1", events,
+        fetchImpl: fetchImpl as unknown as typeof apiFetch,
+      });
+      const iframe = makeIframe();
+      handle.attach(iframe);
+      await vi.advanceTimersByTimeAsync(0);
+
+      editField(iframe, handle.token, "one");
+      await vi.advanceTimersByTimeAsync(2000);
+
+      let postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+      expect(postCalls).toHaveLength(1);
+      expect((postCalls[0][1]?.body as Record<string, unknown>).base_updated_at).toBe(
+        "2026-07-31T00:00:00.000Z",
+      );
+
+      // Second save carries the marker the FIRST save's response returned.
+      editField(iframe, handle.token, "two");
+      await vi.advanceTimersByTimeAsync(2000);
+      postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+      expect(postCalls).toHaveLength(2);
+      expect((postCalls[1][1]?.body as Record<string, unknown>).base_updated_at).toBe(
+        "2026-07-31T00:00:05.000Z",
+      );
+    });
+
+    it("a 409 surfaces 'conflict', never retries, and stops all further saves (reload is the only way out)", async () => {
+      const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+        if (!opts?.method || opts.method === "GET") {
+          return { page: { blocks: makeBlocks(), updated_at: "2026-07-31T00:00:00.000Z" } };
+        }
+        throw new ApiError("page changed underneath you — reload", 409, {
+          error: "page changed underneath you — reload",
+        });
+      });
+      const events = makeEvents();
+      const handle = createInlineEditor({
+        siteId: "s1", pageId: "p1", events,
+        fetchImpl: fetchImpl as unknown as typeof apiFetch,
+      });
+      const iframe = makeIframe();
+      handle.attach(iframe);
+      await vi.advanceTimersByTimeAsync(0);
+
+      editField(iframe, handle.token);
+      await vi.advanceTimersByTimeAsync(2000);
+      // No 1500ms retry fired — the conflict is terminal, not transient.
+      await vi.advanceTimersByTimeAsync(5000);
+
+      const postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+      expect(postCalls).toHaveLength(1);
+      expect(events.states.at(-1)).toBe("conflict");
+
+      // Further edits don't resend either — the local snapshot is dead.
+      editField(iframe, handle.token, "more typing");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST")).toHaveLength(1);
+
+      // flush() (edit-mode exit) must not clobber the newer content either.
+      await handle.flush();
+      expect(fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST")).toHaveLength(1);
+    });
+
+    it("omits base_updated_at when the initial GET carried no updated_at (legacy server)", async () => {
+      const fetchImpl: FetchMock = vi.fn(async (_path: string, opts?: FetchOpts) => {
+        if (!opts?.method || opts.method === "GET") return { page: { blocks: makeBlocks() } };
+        return { page: {}, revision: {} };
+      });
+      const events = makeEvents();
+      const handle = createInlineEditor({
+        siteId: "s1", pageId: "p1", events,
+        fetchImpl: fetchImpl as unknown as typeof apiFetch,
+      });
+      const iframe = makeIframe();
+      handle.attach(iframe);
+      await vi.advanceTimersByTimeAsync(0);
+
+      editField(iframe, handle.token);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      const postCalls = fetchImpl.mock.calls.filter(([, opts]) => opts?.method === "POST");
+      expect(postCalls).toHaveLength(1);
+      expect("base_updated_at" in (postCalls[0][1]?.body as Record<string, unknown>)).toBe(false);
+    });
+  });
 });

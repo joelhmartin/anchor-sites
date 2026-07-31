@@ -10,7 +10,7 @@ import { ImagePickerDialog } from "./ImagePickerDialog.js";
 import type { PickedImage } from "./image-sources.js";
 import { LinkPopover } from "./LinkPopover.js";
 
-type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
 
 const READONLY_BUSY_REASON = "The AI is working on this site…";
 
@@ -384,6 +384,16 @@ export function SitePreviewPanel({
             // resends it, per its "Important 2" comment). "retrying" was
             // never true here.
             <span className="text-xs text-amber-600">Save failed — will retry on next edit</span>
+          )}
+          {edit && saveState === "conflict" && (
+            // D308 — the save route 409'd on the base marker: an agent turn
+            // or a second tab changed the page after this edit session's
+            // snapshot. Saves have stopped (retrying would clobber the newer
+            // content); the operator re-enters edit mode to pick up the
+            // fresh page.
+            <span className="text-xs text-red-600">
+              Page changed underneath you — close and reopen Edit to reload
+            </span>
           )}
           {agentBusy && <span className="text-xs text-amber-600">{READONLY_BUSY_REASON}</span>}
         </div>

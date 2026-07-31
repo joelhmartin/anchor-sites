@@ -49,6 +49,15 @@ const savePayload = z.object({
   brand_tokens_override: brandTokensSchema.nullable().optional(),
   // P5-T5.10: publish/draft toggle. Omitting leaves status unchanged.
   status: z.enum(["draft", "published"]).optional(),
+  // W2-CONC / D308 — optimistic-concurrency base marker. The inline editor
+  // snapshots blocks once at edit start and every save POSTs the WHOLE
+  // array, so an agent change (or a second tab's edit) landing after that
+  // snapshot would be silently clobbered by the next save. Callers that
+  // send the page's `updated_at` (as fetched at load, echoed from each save
+  // response thereafter) get a 409 instead of a lost-update when the row
+  // changed underneath them. Omitting keeps the legacy last-write-wins
+  // behavior for callers that re-read before writing.
+  base_updated_at: z.string().datetime({ offset: true }).optional(),
 });
 
 type SavePayload = z.infer<typeof savePayload>;
@@ -171,7 +180,12 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // edits stay off the live site until the next publish. D504:
         // published_at stamps on publish, clears on unpublish (mirrors
         // blog/repo.ts).
-        const pageRes = await client.query<{ id: string; status: string; seo: Record<string, unknown> }>(
+        // D308: `$8` (base_updated_at) fences the whole-document write. Both
+        // sides are truncated to millisecond precision — node-postgres
+        // parses timestamptz into a JS Date (ms), so the ISO string the
+        // client holds is the row's µs value floored to ms; comparing the
+        // raw column would never match.
+        const pageRes = await client.query<{ id: string; status: string; seo: Record<string, unknown>; updated_at: Date }>(
           `UPDATE pages
               SET blocks = $1::jsonb,
                   seo = COALESCE($2::jsonb, seo),
@@ -200,7 +214,9 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
                     ELSE published_at
                   END
             WHERE id = $3 AND site_id = $4
-            RETURNING id, status, seo`,
+              AND ($8::timestamptz IS NULL
+                   OR date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $8::timestamptz))
+            RETURNING id, status, seo, updated_at`,
           [
             JSON.stringify(payload.blocks),
             payload.seo ? JSON.stringify(payload.seo) : null,
@@ -209,11 +225,25 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             btoMode,
             btoValue,
             payload.status ?? null,
+            payload.base_updated_at ?? null,
           ],
         );
 
         if (pageRes.rowCount === 0) {
           await client.query("ROLLBACK");
+          // D308: zero rows now has two meanings — missing page (404, as
+          // ever) vs. a base-marker mismatch on a page that exists (409:
+          // someone else's save landed after this caller's snapshot).
+          if (payload.base_updated_at) {
+            const exists = await pool.query(
+              `SELECT 1 FROM pages WHERE id = $1 AND site_id = $2`,
+              [pageId, siteId],
+            );
+            if ((exists.rowCount ?? 0) > 0) {
+              res.status(409).json({ error: "page changed underneath you — reload" });
+              return;
+            }
+          }
           res.status(404).json({ error: "page not found for this site" });
           return;
         }
@@ -260,6 +290,10 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             blocks: payload.blocks,
             seo: resolvedSeo,
             status: pageRes.rows[0].status,
+            // D308: the row's NEW updated_at (the touch trigger bumped it in
+            // this same UPDATE) — concurrency-token clients rebase on it so
+            // their next save's base marker matches.
+            updated_at: pageRes.rows[0].updated_at,
           },
           revision: { id: revRes.rows[0].id, created_at: revRes.rows[0].created_at },
         });

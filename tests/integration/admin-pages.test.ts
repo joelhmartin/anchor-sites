@@ -278,6 +278,77 @@ d("admin pages API (integration)", () => {
 
   // ---------- SAVE ----------
 
+  // ── W2-CONC / D308: optimistic concurrency on whole-array saves ──
+
+  it("D308: a save carrying the page's current updated_at succeeds and returns the NEW updated_at to rebase on", async () => {
+    const before = await request(app)
+      .get(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    const base = new Date(before.body.page.updated_at).toISOString();
+
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-d308-ok"), source: "inline", base_updated_at: base });
+    expect(res.status).toBe(200);
+    expect(res.body.page.updated_at).toBeTruthy();
+    // The returned marker is the row's NEW updated_at — a follow-up save
+    // using it must succeed too (the rebase loop the inline editor runs).
+    const res2 = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({
+        blocks: validBlocks("-d308-ok2"),
+        source: "inline",
+        base_updated_at: new Date(res.body.page.updated_at).toISOString(),
+      });
+    expect(res2.status).toBe(200);
+  });
+
+  it("D308: a save whose base marker the page has moved past 409s and leaves the page untouched", async () => {
+    const before = await request(app)
+      .get(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    const staleBase = new Date(before.body.page.updated_at).toISOString();
+
+    // Someone else's save lands after our snapshot (an agent turn, a second tab).
+    const interloper = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-d308-interloper"), source: "agent" });
+    expect(interloper.status).toBe(200);
+
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-d308-clobber"), source: "inline", base_updated_at: staleBase });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/changed underneath/i);
+
+    // The interloper's content survived — nothing was clobbered.
+    const after = await request(app)
+      .get(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(after.body.page.blocks[0].id).toBe("h1-d308-interloper");
+  });
+
+  it("D308: omitting base_updated_at keeps the legacy last-write-wins behavior; a missing page still 404s over 409", async () => {
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-d308-legacy") });
+    expect(res.status).toBe(200);
+
+    const missing = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/00000000-0000-0000-0000-000000000000`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({
+        blocks: validBlocks("-d308-404"),
+        base_updated_at: new Date().toISOString(),
+      });
+    expect(missing.status).toBe(404);
+  });
+
   it("saving valid blocks creates a revision and returns it", async () => {
     const res = await request(app)
       .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
