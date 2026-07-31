@@ -89,6 +89,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // P8-T8.5: who-am-I probe for the Studio client (session / token / dev).
   app.use(meRouter());
 
+  // P7: template system — save-as-template, list/inspect/archive, from-template.
+  // MUST mount before adminPagesRouter (D100): its literal
+  // `POST /sites/:siteId/pages/from-template` is otherwise swallowed by
+  // admin-pages' param route `POST /sites/:siteId/pages/:pageId`. Safe first:
+  // every templates path ends in a literal segment (or lives under
+  // /templates), so it can't capture any other router's routes.
+  app.use("/api", templatesRouter());
+
   // Admin API: save, list revisions, restore. Gated by requireAdmin() — now a
   // Studio Better-auth session OR the X-Admin-Token (dual-mode, D-034/D-046).
   app.use("/api", adminPagesRouter());
@@ -98,9 +106,6 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // P4: admin sites API (list/detail/create/update + child resources).
   app.use("/api", adminSitesRouter());
-
-  // P7: template system — save-as-template, list/inspect/archive, from-template.
-  app.use("/api", templatesRouter());
 
   // P7.5: admin plugins API — list available, per-site enable/disable + config.
   app.use("/api", pluginsRouter());
