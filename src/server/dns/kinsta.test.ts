@@ -241,7 +241,11 @@ describe("KinstaDnsProvider.ensureRecord", () => {
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method !== undefined)).toBe(false);
   });
 
-  it("PUTs new_resource_records (upsert) and returns 'created' when a same-name/type record exists with a different value", async () => {
+  // D1003: «ensureRecord with a changed value must converge on exactly the
+  // desired value». The old PUT sent new_resource_records only — APPENDING
+  // the new value while the stale one persisted (an invalid multi-value
+  // CNAME, with the stale target still served).
+  it("PUTs new_resource_records AND removed_resource_records (converge) when a same-name/type record exists with a different value", async () => {
     const fetchMock = mockFetch((url, init) => {
       if (url.includes("/domains?company=")) return { status: 200, body: domainsListBody };
       if (init?.method === "PUT") return { status: 202, body: { operation_id: "op-2", message: "ok", status: 202 } };
@@ -271,6 +275,47 @@ describe("KinstaDnsProvider.ensureRecord", () => {
       type: "CNAME",
       name: "muldoon-dental.sites.anchorcorps.com",
       new_resource_records: [{ value: "ghs.googlehosted.com" }],
+      removed_resource_records: [{ value: "some-other-target.example.com" }],
+    });
+  });
+
+  it("converges multiple stale values away in one PUT", async () => {
+    const fetchMock = mockFetch((url, init) => {
+      if (url.includes("/domains?company=")) return { status: 200, body: domainsListBody };
+      if (init?.method === "PUT") return { status: 202, body: { operation_id: "op-2b", message: "ok", status: 202 } };
+      return {
+        status: 200,
+        body: {
+          domain: {
+            dns_records: [
+              {
+                type: "CNAME",
+                name: "muldoon-dental.sites.anchorcorps.com",
+                ttl: 3600,
+                resource_records: [
+                  { value: "stale-one.example.com" },
+                  { value: "stale-two.example.com" },
+                ],
+              },
+            ],
+          },
+        },
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new KinstaDnsProvider(CFG).ensureRecord("anchorcorps.com", record);
+
+    expect(result).toBe("created");
+    const put = fetchMock.mock.calls.find((c) => (c[1] as RequestInit)?.method === "PUT")!;
+    expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({
+      type: "CNAME",
+      name: "muldoon-dental.sites.anchorcorps.com",
+      new_resource_records: [{ value: "ghs.googlehosted.com" }],
+      removed_resource_records: [
+        { value: "stale-one.example.com" },
+        { value: "stale-two.example.com" },
+      ],
     });
   });
 });
@@ -353,6 +398,77 @@ describe("KinstaDnsProvider.removeRecord", () => {
       new KinstaDnsProvider(CFG).removeRecord("anchorcorps.com", record),
     ).resolves.toBeUndefined();
     expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "DELETE")).toBe(false);
+  });
+
+  // Same law as D1022 (GoDaddy): remove exactly the record we created.
+  // Kinsta's DELETE addresses the whole (type, name) recordset — with
+  // co-resident values it must PUT removed_resource_records instead.
+  it("PUTs removed_resource_records (never DELETE) when co-resident values exist", async () => {
+    const fetchMock = mockFetch((url, init) => {
+      if (url.includes("/domains?company=")) return { status: 200, body: domainsListBody };
+      if (init?.method === "PUT") return { status: 202, body: { operation_id: "op-4", message: "ok", status: 202 } };
+      return {
+        status: 200,
+        body: {
+          domain: {
+            dns_records: [
+              {
+                type: "A",
+                name: "muldoon-dental.sites.anchorcorps.com",
+                ttl: 3600,
+                resource_records: [{ value: "1.1.1.1" }, { value: "2.2.2.2" }],
+              },
+            ],
+          },
+        },
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new KinstaDnsProvider(CFG).removeRecord("anchorcorps.com", {
+      name: "muldoon-dental.sites.anchorcorps.com.",
+      type: "A",
+      data: "1.1.1.1",
+    });
+
+    expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "DELETE")).toBe(false);
+    const put = fetchMock.mock.calls.find((c) => (c[1] as RequestInit)?.method === "PUT")!;
+    expect(put).toBeDefined();
+    expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({
+      type: "A",
+      name: "muldoon-dental.sites.anchorcorps.com",
+      removed_resource_records: [{ value: "1.1.1.1" }],
+    });
+  });
+
+  it("no-ops when the recordset exists but does not contain the target value", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url.includes("/domains?company=")) return { status: 200, body: domainsListBody };
+      return {
+        status: 200,
+        body: {
+          domain: {
+            dns_records: [
+              {
+                type: "CNAME",
+                name: "muldoon-dental.sites.anchorcorps.com",
+                ttl: 3600,
+                resource_records: [{ value: "someone-elses-target.example.com" }],
+              },
+            ],
+          },
+        },
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new KinstaDnsProvider(CFG).removeRecord("anchorcorps.com", record);
+
+    expect(
+      fetchMock.mock.calls.some((c) =>
+        ["PUT", "DELETE"].includes(((c[1] as RequestInit)?.method ?? "GET") as string),
+      ),
+    ).toBe(false);
   });
 });
 

@@ -188,9 +188,22 @@ export class KinstaDnsProvider implements DnsProvider {
     const hasValue = existing.resource_records.some((rr) => normalizeData(type, rr.value) === data);
     if (hasValue) return "exists";
 
+    // D1003: converge on exactly the desired value. new_resource_records
+    // alone APPENDS — leaving the stale value in place (an invalid
+    // multi-value CNAME, with the stale target still served). Send the
+    // stale values as removed_resource_records in the same PUT so the
+    // record ends up holding only the target.
+    const stale = existing.resource_records
+      .filter((rr) => normalizeData(type, rr.value) !== data)
+      .map((rr) => ({ value: rr.value }));
     await this.req(`/domains/${encodeURIComponent(domainId)}/dns-records`, {
       method: "PUT",
-      body: JSON.stringify({ type, name, new_resource_records: [{ value: data }] }),
+      body: JSON.stringify({
+        type,
+        name,
+        new_resource_records: [{ value: data }],
+        ...(stale.length > 0 ? { removed_resource_records: stale } : {}),
+      }),
     });
     return "created";
   }
@@ -204,16 +217,39 @@ export class KinstaDnsProvider implements DnsProvider {
     return existing.resource_records.some((rr) => normalizeData(type, rr.value) === data);
   }
 
+  /**
+   * Remove exactly the record we created (same law as GoDaddy's D1022):
+   * Kinsta's DELETE addresses the whole (type, name) recordset, so with
+   * co-resident values the target value is removed via PUT
+   * `removed_resource_records` instead — and if the target value isn't in
+   * the set at all, nothing is touched.
+   */
   async removeRecord(zone: string, record: DnsRecord): Promise<void> {
     const type = record.type.toUpperCase();
     const name = stripDot(record.name);
+    const data = normalizeData(record.type, record.data);
     const { domainId, records } = await this.resolveAndListRecords(zone);
     const existing = this.findRecord(records, type, name);
     if (!existing) return; // idempotent — nothing to remove
 
-    await this.req(`/domains/${encodeURIComponent(domainId)}/dns-records`, {
-      method: "DELETE",
-      body: JSON.stringify({ type, name }),
-    });
+    const target = existing.resource_records.filter((rr) => normalizeData(type, rr.value) === data);
+    if (target.length === 0) return; // target value absent — not ours to touch
+    const remainder = existing.resource_records.length - target.length;
+
+    if (remainder === 0) {
+      await this.req(`/domains/${encodeURIComponent(domainId)}/dns-records`, {
+        method: "DELETE",
+        body: JSON.stringify({ type, name }),
+      });
+    } else {
+      await this.req(`/domains/${encodeURIComponent(domainId)}/dns-records`, {
+        method: "PUT",
+        body: JSON.stringify({
+          type,
+          name,
+          removed_resource_records: target.map((rr) => ({ value: rr.value })),
+        }),
+      });
+    }
   }
 }
