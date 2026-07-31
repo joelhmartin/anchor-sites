@@ -26,7 +26,7 @@ import type { TemplateSeed } from "./types.js";
  */
 const NAV_LINKS = [
   { label: "Home", href: "/" },
-  { label: "Shop", href: "/shop-info" },
+  { label: "Shop", href: "/shop" },
   { label: "Events", href: "/events" },
   { label: "Visit", href: "/visit" },
 ];
@@ -35,7 +35,7 @@ const FOOTER_COLUMNS = [
   {
     heading: "Explore",
     links: [
-      { label: "Shop", href: "/shop-info" },
+      { label: "Shop", href: "/shop" },
       { label: "Events", href: "/events" },
     ],
   },
@@ -220,7 +220,7 @@ export const localRetail: TemplateSeed = {
       ],
     },
     {
-      slug: "shop-info",
+      slug: "shop",
       title: "Shop",
       sort_order: 1,
       seo: {

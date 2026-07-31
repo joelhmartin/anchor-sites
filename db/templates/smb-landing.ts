@@ -79,7 +79,10 @@ const footer = (pageSlug: string) => ({
 
 export const smbLanding: TemplateSeed = {
   slug: "smb-landing",
-  name: "SMB Consulting",
+  // D722: slug, name, and category tell one story — this is the small-business
+  // landing-site template (the fictional consultancy inside it is Fieldstone
+  // Advisory, but the CARD names the template, not the demo business).
+  name: "SMB Landing",
   description: "A crisp, confident one-brand site for consultancies and local B2B firms — benefit-led hero, proof stats, and outcome-focused service copy.",
   brand_tokens: {
     "--theme-main": "#312E81",

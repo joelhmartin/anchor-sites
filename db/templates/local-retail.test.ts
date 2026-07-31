@@ -65,10 +65,12 @@ describe("local-retail template seed", () => {
     expect(types.has("crm_form")).toBe(true);
   });
 
-  it("includes the required page set: home, shop-info, events, visit", () => {
+  it("includes the required page set: home, shop, events, visit", () => {
+    // D722: the nav label "Shop" and the page slug tell one story — the page
+    // was renamed shop-info → shop.
     const slugs = new Set(localRetail.pages.map((p) => p.slug));
     expect(slugs.has("home")).toBe(true);
-    expect(slugs.has("shop-info")).toBe(true);
+    expect(slugs.has("shop")).toBe(true);
     expect(slugs.has("events")).toBe(true);
     expect(slugs.has("visit")).toBe(true);
   });
