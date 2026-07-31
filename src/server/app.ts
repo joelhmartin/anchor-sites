@@ -1,5 +1,4 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
-import cors from "cors";
 import helmet from "helmet";
 import { httpLogger } from "./http-logger.js";
 import { ping } from "./db.js";
@@ -62,7 +61,16 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use((req: Request, res: Response, next: NextFunction) => {
     (isAdminHost(req.headers.host) ? studioHelmet : tenantHelmet)(req, res, next);
   });
-  app.use(cors());
+
+  // D809/D909 (W2-SEC) — NO blanket cors() here anymore. The old global
+  // `app.use(cors())` stamped `Access-Control-Allow-Origin: *` on every
+  // response, admin APIs included, with zero cross-origin consumers: the
+  // Studio SPA is same-origin with the API (one process, one host), tenant
+  // pages fetch same-origin, lead forms are plain navigations (CORS-exempt),
+  // and a `*` grant can never serve credentialed requests anyway. The one
+  // surface that may legitimately be posted to cross-origin — /api/vitals,
+  // whose snippet targets a configurable WEB_VITALS_ENDPOINT — carries its
+  // own scoped cors() inside vitalsRouter.
 
   // Studio Google-OAuth handler (D-034/D-046). MUST precede express.json() —
   // Better-auth reads the raw body. Gated to the Studio host; no-op in

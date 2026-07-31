@@ -7,6 +7,7 @@
  * requireAdmin NOT applied (tenant pages post to it).
  */
 import { Router, type Request, type Response } from "express";
+import cors from "cors";
 import { z } from "zod";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 
@@ -25,7 +26,16 @@ export function vitalsRouter(opts: VitalsOptions = {}): Router {
   const router = Router();
   const limiter = rateLimit(opts.rateLimitOpts ?? { max: 60, windowMs: 60_000 });
 
-  router.post("/vitals", limiter, (req: Request, res: Response) => {
+  // D809/D909 (W2-SEC) — the ONE scoped CORS grant in the app (the global
+  // app.use(cors()) is gone). Tenant pages POST metrics to a configurable
+  // WEB_VITALS_ENDPOINT which may live on another origin (a central
+  // collector); the JSON body triggers a preflight, hence the OPTIONS
+  // handler. Anonymous, rate-limited telemetry — a `*` grant is
+  // appropriate here and nowhere else.
+  const vitalsCors = cors();
+  router.options("/vitals", vitalsCors);
+
+  router.post("/vitals", vitalsCors, limiter, (req: Request, res: Response) => {
     const parsed = vitalsPayload.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "invalid payload" });
