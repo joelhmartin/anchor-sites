@@ -197,15 +197,71 @@ function verifyScoped(
 }
 
 /**
+ * D808 — the human recovery page an EXPIRED (or otherwise invalid) preview
+ * token gets instead of raw JSON.
+ *
+ * Why: after the 15-min TTL, a click on a rewritten sibling link inside the
+ * preview iframe (which still carries the ORIGINAL `?token=` — preview-links
+ * propagates the query it was rendered with) used to 401 with
+ * `{"error":"unauthorized"}` filling the frame, no way back. The parent
+ * can't detect it either: the sandboxed frame has an opaque origin, so
+ * `onLoad` looks identical for 401 and 200. So the recovery has to live IN
+ * the response body, as something a human can act on.
+ *
+ * Served only when (a) the presented token is preview-shaped for this route
+ * (so curl/static-admin-token flows keep their JSON 401 via the admin gate)
+ * and (b) the request prefers HTML (iframe navigations do; API clients
+ * default to JSON). No scripts — the sandboxed frame couldn't do anything
+ * useful with them anyway (a reload would resend the same expired token);
+ * the fix is the parent minting a fresh token, which happens on the next
+ * change/refresh in the workspace.
+ */
+const PREVIEW_EXPIRED_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preview expired</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #fafafa; color: #18181b; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 26rem; padding: 2rem; text-align: center; }
+  h1 { font-size: 1.05rem; margin: 0 0 .5rem; }
+  p { margin: 0; color: #52525b; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Preview expired</h1>
+  <p>This draft preview link has expired. Reload the workspace (or make any change)
+     and the preview will come back with a fresh link — nothing was lost.</p>
+</main>
+</body>
+</html>
+`;
+
+function sendPreviewExpired(res: Response): void {
+  res.status(401).set("Cache-Control", "no-store").type("html").send(PREVIEW_EXPIRED_HTML);
+}
+
+/** True when the request's Accept header prefers HTML over JSON (iframe navigation). */
+function prefersHtml(req: Request): boolean {
+  return req.accepts(["json", "html"]) === "html";
+}
+
+/**
  * Auth gate for the preview route: a valid preview token for THIS route's
  * `:siteId`, or the normal admin gate.
  *
  * Composed (rather than chained as sibling middleware) because a middleware
  * cannot skip a later one in the same route without `next("route")`, which
  * would fall through to a 404. So: preview token → authorize directly;
- * anything else → `tokenFromQuery` (lifts a static `?token=` into the header
- * requireAdmin reads, preserving the curl/dev/legacy-paste-token path) → the
- * injected `admin` handler, which is free to 401.
+ * a preview-SHAPED token that fails verification on an HTML-accepting
+ * request → the D808 recovery page (that request came from the iframe;
+ * nothing else could re-auth it); anything else → `tokenFromQuery` (lifts a
+ * static `?token=` into the header requireAdmin reads, preserving the
+ * curl/dev/legacy-paste-token path) → the injected `admin` handler, which is
+ * free to 401.
  */
 export function previewQueryAuth(
   admin: RequestHandler,
@@ -216,6 +272,10 @@ export function previewQueryAuth(
     if (typeof token === "string" && verifyPreviewToken(token, req.params.siteId, { env: opts.env })) {
       req.studioUser = PREVIEW_TOKEN_USER;
       next();
+      return;
+    }
+    if (typeof token === "string" && token.startsWith(`${PREFIX}.`) && prefersHtml(req)) {
+      sendPreviewExpired(res);
       return;
     }
     tokenFromQuery(req, res, () => {
@@ -241,6 +301,12 @@ export function templatePreviewQueryAuth(
     ) {
       req.studioUser = PREVIEW_TOKEN_USER;
       next();
+      return;
+    }
+    // D808 — same human recovery page as the site preview (same iframe
+    // constraints, same expiry story).
+    if (typeof token === "string" && token.startsWith(`${TEMPLATE_PREFIX}.`) && prefersHtml(req)) {
+      sendPreviewExpired(res);
       return;
     }
     tokenFromQuery(req, res, () => {

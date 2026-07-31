@@ -207,6 +207,59 @@ describe("previewQueryAuth middleware", () => {
     expect(res.status).toBe(401);
   });
 
+  // D808 — an expired credential inside an iframe must render a human
+  // recovery page, not raw JSON: after the 15-min TTL a sibling-link click
+  // (still carrying the ORIGINAL token) used to fill the frame with
+  // {"error":"unauthorized"} and no way back.
+  describe("[D808] expired-token recovery page", () => {
+    it("serves a styled 401 HTML page for an expired preview token on an HTML-accepting request", async () => {
+      const { token } = mint(SITE_A, { now: Date.now() - PREVIEW_TOKEN_TTL_MS * 2 });
+      const res = await request(app())
+        .get(`/api/sites/${SITE_A}/preview?token=${token}`)
+        .set("Accept", "text/html,application/xhtml+xml");
+      expect(res.status).toBe(401);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.headers["cache-control"]).toBe("no-store");
+      expect(res.text).toContain("Preview expired");
+      expect(res.text).not.toContain("<script");
+    });
+
+    it("keeps the JSON 401 for API-shaped requests with the same expired token", async () => {
+      const { token } = mint(SITE_A, { now: Date.now() - PREVIEW_TOKEN_TTL_MS * 2 });
+      const res = await request(app())
+        .get(`/api/sites/${SITE_A}/preview?token=${token}`)
+        .set("Accept", "application/json");
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ error: "unauthorized" });
+    });
+
+    it("also covers a token scoped to another site (the iframe's stale-link case)", async () => {
+      const { token } = mint(SITE_A);
+      const res = await request(app())
+        .get(`/api/sites/${SITE_B}/preview?token=${token}`)
+        .set("Accept", "text/html");
+      expect(res.status).toBe(401);
+      expect(res.text).toContain("Preview expired");
+    });
+
+    it("does NOT intercept a non-preview-shaped ?token= even when HTML is accepted (admin-gate path)", async () => {
+      const res = await request(app())
+        .get(`/api/sites/${SITE_A}/preview?token=static-admin-token`)
+        .set("Accept", "text/html");
+      // Falls through to the injected admin gate (JSON 401 in this harness).
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ error: "unauthorized" });
+    });
+
+    it("a VALID token is untouched by the recovery path", async () => {
+      const { token } = mint(SITE_A);
+      const res = await request(app())
+        .get(`/api/sites/${SITE_A}/preview?token=${token}`)
+        .set("Accept", "text/html");
+      expect(res.status).toBe(200);
+    });
+  });
+
   // Backward compat: the static ADMIN_API_TOKEN in ?token= is not a preview
   // token, so it must reach requireAdmin via tokenFromQuery's header shim
   // (curl/dev workflows and the legacy paste-token Studio login depend on it).
@@ -315,5 +368,16 @@ describe("templatePreviewQueryAuth middleware", () => {
     const { token } = mintTpl(TPL_A);
     expect((await request(app()).get(`/api/templates/${TPL_B}/preview?token=${token}`)).status).toBe(401);
     expect((await request(app()).get(`/api/templates/${TPL_A}/preview`)).status).toBe(401);
+  });
+
+  // D808 — same recovery page as the site preview (same iframe constraints).
+  it("[D808] serves the recovery page for an expired template token on an HTML request", async () => {
+    const { token } = mintTpl(TPL_A, { now: Date.now() - PREVIEW_TOKEN_TTL_MS * 2 });
+    const res = await request(app())
+      .get(`/api/templates/${TPL_A}/preview?token=${token}`)
+      .set("Accept", "text/html");
+    expect(res.status).toBe(401);
+    expect(res.headers["content-type"]).toContain("text/html");
+    expect(res.text).toContain("Preview expired");
   });
 });
