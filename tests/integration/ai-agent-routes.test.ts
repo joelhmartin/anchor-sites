@@ -570,6 +570,74 @@ d("agent HTTP API (integration, Task 10)", () => {
     });
   });
 
+  describe("W1.4 / D300+D1105+D612 — POST .../stop (real Stop)", () => {
+    it("202s and sets cancel_requested on a running conversation", async () => {
+      const site = await db.seedSite("agent-routes-stop-running");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      await setConversationStatus(db.getPool(), conversationId, "running");
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/stop`),
+      );
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ stopping: true });
+
+      const flag = await db.getPool().query(
+        `SELECT cancel_requested FROM ai_conversations WHERE id = $1`, [conversationId],
+      );
+      expect(flag.rows[0].cancel_requested).toBe(true);
+    });
+
+    it("202s on an 'active' conversation too (a Stop can land while the job is still queued)", async () => {
+      const site = await db.seedSite("agent-routes-stop-queued");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/stop`),
+      );
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ stopping: true });
+    });
+
+    it("answers honestly when there's nothing to stop (settled conversation)", async () => {
+      const site = await db.seedSite("agent-routes-stop-settled");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+      await setConversationStatus(db.getPool(), conversationId, "error");
+
+      const res = await auth(
+        request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/stop`),
+      );
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ stopping: false, status: "error" });
+    });
+
+    it("404s for a conversation under a different site (cross-tenant guard)", async () => {
+      const siteA = await db.seedSite("agent-routes-stop-tenant-a");
+      const siteB = await db.seedSite("agent-routes-stop-tenant-b");
+      const created = await auth(request(app).post(`/api/sites/${siteA.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const res = await auth(
+        request(app).post(`/api/sites/${siteB.id}/agent/conversations/${conversationId}/stop`),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("requires admin auth", async () => {
+      const site = await db.seedSite("agent-routes-stop-auth");
+      const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+      const conversationId = created.body.conversation.id;
+
+      const res = await request(app).post(
+        `/api/sites/${site.id}/agent/conversations/${conversationId}/stop`,
+      );
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe("turn serialization (bot-review fix wave, item 1)", () => {
     it("409s a message POST while the conversation is already 'running'", async () => {
       const site = await db.seedSite("agent-routes-turn-lock-msg");

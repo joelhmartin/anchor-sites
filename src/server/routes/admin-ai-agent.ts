@@ -13,6 +13,7 @@ import {
   claimConversationTurn,
   releaseConversationTurn,
   sweepStalledConversation,
+  requestConversationStop,
 } from "../ai/agent/repo.js";
 import { getBoss, AGENT_TURN } from "../jobs/index.js";
 import type { AgentTurnInput } from "../jobs/agent-turn.js";
@@ -414,6 +415,43 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         // writes the response itself; `conversation_id` in the success
         // payload is what the client's tail keys off of.
         await runJobTurn(res, { conversationId, siteId, message }, { conversation_id: conversationId });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /sites/:siteId/agent/conversations/:conversationId/stop
+  //
+  // W1.4 / D300+D1105+D612 — real Stop. Chat "Stop" used to abort only the
+  // client's SSE tail while the background AGENT_TURN job kept executing
+  // tools and mutating the site for up to 4 batches (the kill-switch-for-
+  // spend gap). This sets `cancel_requested`, which the turn loop consumes
+  // between tool calls / at batch boundaries (loop.ts) and the job handler
+  // consumes for still-queued jobs (agent-turn.ts) — whoever consumes it
+  // appends the honest "Stopped by you" note and lands status 'stopped'.
+  // The 202 is an acknowledgment, not completion: the client KEEPS tailing
+  // until the terminal 'stopped' status streams out (never strand busy
+  // state). A settled conversation answers `{stopping:false}` honestly.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/agent/conversations/:conversationId/stop",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, conversationId } = req.params;
+      try {
+        const conversation = await getConversation(pool, conversationId, siteId);
+        if (!conversation) {
+          res.status(404).json({ error: "conversation not found" });
+          return;
+        }
+        const requested = await requestConversationStop(pool, conversationId);
+        if (!requested) {
+          res.status(200).json({ stopping: false, status: conversation.status });
+          return;
+        }
+        res.status(202).json({ stopping: true });
       } catch (err) {
         next(err);
       }

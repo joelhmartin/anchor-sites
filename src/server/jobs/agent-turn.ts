@@ -1,7 +1,8 @@
 import type { Pool } from "pg";
 import { runAgentTurn, parsePositiveIntEnv } from "../ai/agent/loop.js";
 import {
-  setConversationStatus, claimConversationTurn, releaseConversationTurn, appendMessage,
+  claimConversationTurn, releaseConversationTurn, appendMessage,
+  consumeCancelRequest, markConversationStopped,
 } from "../ai/agent/repo.js";
 
 /**
@@ -111,12 +112,33 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
   const claimed = await claimConversationTurn(deps.pool, data.conversationId);
   if (!claimed) return; // duplicate/re-delivery — another turn already owns this conversation
   try {
+    // W1.4 Stop — a cancel requested while this job sat QUEUED (the loop's
+    // own checks only run once a turn is executing). Consumed after the
+    // claim so this delivery owns the conversation when it lands 'stopped'.
+    if (await consumeCancelRequest(deps.pool, data.conversationId)) {
+      await markConversationStopped(deps.pool, data.conversationId);
+      return;
+    }
+
     const result = await runTurn({ pool: deps.pool, conversationId: data.conversationId, siteId: data.siteId });
+
+    // W1.4 Stop — the loop already persisted the note and landed status
+    // 'stopped'; releasing to 'active' here would clobber that terminal
+    // state (and auto-continuing would defy the whole point of Stop).
+    if (result.endReason === "stopped") return;
 
     if (result.endReason === "tool_limit") {
       const maxContinuations = parsePositiveIntEnv(
         process.env.AI_AGENT_MAX_CONTINUATIONS, DEFAULT_MAX_CONTINUATIONS,
       );
+      // W1.4 Stop — continuation boundary: a Stop that landed during this
+      // round (after the loop's last own check) must halt the chain here,
+      // not ride into another full round of spend.
+      if (await consumeCancelRequest(deps.pool, data.conversationId)) {
+        await markConversationStopped(deps.pool, data.conversationId);
+        return;
+      }
+
       if (continuation < maxContinuations) {
         // Release BEFORE enqueueing (same ordering as admin-ai-agent.ts's
         // runJobTurn, and for the same reason): holding the 'running' lock
@@ -151,7 +173,10 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
 
     await releaseConversationTurn(deps.pool, data.conversationId, "active");
   } catch (err) {
-    await setConversationStatus(deps.pool, data.conversationId, "error").catch(() => undefined);
+    // releaseConversationTurn (not bare setConversationStatus): also clears
+    // a pending cancel flag so a Stop that raced this failure can't cancel
+    // the NEXT, unrelated turn (W1.4).
+    await releaseConversationTurn(deps.pool, data.conversationId, "error").catch(() => undefined);
     throw err;
   }
 }

@@ -5,6 +5,7 @@ import { resolveAiMode } from "../config.js";
 import { buildBlockCatalog } from "../catalog.js";
 import {
   getConversation, appendMessage, listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
+  consumeCancelRequest, markConversationStopped,
   type AiMessage,
 } from "./repo.js";
 import { buildAgentToolDefs, executeAgentTool } from "./tools/index.js";
@@ -27,7 +28,7 @@ import "../../../blocks/index.js";
  * assistant/tool messages as it goes.
  */
 
-export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "promoted";
+export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "promoted" | "stopped";
 
 /**
  * Task A1 (Lovable-workspace plan). The resolved value of `runAgentTurn` —
@@ -41,7 +42,10 @@ export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "pr
  * job), error->error.
  */
 export type AgentTurnResult = {
-  endReason: "completed" | "tool_limit" | "deadline" | "token_budget" | "error";
+  /** `stopped` (W1.4 / D300+D1105+D612): the operator's Stop was honored —
+   * the loop itself already persisted the note + landed status 'stopped',
+   * so the caller (handleAgentTurn) must neither release nor continue. */
+  endReason: "completed" | "tool_limit" | "deadline" | "token_budget" | "error" | "stopped";
   toolCalls: number;
 };
 
@@ -333,6 +337,17 @@ export async function runAgentTurn(input: {
   const failureStreak = new Map<string, number>();
 
   for (;;) {
+    // W1.4 Stop — batch-boundary cancellation check, before EVERY model
+    // call (including the first: a Stop can land while the job is queued).
+    // `consumeCancelRequest` is an atomic report-and-clear, so exactly one
+    // checker acts per Stop click. History is API-valid here: the previous
+    // batch's tool_results (if any) are already persisted.
+    if (await consumeCancelRequest(pool, conversationId)) {
+      await markConversationStopped(pool, conversationId);
+      onEvent({ type: "turn_done", reason: "stopped" });
+      return { endReason: "stopped", toolCalls };
+    }
+
     // Budget gate — runs before EVERY model call, including the first.
     const conv = await getConversation(pool, conversationId, siteId);
     if (!conv) {
@@ -412,6 +427,12 @@ export async function runAgentTurn(input: {
     }
 
     const resultBlocks: ToolResultContent[] = [];
+    // W1.4 Stop — between-tool-calls cancellation. Once a Stop is consumed
+    // mid-batch, THIS and every remaining tool_use in the batch is skipped;
+    // each still gets a matching `is_error` tool_result (the API requires
+    // exactly one per tool_use in the follow-up message), the batch message
+    // is persisted so history stays valid, then the turn lands 'stopped'.
+    let cancelled = false;
     for (const block of toolUseBlocks) {
       // Item 5 (Codex P2 — batched tool cap): the model can request several
       // tool_use blocks in ONE assistant message, so the cap has to be
@@ -436,6 +457,20 @@ export async function runAgentTurn(input: {
           is_error: true,
         });
         onEvent({ type: "tool_result", name: block.name, ok: false, summary: "tool call limit reached" });
+        continue;
+      }
+
+      if (!cancelled && (await consumeCancelRequest(pool, conversationId))) {
+        cancelled = true;
+      }
+      if (cancelled) {
+        resultBlocks.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify({ error: "stopped by operator" }),
+          is_error: true,
+        });
+        onEvent({ type: "tool_result", name: block.name, ok: false, summary: "stopped by operator" });
         continue;
       }
 
@@ -470,6 +505,12 @@ export async function runAgentTurn(input: {
     // message — the model always emits one tool_result per tool_use it asked
     // for, in a single follow-up turn, and history rebuild expects that shape.
     await appendMessage(pool, conversationId, "tool", resultBlocks);
+
+    if (cancelled) {
+      await markConversationStopped(pool, conversationId);
+      onEvent({ type: "turn_done", reason: "stopped" });
+      return { endReason: "stopped", toolCalls };
+    }
 
     const stuckTool = [...failureStreak.entries()].find(([, count]) => count >= FAILURE_STREAK_LIMIT);
     if (stuckTool) {

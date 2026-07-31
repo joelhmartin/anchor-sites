@@ -4,6 +4,7 @@ import {
   createConversation, getConversation, listConversations, appendMessage,
   listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
   claimConversationTurn, releaseConversationTurn, sweepStalledConversation,
+  requestConversationStop, consumeCancelRequest, markConversationStopped,
 } from "./repo.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -99,6 +100,80 @@ d("ai agent repo", () => {
       const conv = await createConversation(db.getPool(), siteId, "t");
       await claimConversationTurn(db.getPool(), conv.id);
       expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(false);
+    });
+  });
+
+  // ── W1.4 / D300+D1105+D612: real Stop (cancel_requested + 'stopped') ──
+
+  describe("requestConversationStop / consumeCancelRequest / markConversationStopped", () => {
+    async function cancelFlag(id: string): Promise<boolean> {
+      const r = await db.getPool().query<{ cancel_requested: boolean }>(
+        `SELECT cancel_requested FROM ai_conversations WHERE id = $1`, [id],
+      );
+      return r.rows[0].cancel_requested;
+    }
+
+    it("sets cancel_requested on a 'running' conversation and on an 'active' one (queued job), but not on settled ones", async () => {
+      const running = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), running.id);
+      expect(await requestConversationStop(db.getPool(), running.id)).toBe(true);
+      expect(await cancelFlag(running.id)).toBe(true);
+
+      const active = await createConversation(db.getPool(), siteId, "t");
+      expect(await requestConversationStop(db.getPool(), active.id)).toBe(true);
+
+      const errored = await createConversation(db.getPool(), siteId, "t");
+      await setConversationStatus(db.getPool(), errored.id, "error");
+      expect(await requestConversationStop(db.getPool(), errored.id)).toBe(false);
+      expect(await cancelFlag(errored.id)).toBe(false);
+    });
+
+    it("consumeCancelRequest reports-and-clears atomically — true once, then false", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      await requestConversationStop(db.getPool(), conv.id);
+
+      expect(await consumeCancelRequest(db.getPool(), conv.id)).toBe(true);
+      expect(await cancelFlag(conv.id)).toBe(false);
+      expect(await consumeCancelRequest(db.getPool(), conv.id)).toBe(false);
+    });
+
+    it("markConversationStopped appends the honest note and lands status 'stopped' with the flag cleared", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      await requestConversationStop(db.getPool(), conv.id);
+
+      await markConversationStopped(db.getPool(), conv.id);
+
+      const after = await getConversation(db.getPool(), conv.id, siteId);
+      expect(after!.status).toBe("stopped");
+      expect(await cancelFlag(conv.id)).toBe(false);
+      const all = await listMessages(db.getPool(), conv.id);
+      const last = all[all.length - 1];
+      expect(last.role).toBe("system");
+      expect(JSON.stringify(last.content)).toMatch(/stopped by you/i);
+      expect(JSON.stringify(last.content)).toMatch(/already written/i);
+    });
+
+    it("a 'stopped' conversation is claimable again (a follow-up message resumes)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await setConversationStatus(db.getPool(), conv.id, "stopped");
+      expect(await claimConversationTurn(db.getPool(), conv.id)).toBe(true);
+      expect((await getConversation(db.getPool(), conv.id, siteId))!.status).toBe("running");
+    });
+
+    it("releaseConversationTurn clears a still-set cancel flag in both branches (a settled turn starts the next one clean)", async () => {
+      const conv = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv.id);
+      await requestConversationStop(db.getPool(), conv.id);
+      await releaseConversationTurn(db.getPool(), conv.id, "active");
+      expect(await cancelFlag(conv.id)).toBe(false);
+
+      const conv2 = await createConversation(db.getPool(), siteId, "t");
+      await claimConversationTurn(db.getPool(), conv2.id);
+      await requestConversationStop(db.getPool(), conv2.id);
+      await releaseConversationTurn(db.getPool(), conv2.id, "error");
+      expect(await cancelFlag(conv2.id)).toBe(false);
     });
   });
 

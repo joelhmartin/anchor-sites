@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { setupAgentDb } from "../../../../tests/helpers/agent-db.js";
 import {
   createConversation, appendMessage, listMessages, addTokenUsage, getConversation, getTodayUsage,
+  requestConversationStop,
 } from "./repo.js";
 import {
   runAgentTurn, parsePositiveIntEnv, describeAnthropicError,
@@ -145,6 +146,78 @@ d("runAgentTurn", () => {
     await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "Update the homepage copy" }]);
     return { site, page, conv };
   }
+
+  // ── W1.4 / D300+D1105+D612: real Stop — the loop honors cancel_requested ──
+
+  it("W1.4 Stop: a cancel requested before the first model call ends the turn 'stopped' without calling the API", async () => {
+    const { site, conv } = await seedConvo(`loop-stop-pre-${runId}`);
+    await db.getPool().query(
+      `UPDATE ai_conversations SET status = 'running', cancel_requested = true WHERE id = $1`,
+      [conv.id],
+    );
+
+    const { client, create } = makeFakeClient([]);
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result.endReason).toBe("stopped");
+    expect(create).not.toHaveBeenCalled();
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("stopped");
+    const msgs = await listMessages(db.getPool(), conv.id);
+    const last = msgs[msgs.length - 1];
+    expect(last.role).toBe("system");
+    expect(JSON.stringify(last.content)).toMatch(/stopped by you/i);
+  });
+
+  it("W1.4 Stop: a cancel arriving mid-turn halts before the next tool executes; pending tool_use blocks get error results so history stays API-valid", async () => {
+    const { site, page, conv } = await seedConvo(`loop-stop-mid-${runId}`);
+    await db.getPool().query(`UPDATE ai_conversations SET status = 'running' WHERE id = $1`, [conv.id]);
+
+    // The Stop click lands WHILE the model call is in flight: the fake
+    // client sets the flag as a side effect of answering, then asks for a
+    // 2-tool batch — neither tool may run.
+    const create = vi.fn(async () => {
+      await requestConversationStop(db.getPool(), conv.id);
+      return cannedMessage({
+        content: [
+          toolUseBlock("t1", "update_page", {
+            page_id: page.id,
+            ops: [{ op: "update_block", id: "b1", props: { html: "<p>Should never land</p>" } }],
+          }),
+          toolUseBlock("t2", "get_site_overview", {}),
+        ],
+        stop_reason: "tool_use",
+        usage: usage(100, 20),
+      });
+    });
+    const client = { messages: { create } } as unknown as Anthropic;
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(result).toEqual({ endReason: "stopped", toolCalls: 0 });
+    expect(create).toHaveBeenCalledTimes(1);
+
+    // The page was NOT mutated — the cancel beat the tool execution.
+    const pageRow = await db.getPool().query(`SELECT blocks FROM pages WHERE id = $1`, [page.id]);
+    expect(JSON.stringify(pageRow.rows[0].blocks)).not.toContain("Should never land");
+
+    // Every pending tool_use got a matching is_error tool_result (the API
+    // requires one per tool_use), then the honest stopped note landed.
+    const msgs = await listMessages(db.getPool(), conv.id);
+    expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "system"]);
+    const toolMsg = msgs[2].content as { tool_use_id: string; is_error?: boolean }[];
+    expect(toolMsg.map((b) => b.tool_use_id)).toEqual(["t1", "t2"]);
+    expect(toolMsg.every((b) => b.is_error === true)).toBe(true);
+    expect(JSON.stringify(msgs[3].content)).toMatch(/stopped by you/i);
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("stopped");
+  });
 
   it("W1.4/D601: role-'system' transcript rows are never replayed into the model context", async () => {
     const { site, conv } = await seedConvo(`loop-system-filter-${runId}`);

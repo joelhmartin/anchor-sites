@@ -11,7 +11,10 @@ export type AiConversation = {
   id: string;
   site_id: string;
   title: string;
-  status: "active" | "error" | "archived" | "running";
+  /** `stopped` (W1.4 / D300+D1105+D612): an operator-cancelled turn's honest
+   * terminal state — nothing failed ('error' would lie), nothing completed
+   * ('active' would lie). Claimable again like 'error' (a message resumes). */
+  status: "active" | "error" | "archived" | "running" | "stopped";
   token_usage: Record<string, { input: number; output: number }>;
   created_at: string;
   updated_at: string;
@@ -158,10 +161,12 @@ export async function setConversationStatus(
  * from under it before its first model call ever persists anything.
  */
 export async function claimConversationTurn(pool: Pool, id: string): Promise<boolean> {
+  // 'stopped' joins 'error' in the claimable set (W1.4 Stop): a follow-up
+  // message after an operator cancel IS the resume.
   const r = await pool.query(
     `UPDATE ai_conversations SET status = 'running', updated_at = now()
      WHERE id = $1
-       AND (status IN ('active','error') OR (status = 'running' AND updated_at < now() - interval '10 minutes'))
+       AND (status IN ('active','error','stopped') OR (status = 'running' AND updated_at < now() - interval '10 minutes'))
      RETURNING id`,
     [id],
   );
@@ -179,14 +184,72 @@ export async function claimConversationTurn(pool: Pool, id: string): Promise<boo
 export async function releaseConversationTurn(
   pool: Pool, id: string, status: "active" | "error",
 ): Promise<void> {
+  // Both branches also clear `cancel_requested` (W1.4 Stop): a Stop that
+  // lost the race against the turn's natural end must not linger and cancel
+  // the NEXT, unrelated turn.
   if (status === "active") {
     await pool.query(
-      `UPDATE ai_conversations SET status = 'active' WHERE id = $1 AND status = 'running'`,
+      `UPDATE ai_conversations SET status = 'active', cancel_requested = false
+       WHERE id = $1 AND status = 'running'`,
       [id],
     );
   } else {
-    await setConversationStatus(pool, id, "error");
+    await pool.query(
+      `UPDATE ai_conversations SET status = 'error', cancel_requested = false WHERE id = $1`,
+      [id],
+    );
   }
+}
+
+// ---------------------------------------------------------------------------
+// W1.4 / D300+D1105+D612 — real Stop. The route sets `cancel_requested`; the
+// turn loop / job handler consume it at batch boundaries and between tool
+// calls, then land the conversation in the honest 'stopped' terminal state.
+// ---------------------------------------------------------------------------
+
+export const STOPPED_NOTE = "Stopped by you — the site keeps whatever was already written.";
+
+/**
+ * Marks the conversation as cancellation-requested. Only meaningful while a
+ * turn is running or queued (`running`/`active`); returns false for settled
+ * states so the route can answer honestly ("nothing to stop").
+ */
+export async function requestConversationStop(pool: Pool, id: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE ai_conversations SET cancel_requested = true
+     WHERE id = $1 AND status IN ('running','active')
+     RETURNING id`,
+    [id],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Atomic report-and-clear of the cancel flag — exactly one consumer acts on
+ * any single Stop click, however many checks race.
+ */
+export async function consumeCancelRequest(pool: Pool, id: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE ai_conversations SET cancel_requested = false
+     WHERE id = $1 AND cancel_requested
+     RETURNING id`,
+    [id],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Lands a consumed cancel: appends the honest transcript note, then flips to
+ * 'stopped' (clearing any re-set flag). Note first, status second — the SSE
+ * tail applies a terminal status immediately on the client, so the note must
+ * already be in the DB when the status flip streams out.
+ */
+export async function markConversationStopped(pool: Pool, id: string): Promise<void> {
+  await appendMessage(pool, id, "system", [{ type: "text", text: STOPPED_NOTE }]);
+  await pool.query(
+    `UPDATE ai_conversations SET status = 'stopped', cancel_requested = false WHERE id = $1`,
+    [id],
+  );
 }
 
 /**

@@ -24,7 +24,9 @@ export type AiConversation = {
   id: string;
   site_id: string;
   title: string;
-  status: "active" | "error" | "archived" | "running";
+  /** `stopped` (W1.4): operator-cancelled turn — terminal like 'error',
+   * resumable with a follow-up message. */
+  status: "active" | "error" | "archived" | "running" | "stopped";
   token_usage: Record<string, { input: number; output: number }>;
   created_at?: string;
   updated_at?: string;

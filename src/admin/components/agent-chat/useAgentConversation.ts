@@ -290,7 +290,11 @@ export function useAgentConversation({
         return;
       }
       clearSettleTimer();
-      if (e.status === "error") {
+      // 'stopped' (W1.4 real Stop) is as terminal as 'error': the server
+      // already persisted the "Stopped by you" note, nothing ever un-stops
+      // back into 'running', and the operator is actively waiting for the
+      // halt to confirm — never debounce it.
+      if (e.status === "error" || e.status === "stopped") {
         applySettledStatus(e.status, id);
         return;
       }
@@ -321,7 +325,9 @@ export function useAgentConversation({
         // + autoTail), not silently ignore it because neither "active" nor
         // "error" matched.
         const existing = res.conversations.find(
-          (c) => c.status === "active" || c.status === "error" || c.status === "running",
+          (c) =>
+            c.status === "active" || c.status === "error" || c.status === "running" ||
+            c.status === "stopped",
         );
         if (existing) {
           setConversationId(existing.id);
@@ -396,8 +402,8 @@ export function useAgentConversation({
     const controller = new AbortController();
     sendAbortRef.current = controller;
     usageBeforeRef.current = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+    let cid = conversationId;
     try {
-      let cid = conversationId;
       if (!cid) {
         const created = await apiFetch<{ conversation: AiConversation }>(
           `/api/sites/${siteId}/agent/conversations`,
@@ -438,6 +444,9 @@ export function useAgentConversation({
           ...prev,
           { id: nextId(), kind: "system", text: "A build is already running — wait for it to finish." },
         ]);
+        // D300 follow-up: reattach to the running turn instead of leaving a
+        // dead tail next to a 409 (previously only a full reload recovered).
+        if (cid) startTail(cid, lastMessageIdRef.current);
       } else {
         setError(err instanceof ApiError ? err.message : "Message failed to send.");
       }
@@ -448,19 +457,46 @@ export function useAgentConversation({
   }
 
   /**
-   * Detaches from the in-flight turn — aborts the enqueue POST if it's
-   * still in flight, and (the common case, since that POST resolves almost
-   * immediately) aborts the live `/events` tail. The background job keeps
-   * running; this just stops this hook instance from following it.
+   * W1.4 / D300+D1105+D612 — real Stop. The old implementation only aborted
+   * the local POST/tail while the background AGENT_TURN job kept executing
+   * tools and mutating the site ("the operator believes the build halted;
+   * the site keeps changing underneath them") — worse, it stranded `busy`
+   * with a dead tail. Now: POST the cancel endpoint and KEEP TAILING — the
+   * server-side halt lands the honest "Stopped by you" note + the terminal
+   * 'stopped' status, which the tail delivers and `applySettledStatus`
+   * applies immediately (re-enabling the composer/Publish). The only
+   * client-side abort left is the no-conversation-yet case, where there is
+   * nothing server-side to cancel.
    */
-  function stop() {
-    if (!sending) return;
-    sendAbortRef.current?.abort();
-    tailAbortRef.current?.abort();
-    clearSettleTimer();
-    pendingUsageRefreshRef.current = false;
-    setSending(false);
-    setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Stopped." }]);
+  async function stop() {
+    const cid = conversationId;
+    if (!sending && conversation?.status !== "running") return;
+    if (!cid) {
+      // Conversation creation still in flight — nothing exists server-side
+      // to cancel; aborting the POST is a complete stop.
+      sendAbortRef.current?.abort();
+      clearSettleTimer();
+      pendingUsageRefreshRef.current = false;
+      setSending(false);
+      setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Stopped." }]);
+      return;
+    }
+    try {
+      const res = await apiFetch<{ stopping: boolean; status?: string }>(
+        `/api/sites/${siteId}/agent/conversations/${cid}/stop`,
+        { method: "POST" },
+      );
+      if (res.stopping) {
+        setItems((prev) => [
+          ...prev,
+          { id: nextId(), kind: "system", text: "Stopping — the build will halt at the next step…" },
+        ]);
+      }
+      // If `stopping` is false the turn already settled; the tail delivers
+      // (or has delivered) that settled status on its own.
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't stop the build.");
+    }
   }
 
   const usage = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };

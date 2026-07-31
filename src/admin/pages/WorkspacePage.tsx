@@ -450,7 +450,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
             onSend={() => send()}
             onStop={stop}
             sending={sending}
-            resumeVisible={conversation?.status === "error"}
+            resumeVisible={conversation?.status === "error" || conversation?.status === "stopped"}
             onResume={() => send("continue")}
             usageText={usageText}
           />

@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupAgentDb } from "../../../tests/helpers/agent-db.js";
-import { createConversation, getConversation, listMessages, setConversationStatus } from "../ai/agent/repo.js";
+import {
+  createConversation, getConversation, listMessages, setConversationStatus,
+  requestConversationStop,
+} from "../ai/agent/repo.js";
 import { buildContinuationSingletonKey, handleAgentTurn } from "./agent-turn.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -209,6 +212,70 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     // Still 'running' — untouched, still owned by the fresh turn.
     expect(convAfter!.status).toBe("running");
+  });
+
+  // ── W1.4 / D300+D1105+D612: Stop is honored by the job handler too ──
+
+  it("W1.4 Stop: a cancel requested while the job was still queued stops it before runTurn ever runs", async () => {
+    const site = await db.seedSite(`agent-turn-stop-queued-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+    // Stop clicked while the conversation sat 'active' with the job queued.
+    await requestConversationStop(db.getPool(), conv.id);
+
+    const runTurn = vi.fn();
+    await handleAgentTurn({ conversationId: conv.id, siteId: site.id }, { pool: db.getPool(), runTurn });
+
+    expect(runTurn).not.toHaveBeenCalled();
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("stopped");
+    const messages = await listMessages(db.getPool(), conv.id);
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe("system");
+    expect(JSON.stringify(last.content)).toMatch(/stopped by you/i);
+  });
+
+  it("W1.4 Stop: endReason 'stopped' from the loop is terminal — no release, no continuation", async () => {
+    const site = await db.seedSite(`agent-turn-stop-result-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    // The real loop lands status 'stopped' itself before resolving; mimic that.
+    const runTurn = vi.fn(async () => {
+      await setConversationStatus(db.getPool(), conv.id, "stopped");
+      return { endReason: "stopped" as const, toolCalls: 3 };
+    });
+    const enqueueContinuation = vi.fn();
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(enqueueContinuation).not.toHaveBeenCalled();
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("stopped"); // not clobbered back to 'active'
+  });
+
+  it("W1.4 Stop: a cancel arriving at a continuation boundary stops instead of enqueueing the next round", async () => {
+    const site = await db.seedSite(`agent-turn-stop-cont-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn(async () => {
+      // Stop clicked during the round — after the loop's last own check.
+      await requestConversationStop(db.getPool(), conv.id);
+      return { endReason: "tool_limit" as const, toolCalls: 30 };
+    });
+    const enqueueContinuation = vi.fn();
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    expect(enqueueContinuation).not.toHaveBeenCalled();
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("stopped");
+    const messages = await listMessages(db.getPool(), conv.id);
+    expect(JSON.stringify(messages[messages.length - 1].content)).toMatch(/stopped by you/i);
   });
 
   it("re-claims the lock for each continuation round and releases fully once a later round completes", async () => {

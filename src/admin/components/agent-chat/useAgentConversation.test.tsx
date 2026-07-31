@@ -54,6 +54,9 @@ function mockFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url === "/api/sites/s1/agent/conversations/c1/stop" && method === "POST") {
+      return json({ stopping: true }, 202);
+    }
     if (url === "/api/sites/s1/agent/conversations" && method === "GET") return json({ conversations: [] });
     if (url === "/api/sites/s1/agent/conversations" && method === "POST") {
       return json(
@@ -193,6 +196,62 @@ describe("useAgentConversation — inter-round settle debounce (final review, it
     expect(result.current.conversation?.status).toBe("error");
     expect(result.current.busy).toBe(false);
     expect(result.current.sending).toBe(false);
+  });
+
+  it("W1.4 Stop: stop() calls the cancel endpoint, keeps the tail alive, and settles on the tailed 'stopped' status", async () => {
+    const fetchMock = mockFetch();
+    const { result } = renderConversation();
+    await flush();
+
+    await act(async () => {
+      void result.current.send("build me a site");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    emit({ type: "status", status: "running" });
+    expect(result.current.busy).toBe(true);
+
+    expect(streamAgentEvents).toHaveBeenCalledTimes(1);
+    const tailSignal = streamAgentEvents.mock.calls[0][1].signal;
+
+    await act(async () => {
+      void result.current.stop();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The cancel endpoint was hit…
+    const stopCalls = fetchMock.mock.calls.filter(
+      ([input, init]) => String(input) === "/api/sites/s1/agent/conversations/c1/stop" && init?.method === "POST",
+    );
+    expect(stopCalls).toHaveLength(1);
+    // …the tail was NOT aborted (busy state must settle from the server,
+    // never be stranded by a client-side detach)…
+    expect(tailSignal?.aborted).toBe(false);
+    // …and until the terminal status lands, the turn still reads in-flight.
+    expect(result.current.sending).toBe(true);
+    // Immediate local feedback while the halt propagates.
+    expect(result.current.items.some((i) => i.kind === "system" && /stopping/i.test(i.text))).toBe(true);
+
+    // The server's honest note + terminal status stream out over the tail.
+    emit({
+      type: "message",
+      message: {
+        id: "m-sys-1", conversation_id: "c1", role: "system",
+        content: [{ type: "text", text: "Stopped by you — the site keeps whatever was already written." }],
+        created_at: "2026-07-30T00:00:00.000Z",
+      },
+    });
+    emit({ type: "status", status: "stopped" });
+
+    // 'stopped' is terminal: applied immediately (no 4s debounce), busy off.
+    expect(result.current.sending).toBe(false);
+    expect(result.current.busy).toBe(false);
+    expect(result.current.conversation?.status).toBe("stopped");
+    expect(
+      result.current.items.some((i) => i.kind === "system" && /stopped by you/i.test(i.text)),
+    ).toBe(true);
   });
 
   it("refreshes the usage delta ONCE, after the final settle (not the first inter-round one)", async () => {
