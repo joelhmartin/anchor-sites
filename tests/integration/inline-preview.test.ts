@@ -93,6 +93,75 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(res.text).not.toContain("window.__AC_EDIT_BOOT__");
   });
 
+  // ── FINAL whole-branch review, FIX-NOW item 6 — preview iframe nav escape ──
+  //
+  // `<a href="/about">` inside the sandboxed preview resolves against the
+  // preview's own document URL, which is on the ADMIN origin — so a click
+  // used to navigate the frame to the admin SPA. See src/server/preview-links.ts.
+
+  const internalLinkBlocks = [
+    { id: "h1", type: "hero", props: { title: "Welcome", align: "center", cta_href: "/about" } },
+    {
+      id: "r1",
+      type: "rich-text",
+      props: {
+        html: '<p><a href="/">Home</a> <a href="/nowhere">Missing</a> <a href="https://example.com/x">Out</a> <a href="#top">Top</a></p>',
+      },
+    },
+  ];
+
+  it("rewrites site-relative hrefs to sibling pages' preview URLs (and leaves external/anchor links alone)", async () => {
+    const site = await db.seedSite("preview-links");
+    const home = await db.seedPage(site.id, "home", internalLinkBlocks);
+    const about = await db.seedPage(site.id, "about", []);
+
+    const res = await auth(
+      request(app).get(`/api/sites/${site.id}/pages/${home.id}/preview?token=tok&v=3`),
+    );
+
+    expect(res.status).toBe(200);
+    // /about → the About page's own preview, carrying the same token + v.
+    expect(res.text).toContain(
+      `href="/api/sites/${site.id}/pages/${about.id}/preview?token=tok&amp;v=3"`,
+    );
+    // / → the home page's own preview.
+    expect(res.text).toContain(
+      `href="/api/sites/${site.id}/pages/${home.id}/preview?token=tok&amp;v=3"`,
+    );
+    // Nothing site-relative survives to navigate the frame off-preview.
+    expect(res.text).not.toContain('href="/about"');
+    expect(res.text).not.toContain('href="/nowhere"');
+    // Unknown slug → inert; external + in-page anchors untouched.
+    expect(res.text).toContain('href="#"');
+    expect(res.text).toContain('href="https://example.com/x"');
+    expect(res.text).toContain('href="#top"');
+  });
+
+  it("edit-mode preview rewrites the same way, but never carries edit/bridge into a navigation", async () => {
+    const site = await db.seedSite("preview-links-edit");
+    const home = await db.seedPage(site.id, "home", internalLinkBlocks);
+    const about = await db.seedPage(site.id, "about", []);
+
+    const res = await auth(
+      request(app).get(
+        `/api/sites/${site.id}/pages/${home.id}/preview?token=tok&edit=1&bridge=tok_abc123`,
+      ),
+    );
+
+    expect(res.status).toBe(200);
+    // Still edit mode for THIS page (overlay boots, bootData carries the
+    // bridge token + the url-field values the LinkPopover reads).
+    expect(res.text).toContain("window.__AC_EDIT_BOOT__");
+    expect(res.text).toContain('"token":"tok_abc123"');
+    expect(res.text).toContain('"urls":{"h1":{"cta_href":"/about"}}');
+    // …but a navigation out of it lands in PLAIN preview: a bridge token is
+    // bound to one pageId, so carrying it to another page would hand the
+    // overlay a session that saves to the wrong page.
+    expect(res.text).toContain(`href="/api/sites/${site.id}/pages/${about.id}/preview?token=tok"`);
+    expect(res.text).not.toContain("bridge=tok_abc123&");
+    expect(res.text).not.toContain("preview?token=tok&amp;edit=1");
+  });
+
   it("?edit=1 with a malformed bridge token 400s", async () => {
     const site = await db.seedSite("inline-preview-bad-bridge");
     const page = await db.seedPage(site.id, "home", heroAndRichText);
