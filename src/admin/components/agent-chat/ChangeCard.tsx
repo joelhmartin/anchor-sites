@@ -11,11 +11,17 @@ export function ChangeCard({
   slug,
   change,
   onSiteChanged,
+  agentBusy = false,
 }: {
   siteId: string;
   slug: string;
   change: AgentChangeEvent;
   onSiteChanged: () => void;
+  /** D328 (W2-CONC): every mutation on a shared surface obeys the same busy
+   * gate. Publish and Edit are disabled while the agent runs — Revert was
+   * not, so a mid-build revert POSTed a restore that raced the running
+   * agent's writes on the same page. Same title copy as Publish. */
+  agentBusy?: boolean;
 }) {
   const [reverting, setReverting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -51,7 +57,14 @@ export function ChangeCard({
             </Link>
           )}
           {change.revision_id && (
-            <Button type="button" variant="outline" size="sm" onClick={revert} disabled={reverting}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={revert}
+              disabled={reverting || agentBusy}
+              title={agentBusy ? "Agent is running" : undefined}
+            >
               {reverting ? "Reverting…" : "Revert"}
             </Button>
           )}

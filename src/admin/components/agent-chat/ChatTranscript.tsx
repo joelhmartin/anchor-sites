@@ -134,6 +134,10 @@ export function ChatTranscript({
             slug={slug}
             change={item.change as AgentChangeEvent}
             onSiteChanged={onSiteChanged}
+            // D328: Revert obeys the same busy gate as Publish/Edit — `busy`
+            // here is the hook's sending-or-running signal, the same one
+            // WorkspacePage's Publish button disables on.
+            agentBusy={busy}
           />
         );
       })}
