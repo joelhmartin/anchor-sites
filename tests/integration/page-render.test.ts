@@ -359,6 +359,25 @@ d("page renderer catch-all (integration)", () => {
     }
   });
 
+  // D908 — tenant responses carried NO Cache-Control (Express default: weak
+  // ETag only), leaving intermediary/browser behavior after a re-publish to
+  // heuristic caching. `no-cache` = store but revalidate every use: the weak
+  // ETag still yields cheap 304s, and a publish is visible on the next load.
+  describe("D908 — explicit caching contract on tenant HTML", () => {
+    it("published page HTML is no-cache and still carries an ETag", async () => {
+      const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.headers["cache-control"]).toBe("no-cache");
+      expect(res.headers.etag).toBeTruthy();
+    });
+
+    it("404 and coming-soon renders are no-cache too", async () => {
+      const notFound = await request(app)
+        .get("/nope-nope")
+        .set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(notFound.headers["cache-control"]).toBe("no-cache");
+    });
+  });
+
   // D911 — the muldoon seed's display_name is "Muldoon Dental (placeholder)"
   // and that marker reached og:site_name, JSON-LD and the page chrome on a
   // live index,follow page (verified live in the audit).

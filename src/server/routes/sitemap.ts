@@ -4,6 +4,7 @@ import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
 import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { hostnameForSlug } from "../../config/domain.js";
+import { FEED_CACHE_CONTROL } from "../http-cache.js";
 
 /**
  * Per-tenant `/sitemap.xml` and `/robots.txt` (P9-T9.5/9.6, D-049). Dynamic on
@@ -75,7 +76,12 @@ export function sitemapRouter(opts: { pool?: Pool } = {}): Router {
       if (events.rowCount) urls.push({ loc: `${base}/events` });
       for (const e of events.rows) urls.push({ loc: `${base}/events/${e.slug}`, lastmod: e.lastmod });
 
-      res.status(200).type("application/xml").send(buildSitemap(urls));
+      // D908 — crawl surface: short public cache cuts repeated DB renders.
+      res
+        .status(200)
+        .set("Cache-Control", FEED_CACHE_CONTROL)
+        .type("application/xml")
+        .send(buildSitemap(urls));
     } catch (err) {
       next(err);
     }
@@ -86,7 +92,7 @@ export function sitemapRouter(opts: { pool?: Pool } = {}): Router {
     if (req.isAdminHost || !site) return next();
     const base = `https://${hostnameForSlug(site.slug)}`;
     const body = `User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`;
-    res.status(200).type("text/plain").send(body);
+    res.status(200).set("Cache-Control", FEED_CACHE_CONTROL).type("text/plain").send(body); // D908
   });
 
   return router;

@@ -103,6 +103,15 @@ d("sitemap + robots (P9-T9.5/9.6)", () => {
     expect(res.text).toContain("User-agent: *");
   });
 
+  // D908 — crawl surfaces tolerate short staleness; 5 minutes of caching cuts
+  // repeated full-DB renders without meaningfully delaying crawlers.
+  it("sitemap.xml + robots.txt declare a short public max-age (D908)", async () => {
+    const sitemap = await request(app).get("/sitemap.xml").set("Host", HOST);
+    expect(sitemap.headers["cache-control"]).toBe("public, max-age=300");
+    const robots = await request(app).get("/robots.txt").set("Host", HOST);
+    expect(robots.headers["cache-control"]).toBe("public, max-age=300");
+  });
+
   it("falls through (DOWNSTREAM) on the admin host", async () => {
     const res = await request(app).get("/sitemap.xml").set("Host", "studio.localhost");
     expect(res.status).toBe(200);

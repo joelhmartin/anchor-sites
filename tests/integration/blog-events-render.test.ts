@@ -56,6 +56,14 @@ d("public blog/events rendering (P8-T8.11)", () => {
 
   beforeEach(() => __clearResolveSiteCacheForTests());
 
+  // D908 — explicit caching contract on public blog/events HTML.
+  it("blog/events responses declare Cache-Control: no-cache (D908)", async () => {
+    const list = await request(app).get("/blog").set("Host", HOST);
+    expect(list.headers["cache-control"]).toBe("no-cache");
+    const missing = await request(app).get("/blog/zzz-does-not-exist").set("Host", HOST);
+    expect(missing.headers["cache-control"]).toBe("no-cache");
+  });
+
   // D913 — with no seo_defaults.titleTemplate configured, index/detail titles
   // shipped bare ("Blog") with zero site identity (verified live).
   it("blog index + post titles carry the site name by default (D913)", async () => {

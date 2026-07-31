@@ -10,6 +10,7 @@ import { getPostBySlug, listPosts } from "../blog/repo.js";
 import { getEventBySlug, listEvents } from "../events/repo.js";
 import { resolveOgImage, type OgImage } from "../seo/og-image.js";
 import { parseSeoLoose } from "../seo/schema.js";
+import { HTML_CACHE_CONTROL } from "../http-cache.js";
 import { blogPostingLd, eventLd } from "../seo/json-ld.js";
 import "../../blocks/index.js"; // side-effect: register blocks for SSR
 
@@ -67,7 +68,7 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
       ogImage,
       extraJsonLd: extra.extraJsonLd,
     });
-    res.status(status).type("text/html").send(html);
+    res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html); // D908
   }
 
   function indexBlock(id: string, html: string): Block[] {
@@ -101,7 +102,7 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
       const post = await getPostBySlug(pool, site.id, req.params.slug);
       if (!post || post.status !== "published") {
         const { html, status } = renderNotFound(site);
-        res.status(status).type("text/html").send(html);
+        res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html); // D908
         return;
       }
       const postSeo = parseSeoLoose(post.seo);
@@ -156,7 +157,7 @@ export function blogEventsRouter(opts: { pool?: Pool } = {}): Router {
       const event = await getEventBySlug(pool, site.id, req.params.slug);
       if (!event || event.status !== "published") {
         const { html, status } = renderNotFound(site);
-        res.status(status).type("text/html").send(html);
+        res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html); // D908
         return;
       }
       const eventSeo = parseSeoLoose(event.seo);

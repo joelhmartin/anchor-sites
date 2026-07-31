@@ -6,6 +6,7 @@ import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { renderComingSoon, renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { faviconColor, faviconSvg } from "../favicon.js";
+import { HTML_CACHE_CONTROL } from "../http-cache.js";
 import { resolveOgImage } from "../seo/og-image.js";
 import { parseSeoLoose } from "../seo/schema.js";
 // Side-effect: register the three static block types so SSR can resolve them.
@@ -86,7 +87,7 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
         // coming-soon instead. Non-home slugs keep the honest 404.
         const { html, status } =
           slug === "home" ? renderComingSoon(req.site) : renderNotFound(req.site);
-        res.status(status).type("text/html").send(html);
+        res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html);
         return;
       }
 
@@ -102,7 +103,9 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
         path: req.path,
         ogImage: ogImage ?? undefined,
       });
-      res.status(status).type("text/html").send(html);
+      // D908 — explicit contract: revalidate every use (weak ETag → 304s),
+      // so a re-publish is visible on the next load.
+      res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html);
     } catch (err) {
       next(err);
     }

@@ -5,6 +5,7 @@ import { resolveSite } from "../../middleware/resolveSite.js";
 import { flagAdminHost } from "../../middleware/flagAdminHost.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { renderLeadThanks } from "../render-page.js";
+import { HTML_CACHE_CONTROL } from "../http-cache.js";
 
 /**
  * D700 (W1.6) — the ONE real platform lead endpoint.
@@ -77,7 +78,7 @@ export function leadsRouter(opts: LeadsRouterOptions = {}): Router {
         const honeypot = body[HONEYPOT_FIELD];
         if (typeof honeypot === "string" && honeypot.trim() !== "") {
           const { html, status } = renderLeadThanks(site, { backHref });
-          res.status(status).type("text/html").send(html);
+          res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html); // D908
           return;
         }
 
@@ -93,7 +94,7 @@ export function leadsRouter(opts: LeadsRouterOptions = {}): Router {
         );
 
         const { html, status } = renderLeadThanks(site, { backHref });
-        res.status(status).type("text/html").send(html);
+        res.status(status).set("Cache-Control", HTML_CACHE_CONTROL).type("text/html").send(html); // D908
       } catch (err) {
         next(err);
       }
