@@ -81,10 +81,16 @@ contract: `src/server/ai/agent/tools/types.ts` (`AgentTool`, `AgentToolCtx`,
 Deliberately not tools: publish, domain provisioning, plugin enable/config,
 CRM/CTM, anything secret-touching.
 
-`AgentChangeEvent` (`{ kind, page_id?, revision_id?, summary }`) flows
-unchanged from a tool's `AgentToolResult.change` → the loop's `tool_result`
-event → the SSE stream → the drawer's change cards, so a UI change card can
-always link to the page and, when a `revision_id` is present, offer Revert.
+`AgentChangeEvent` (`{ kind, page_id?, revision_id?, summary }`) is a tool's
+`AgentToolResult.change`, but only `result.data` is what actually gets
+persisted in the `tool` message's content block — the DB has no column for
+the live `change` object. The Studio chat transcript
+(`src/admin/components/agent-chat/history.ts`'s `deriveChangeFromToolData`)
+best-effort-reconstructs a change card from that persisted `data` (page_id +
+revision_id + a diff summary, or "Page created") as it tails the
+conversation, so a change card can always link to the page and, when a
+`revision_id` is present, offer Revert — it just isn't a faithful replay of
+the original tool result.
 
 ## Turn lifecycle
 
@@ -92,37 +98,74 @@ always link to the page and, when a `revision_id` is present, offer Revert.
 the `ai.agent-turn` pg-boss job (`src/server/jobs/agent-turn.ts`,
 `handleAgentTurn`, Task 9), and the HTTP layer that exposes them to the
 browser (`src/server/routes/admin-ai-agent.ts`, Task 10 — conversation CRUD,
-the inline SSE message route, and the job-tail SSE route) are all implemented
-and tested (`tests/integration/ai-agent-routes.test.ts`), and mounted in
+the message-POST routes, and the job-tail SSE route) are all implemented and
+tested (`tests/integration/ai-agent-routes.test.ts`), and mounted in
 `createApp` (`src/server/app.ts`) alongside the other `/api` routers. The
-admin UI that calls it (`AgentChatDrawer`, `agent-api.ts`, Tasks 11–12) was
-built against the contract below ahead of Task 10 landing; the routes now
-match it, including the draft-preview endpoint
+Studio chat UI that calls it (`src/admin/pages/WorkspacePage.tsx` +
+`src/admin/components/agent-chat/`, `src/admin/lib/agent-api.ts`) is built
+against the contract below, including the draft-preview endpoint
 (`GET /api/sites/:siteId/pages/:pageId/preview`, added to
-`src/server/routes/admin-pages.ts`) that Task 12's preview iframe consumes.
+`src/server/routes/admin-pages.ts`) that the preview panel's iframe consumes.
 
-Two execution paths by turn weight, per the spec:
+**Every turn is a background job — there is no in-request turn anymore.**
+Task A2 (2026-07-30 lovable-workspace SDD) deleted the inline HTTP turn path
+entirely: Cloud Run's 60s request timeout means no HTTP request may run an
+agent loop in-process (see `global-constraints.md`), so every turn — the
+wizard's initial build, a follow-up chat message, a Resume — follows the
+same one path:
 
-- **Chat turns** (edits, questions) run in-request and stream to the browser
-  over SSE.
-- **Build turns** (initial build, multi-page work) run the same loop inside a
-  pg-boss job (`ai.agent-turn`), appending progress to `ai_messages`; the
-  chat drawer tails the conversation over SSE backed by the DB. This survives
-  Cloud Run's 60s request timeout and mid-build deploys.
-- **Routing rule:** turns from the "Start with AI" wizard always run as jobs
-  (`POST .../conversations` with `run:"job"`). Drawer turns run in-request
-  and are **auto-promoted** to a continuation job when a turn exceeds **45s
-  elapsed or 15 tool calls** — the inline route passes
-  `limits: { maxToolCalls: 15, deadlineMs: 45_000 }` into `runAgentTurn`; the
-  job path passes no limits, so it falls back to the env-configured caps
-  (`AI_AGENT_MAX_TOOL_CALLS`, no deadline).
+1. `POST .../conversations/:id/messages` (or `POST .../conversations` with
+   `run:"job"` for a brand-new conversation) claims the conversation's turn
+   lock, appends the user message, enqueues an `AGENT_TURN` pg-boss job, and
+   responds **`202 { queued: true, job_id, user_message_id, ... }`**
+   immediately — no SSE, no streamed tokens, nothing left open on this
+   request. There is no `run:"inline"` path; the zod schema on
+   `POST .../conversations` still accepts the literal for backward
+   compatibility, but nothing in this codebase ever sends it — the client
+   (`NewSitePage.tsx`) always sends `run:"job"`.
+2. The client immediately opens `GET .../conversations/:id/events?after=<user_message_id>`
+   — a DB-polling SSE tail (`streamAgentEvents` in `agent-api.ts`), **not**
+   a live stream off the running turn. The route polls `ai_messages`/
+   `ai_conversations` once a second and re-emits new rows as `AgentTailEvent`s
+   (`snapshot` / `message` / `status`; see "SSE event types" below) plus a
+   15s heartbeat comment.
+3. `handleAgentTurn` (the pg-boss worker) claims the same turn lock, calls
+   `runAgentTurn` with **no `limits`** — full `AI_AGENT_MAX_TOOL_CALLS`
+   (default 30), no wall-clock deadline — and lets it run to one of its
+   terminal `endReason`s (see "Caps inside a turn" below). Progress is
+   whatever `runAgentTurn` persists to `ai_messages` as it goes; the loop's
+   internal `onEvent` callback (still typed as `AgentTurnEvent` inside
+   `loop.ts`) is never wired to anything in production — the job passes no
+   `onEvent`, so it's a no-op. The tail only ever sees the DB rows.
+4. **Auto-continue.** If the turn ends `tool_limit` (it hit
+   `AI_AGENT_MAX_TOOL_CALLS` mid-task, not actually done), `handleAgentTurn`
+   re-enqueues the NEXT batch itself — no new user message needed, the
+   model's own "reached the limit" note (persisted by `loop.ts`) is already
+   the last row in history, so the continuation job just resumes from it.
+   The job payload carries a `continuation` counter starting at `0` for the
+   very first job; each `tool_limit` re-enqueues `continuation + 1` as long
+   as the CURRENT `continuation < AI_AGENT_MAX_CONTINUATIONS` (default `3`)
+   — so the initial job plus up to `AI_AGENT_MAX_CONTINUATIONS` re-enqueues
+   gives **`AI_AGENT_MAX_CONTINUATIONS + 1` batches total** per user message
+   (4 at the defaults), each capable of up to `AI_AGENT_MAX_TOOL_CALLS` tool
+   calls — up to `(AI_AGENT_MAX_CONTINUATIONS + 1) × AI_AGENT_MAX_TOOL_CALLS`
+   tool calls (120 at the defaults) before the agent gives up on its own.
+   Each round's job carries a round-scoped pg-boss `singletonKey`
+   (`buildContinuationSingletonKey`: `` `${conversationId}:c${continuation}` ``)
+   so `stately`-policy dedup can't collide across rounds.
+5. **At the cap** (`continuation >= AI_AGENT_MAX_CONTINUATIONS`),
+   `handleAgentTurn` appends one more, clearly user-facing assistant message
+   — **`"Paused after N batches — send a message to continue."`** — and
+   releases the conversation back to `active` instead of re-enqueuing. The
+   operator sends any new message (or hits Resume) to pick the build back up;
+   context rebuild always resumes cleanly (see "Resume semantics" below).
 
 **Turn serialization.** A conversation can only have ONE turn in flight at a
-time — a second `POST .../messages` (either `run:"inline"` or `run:"job"`) or
-`POST .../conversations` (`run:"job"`, message given) while another turn is
-already running would otherwise interleave invalid Anthropic history and
-conflicting mutations (e.g. the composer being enabled while the drawer is
-still tailing a job-run build). Enforced via a DB-level lock, `status:'running'`,
+time — a second `POST .../messages` or `POST .../conversations` (`run:"job"`,
+message given) while another turn is already running would otherwise
+interleave invalid Anthropic history and conflicting mutations (e.g. the
+composer being enabled while the chat panel is still tailing a job-run
+build). Enforced via a DB-level lock, `status:'running'`,
 claimed atomically (`claimConversationTurn`, `src/server/ai/agent/repo.ts`)
 before a turn starts and released (`releaseConversationTurn`) when it ends:
 
@@ -135,19 +178,20 @@ before a turn starts and released (`releaseConversationTurn`) when it ends:
   that sits queued for a while before pg-boss dequeues it doesn't start the
   clock early).
 - **A failed claim returns `409 { error: "turn already running" }`** on both
-  message-POST routes and on conversation-create-with-job. The Studio
-  drawer renders this as a system line ("A build is already running — wait
+  message-POST routes and on conversation-create-with-job. The Studio chat
+  panel renders this as a system line ("A build is already running — wait
   for it to finish.") and re-enables the composer.
-- **Who holds the lock, and for how long:** the inline route holds it for the
-  whole in-request turn, releasing (conditionally — only if still `running`,
-  so an already-`error`'d turn isn't clobbered back to `active`) in a
-  `finally` block. The two job-enqueuing paths claim, append the seed
-  message, then RELEASE before calling `enqueue()` — ownership of the
-  long-lived hold passes to the `ai.agent-turn` job handler
-  (`src/server/jobs/agent-turn.ts`), which claims again at entry and holds
-  it for the turn's full (potentially long) execution. This ordering matters:
-  releasing before enqueueing (rather than after, the original round-1
-  shape) closes a gap where a worker fast enough to dequeue-and-claim in
+- **Who holds the lock, and for how long:** the two enqueuing routes
+  (`runJobTurn` in `admin-ai-agent.ts`) claim, append the seed message, then
+  RELEASE before calling `enqueue()` — ownership of the long-lived hold
+  passes to the `ai.agent-turn` job handler (`src/server/jobs/agent-turn.ts`),
+  which claims again at entry and holds it for the turn's full (potentially
+  long) execution, releasing (conditionally — only if still `running`, so an
+  already-`error`'d turn isn't clobbered back to `active`) once the turn ends
+  (or hands off to the next auto-continue round — see "Auto-continue" above).
+  This release-before-enqueue ordering matters: releasing before enqueueing
+  (rather than after, the original round-1 shape) closes a gap where a
+  worker fast enough to dequeue-and-claim in
   between `send()` and the route's post-enqueue release would lose its own
   claim attempt against the route's still-held lock, while pg-boss marked
   the delivery complete anyway — the build would silently never run.
@@ -173,60 +217,98 @@ before a turn starts and released (`releaseConversationTurn`) when it ends:
   probability; closing it fully needs a lease token threaded through
   claim/release.
 
-**Resume semantics.** When the deadline is hit, the loop returns
-`{ reason: "promoted" }` **without persisting anything extra** — the last
-persisted message is always the role-`tool` message from the just-finished
-round of tool calls. `buildApiMessages()` rebuilds model context straight
-from `ai_messages` (DB `user`/`assistant` map 1:1 to API roles; DB `tool`
-rides inside an API `user`-role message, per the Anthropic messages
-convention — there is no API `tool` role). So a continuation call — whether
-the route's post-promotion `enqueue()` or an operator hitting **Resume** on
-an `error` conversation — always rebuilds a context that ends in
-`tool_result`s, and the model picks the task back up mid-stream with no
-special-casing. A conversation in `status:'error'` (e.g. from a failure
-streak) accepts a new user message as a manually-triggered resume; no
-partial-write cleanup is needed anywhere because every mutation is one
-atomic validated save + revision.
+**Resume semantics.** Two distinct paths pick a conversation back up, and
+both lean on the same context-rebuild guarantee:
+
+- **Auto-continue** (see above) — a `tool_limit`-ended round's last
+  persisted message is always the role-`tool` message from its
+  just-finished batch of tool calls; `handleAgentTurn`'s re-enqueued job
+  resumes from exactly that, automatically, with no user action.
+- **Manual Resume** — a conversation in `status:'error'` (a 3-in-a-row tool
+  failure streak, or a labeled Anthropic API error — see "Labeled Anthropic
+  errors" below; token-budget exhaustion does NOT set `status:'error'`, it
+  just ends the turn) shows a **Resume** button in the Composer
+  (`resumeVisible={conversation?.status === "error"}` in
+  `WorkspacePage.tsx`) that sends the literal `"continue"` user message
+  through the normal message-POST path — same job, same lock, same
+  `202`/tail flow as any other message.
+
+Both rely on `buildApiMessages()` rebuilding model context straight from
+`ai_messages` (DB `user`/`assistant` map 1:1 to API roles; DB `tool` rides
+inside an API `user`-role message, per the Anthropic messages convention —
+there is no API `tool` role), so the rebuilt context always ends in either
+`tool_result`s (auto-continue) or the fresh `"continue"` user message
+(manual Resume), and the model picks the task back up mid-stream with no
+special-casing. No partial-write cleanup is needed anywhere because every
+mutation is one atomic validated save + revision.
+
+Note: `runAgentTurn`'s `reason:"promoted"` / mid-turn `deadline` code path
+still exists (see the `limits` parameter's doc comment in `loop.ts`) and is
+exercised directly by `loop.test.ts`, but no production caller passes a
+`deadlineMs` anymore — it's dead in practice, kept only for the unit-test
+surface.
 
 **Caps inside a turn** (`runAgentTurn`):
 - **Tool-call cap** — cumulative tool calls ≥ `maxToolCalls` → persists a
-  short note, `turn_done` reason `max_tools`.
+  short note, `turn_done` reason `max_tools`. In production this is what
+  triggers auto-continue (see above), not a dead end.
 - **Failure streak** — 3 consecutive `ok:false` results from the *same* tool
   name (a different tool succeeding doesn't reset another tool's streak) →
   persists an explanation, sets the conversation `status:'error'`,
   `turn_done` reason `error`.
-- **Budget gate** — checked before every model call (see below).
-- **Deadline** — `turn_done` reason `promoted` (route only; the job path has
-  no deadline).
+- **Anthropic API error** — the model call itself throws (auth/billing/
+  rate-limit/overload) → `describeAnthropicError()` maps it to a short,
+  human-readable label (see "Labeled Anthropic errors" below), persists it,
+  sets the conversation `status:'error'`, `turn_done` reason `error`.
+- **Budget gate** — checked before every model call (see "Budget and cap
+  knobs" below); does not set `status:'error'`.
+- **Deadline** — `turn_done` reason `promoted`; dead in production (see
+  "Resume semantics" above), exercised only by `loop.test.ts` passing
+  `limits.deadlineMs` directly.
+
+**Labeled Anthropic errors.** `describeAnthropicError()`
+(`src/server/ai/agent/loop.ts`) duck-types on a thrown error's `status`/
+`message` (so a plain injected test error is handled identically to a real
+SDK exception) and maps it to one of four human-readable strings instead of
+the bare amber "internal" the operator used to see:
+- `401`/`403` → `"Anthropic API key rejected"`
+- `400` + `/billing|credit/i` in the message → `"Anthropic credit balance
+  too low — top up at console.anthropic.com"`
+- `429` → `"Anthropic is rate-limiting — retry shortly"`
+- `529` or `/overloaded/i` in the message → `"Anthropic is overloaded —
+  retry shortly"`
+- anything else → `"The site agent hit an unexpected error and stopped."`
+
+The label is persisted as an assistant message (so it renders in the
+transcript like any other agent text) and the conversation flips to
+`status:'error'`, which surfaces the **Resume** button described above.
 
 ## SSE event types
 
-Loop-level events (`AgentTurnEvent`, emitted via the `onEvent` callback
-passed into `runAgentTurn`, and the shape the inline-turn route streams as
-SSE `data:` frames):
+**There is exactly one SSE producer in production**: the job-tail route
+(`GET .../conversations/:id/events?after=<messageId>`, `admin-ai-agent.ts`).
+It never observes a live, in-progress turn — it polls `ai_messages`/
+`ai_conversations` roughly once a second and re-emits new rows as
+`AgentTailEvent`s (`src/admin/lib/agent-api.ts`):
 
 | Event | Shape | When |
 |---|---|---|
-| `assistant_text` | `{ type, text }` | Once per `text` content block in an assistant message (including the stub script's final summary). |
-| `tool_call` | `{ type, name, input }` | Just before a tool executes. |
-| `tool_result` | `{ type, name, ok, summary?, change? }` | Just after a tool executes; `change` carries the `AgentChangeEvent` on success. |
-| `turn_done` | `{ type, reason, message? }` | Once per turn; `reason` is one of `end_turn \| max_tools \| budget \| error \| promoted`. |
-
-Tail events (`AgentTailEvent`, from `GET .../conversations/:id/events?after=<messageId>`
-— the SSE endpoint a job-run build is followed on):
-
-| Event | Shape | When |
-|---|---|---|
-| `snapshot` | `{ type, conversation, messages }` | Sent once on connect: the conversation row + the message backlog (after `after` if given, else the last 50). |
+| `snapshot` | `{ type, conversation, messages }` | Sent once on connect: the conversation row + the message backlog (`?after=` cursor if given, else the last 50 rows). |
 | `message` | `{ type, message }` | One per newly-persisted `ai_messages` row, polled (interval ~1s) since the last-seen id. |
 | `status` | `{ type, status }` | Whenever the conversation's `status` changes (e.g. `active` → `error`). |
 
-Both channels also send a bare `: hb\n\n` heartbeat comment periodically to
-keep the connection alive through proxies; clients (`streamAgentEvents()` in
-`src/admin/lib/agent-api.ts`) skip lines starting with `:`. Per the plan's
-Global Constraints, v1 streams at **event granularity**, not token deltas —
-`runMessage()` is non-streaming by type — but the protocol is shaped to add
-deltas later without breaking clients.
+It also sends a bare `: hb\n\n` heartbeat comment every 15s to keep the
+connection alive through proxies; the client (`streamAgentEvents()` in
+`src/admin/lib/agent-api.ts`) skips lines starting with `:`.
+
+`AgentTurnEvent` (`{ assistant_text | tool_call | tool_result | turn_done }`)
+still exists as a type inside `loop.ts` — `runAgentTurn` still calls its
+`onEvent` callback at every one of these points internally — but no
+production caller ever passes an `onEvent` (`handleAgentTurn` calls
+`runAgentTurn({pool, conversationId, siteId})` with nothing else), so it
+defaults to a no-op and these events go nowhere. They exist purely for
+`loop.test.ts`'s direct unit coverage of the loop. Don't confuse them with
+the tail's `AgentTailEvent`s above — the client only ever sees the latter.
 
 ## Budget and cap knobs
 
@@ -240,7 +322,21 @@ Both optional, read via `env` (falls back to `process.env`) inside
   telling the operator to wait or raise the budget, and `turn_done` reason
   `budget`.
 - **`AI_AGENT_MAX_TOOL_CALLS`** (default `30`) — hard cap on tool calls in a
-  single turn (the inline route additionally caps at 15 before promoting).
+  single job batch. Hitting it ends that batch with `turn_done` reason
+  `max_tools`; `handleAgentTurn` auto-continues into a fresh batch (see
+  "Auto-continue" above) rather than stopping the build.
+- **`AI_AGENT_MAX_CONTINUATIONS`** (default `3`) — cap on auto-continue
+  rounds per user message, read by `handleAgentTurn`
+  (`src/server/jobs/agent-turn.ts`), not `runAgentTurn` itself. Combined
+  with `AI_AGENT_MAX_TOOL_CALLS`, one user message can drive up to
+  `(AI_AGENT_MAX_CONTINUATIONS + 1) × AI_AGENT_MAX_TOOL_CALLS` tool calls
+  (120 at the defaults) before the agent pauses and asks the operator to
+  send another message.
+
+Both `parsePositiveIntEnv`'d — an empty/non-numeric/non-positive-integer
+value falls back to the default rather than silently becoming `0` or `NaN`
+(`Number("")` is `0`, not `NaN`, so a naive `Number(env.X)` would otherwise
+let a blank env var zero out the cap or budget).
 
 Token usage accrues via `addTokenUsage(pool, conversationId, { input,
 output }, day)` after every model call, keyed by UTC day
@@ -311,7 +407,7 @@ when a tool fails 3 times in a row (self-correction exhausted) or a build-turn
 job throws (`handleAgentTurn` catches, sets `error`, then rethrows so pg-boss
 records the failure). Nothing needs cleanup — every mutation the agent makes
 is one atomic validated save + revision, so there's no partial state to
-unwind. The drawer surfaces a **Resume** action on an `error` conversation
-that sends a plain `"continue"` user message; because context rebuild always
-ends in the last persisted `tool_result`s (see Resume semantics above), the
-model picks up where it left off.
+unwind. The Studio chat panel's Composer surfaces a **Resume** button on an
+`error` conversation that sends a plain `"continue"` user message; because
+context rebuild always ends in the last persisted `tool_result`s (see
+Resume semantics above), the model picks up where it left off.
