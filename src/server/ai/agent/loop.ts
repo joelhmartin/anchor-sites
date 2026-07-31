@@ -310,7 +310,7 @@ export function withTrailingCacheBreakpoint(
   if (messages.length === 0) return messages;
   const last = messages[messages.length - 1];
   if (!Array.isArray(last.content) || last.content.length === 0) return messages;
-  const blocks = last.content as Record<string, unknown>[];
+  const blocks = last.content as unknown as Record<string, unknown>[];
   const marked = [...blocks];
   marked[marked.length - 1] = {
     ...marked[marked.length - 1],

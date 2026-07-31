@@ -118,7 +118,7 @@ describe("withTrailingCacheBreakpoint (D1108)", () => {
       },
     ];
     const out = withTrailingCacheBreakpoint(input as never);
-    const flat = out.flatMap((m) => m.content as Record<string, unknown>[]);
+    const flat = out.flatMap((m) => m.content as unknown as Record<string, unknown>[]);
     const marked = flat.filter((b) => b.cache_control !== undefined);
     expect(marked).toHaveLength(1);
     expect(flat[flat.length - 1].cache_control).toEqual({ type: "ephemeral" });
