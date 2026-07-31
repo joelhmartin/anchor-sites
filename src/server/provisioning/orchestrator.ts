@@ -149,7 +149,9 @@ export async function provisionSiteHostname(
   // Created BEFORE DNS because the records we must set come FROM the mapping.
   let mapping: DomainMapping | undefined;
   try {
-    mapping = await cloudRun.createIfMissing(hostname);
+    // D1024: stamp the owning site onto the mapping so it is attributable
+    // (reconcile.ts lists-and-compares against site_domains).
+    mapping = await cloudRun.createIfMissing(hostname, { labels: { site_id: siteId } });
     steps.push({
       step: "cloud_run",
       status: "ok",

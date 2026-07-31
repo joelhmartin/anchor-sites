@@ -735,6 +735,84 @@ d("admin domains API — status transitions (D608/D609)", () => {
   });
 });
 
+d("admin domains API — GET /api/domains/reconcile (D1024)", () => {
+  let pool: Pool;
+  let muldoonId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM site_domains WHERE hostname LIKE '%.d1024-test.example.com'`);
+    await pool.end().catch(() => undefined);
+  });
+
+  it("reports orphaned mappings, unmapped rows, and label drift", async () => {
+    await pool.query(
+      `INSERT INTO site_domains (site_id, hostname, is_primary)
+       VALUES ($1, 'rowonly.d1024-test.example.com', false)`,
+      [muldoonId],
+    );
+
+    const listCloudRun = {
+      async list() {
+        return [
+          {
+            // orphan: no site_domains row anywhere
+            metadata: { name: "ghost.d1024-test.example.com", labels: { site_id: "long-gone" } },
+            spec: { routeName: "anchor-sites" },
+          },
+          {
+            // label drift: row owned by muldoon, mapping unlabeled
+            metadata: { name: "muldoon-dental.sites.anchorcorps.com" },
+            spec: { routeName: "anchor-sites" },
+          },
+        ];
+      },
+    } as unknown as CloudRunDomainsClient;
+    const app = buildApp(pool, { dns: makeMockDns(), cloudRun: listCloudRun });
+
+    const r = await request(app)
+      .get("/api/domains/reconcile")
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+
+    expect(r.body.orphaned_mappings).toContainEqual({
+      hostname: "ghost.d1024-test.example.com",
+      labeled_site_id: "long-gone",
+    });
+    expect(
+      r.body.unmapped_domains.some(
+        (u: { hostname: string }) => u.hostname === "rowonly.d1024-test.example.com",
+      ),
+    ).toBe(true);
+    expect(
+      r.body.label_mismatches.some(
+        (m: { hostname: string; labeled_site_id: string | null; row_site_id: string }) =>
+          m.hostname === "muldoon-dental.sites.anchorcorps.com" &&
+          m.labeled_site_id === null &&
+          m.row_site_id === muldoonId,
+      ),
+    ).toBe(true);
+    // localhost dev rows are excluded from the comparison entirely.
+    expect(
+      r.body.unmapped_domains.some((u: { hostname: string }) => u.hostname.endsWith(".localhost")),
+    ).toBe(false);
+  });
+
+  it("requires the admin token", async () => {
+    const app = buildApp(pool, { dns: makeMockDns(), cloudRun: makeMockCloudRun() });
+    const r = await request(app).get("/api/domains/reconcile");
+    expect(r.status).toBe(401);
+  });
+});
+
 d("admin domains API — POST verify: explicit re-check (D404)", () => {
   let pool: Pool;
   let muldoonId: string;

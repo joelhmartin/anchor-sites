@@ -80,11 +80,23 @@ export class CloudRunDomainsClient {
     }
   }
 
-  async create(hostname: string): Promise<DomainMapping> {
+  /**
+   * D1024: `labels` (e.g. `{ site_id }`) are stamped onto the mapping's
+   * metadata so every per-tenant cloud resource is attributable and the
+   * reconcile pass (provisioning/reconcile.ts) can detect orphans.
+   */
+  async create(
+    hostname: string,
+    opts: { labels?: Record<string, string> } = {},
+  ): Promise<DomainMapping> {
     const body: DomainMapping = {
       apiVersion: "domains.cloudrun.com/v1",
       kind: "DomainMapping",
-      metadata: { name: hostname, namespace: this.cfg.projectId },
+      metadata: {
+        name: hostname,
+        namespace: this.cfg.projectId,
+        ...(opts.labels ? { labels: opts.labels } : {}),
+      },
       spec: { routeName: this.cfg.serviceName, certificateMode: "AUTOMATIC" },
     };
     return this.req<DomainMapping>("", {
@@ -93,10 +105,22 @@ export class CloudRunDomainsClient {
     });
   }
 
-  async createIfMissing(hostname: string): Promise<DomainMapping> {
+  async createIfMissing(
+    hostname: string,
+    opts: { labels?: Record<string, string> } = {},
+  ): Promise<DomainMapping> {
     const existing = await this.get(hostname);
     if (existing) return existing;
-    return this.create(hostname);
+    return this.create(hostname, opts);
+  }
+
+  /**
+   * List every domain mapping in the project/region (D1024 reconcile —
+   * list-and-compare against `site_domains` to surface orphans).
+   */
+  async list(): Promise<DomainMapping[]> {
+    const body = await this.req<{ items?: DomainMapping[] }>("");
+    return body.items ?? [];
   }
 
   /**

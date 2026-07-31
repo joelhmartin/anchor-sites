@@ -65,6 +65,75 @@ describe("CloudRunDomainsClient", () => {
     expect(body.spec.certificateMode).toBe("AUTOMATIC");
   });
 
+  // D1024: cloud resources created per-tenant must be attributable.
+  it("create stamps metadata.labels (site_id) so mappings are attributable", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({
+          apiVersion: "domains.cloudrun.com/v1",
+          kind: "DomainMapping",
+          metadata: {
+            name: "labeled.sites.anchorcorps.com",
+            namespace: "proj-x",
+            labels: { site_id: "site-123" },
+          },
+          spec: { routeName: "anchor-sites" },
+        }),
+      );
+
+    await client.create("labeled.sites.anchorcorps.com", { labels: { site_id: "site-123" } });
+
+    const [, postInit] = fetchSpy.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(postInit.body as string);
+    expect(body.metadata.labels).toEqual({ site_id: "site-123" });
+  });
+
+  it("createIfMissing passes labels through to create", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response("not found", { status: 404 })) // get
+      .mockResolvedValueOnce(
+        jsonResponse({
+          apiVersion: "domains.cloudrun.com/v1",
+          kind: "DomainMapping",
+          metadata: { name: "cim.sites.anchorcorps.com", namespace: "proj-x" },
+          spec: { routeName: "anchor-sites" },
+        }),
+      );
+
+    await client.createIfMissing("cim.sites.anchorcorps.com", { labels: { site_id: "s-9" } });
+
+    const [, postInit] = fetchSpy.mock.calls[2] as [string, RequestInit];
+    const body = JSON.parse(postInit.body as string);
+    expect(body.metadata.labels).toEqual({ site_id: "s-9" });
+  });
+
+  it("list returns every mapping (items) for reconciliation", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({
+          apiVersion: "domains.cloudrun.com/v1",
+          kind: "DomainMappingList",
+          items: [
+            {
+              metadata: { name: "a.sites.anchorcorps.com", labels: { site_id: "s-a" } },
+              spec: { routeName: "anchor-sites" },
+            },
+            { metadata: { name: "b.sites.anchorcorps.com" }, spec: { routeName: "anchor-sites" } },
+          ],
+        }),
+      );
+
+    const items = await client.list();
+    expect(items.map((m) => m.metadata.name)).toEqual([
+      "a.sites.anchorcorps.com",
+      "b.sites.anchorcorps.com",
+    ]);
+    expect(items[0].metadata.labels).toEqual({ site_id: "s-a" });
+  });
+
   it("get returns null on 404", async () => {
     fetchSpy
       .mockResolvedValueOnce(tokenResponse())

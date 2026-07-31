@@ -11,6 +11,7 @@ import { ManualDnsProvider } from "../dns/manual.js";
 import { CloudRunDomainsClient } from "../gcloud/run-domains.js";
 import { applyDomainStatus, statusFromMappingConditions } from "../domains/status.js";
 import { explainProvisionError } from "../domains/provision-error.js";
+import { reconcileDomainMappings } from "../provisioning/reconcile.js";
 
 /** Classify a hostname as managed (our DNS) or client-owned (external DNS). */
 function domainClass(hostname: string): "managed" | "client-owned" {
@@ -76,6 +77,21 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
       (domainClass(hostname) === "managed" ? resolveDnsProvider() : new ManualDnsProvider())
     );
   }
+
+  // GET /api/domains/reconcile — list-and-compare Cloud Run mappings vs
+  // site_domains (D1024): orphaned mappings, unmapped rows, label drift.
+  router.get(
+    "/domains/reconcile",
+    admin,
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const report = await reconcileDomainMappings(pool, getCloudRun());
+        res.json(report);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // GET /api/sites/:siteId/domains — list domains with status + class.
   router.get(
@@ -336,10 +352,10 @@ export function adminDomainsRouter(opts: AdminDomainsOptions = {}): Router {
         // their records are surfaced to the operator rather than auto-written via GoDaddy.
         const dns = dnsForHostname(hostname);
 
-        // Step 1: Cloud Run mapping
+        // Step 1: Cloud Run mapping (D1024: labeled with the owning site)
         let mapping;
         try {
-          mapping = await cloudRun.createIfMissing(hostname);
+          mapping = await cloudRun.createIfMissing(hostname, { labels: { site_id: siteId } });
         } catch (err) {
           // D609: annotate the known Webmaster-Central PermissionDenied with
           // its fix instruction, and persist it (authoritative failed) so the
