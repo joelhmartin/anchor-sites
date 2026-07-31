@@ -5,7 +5,7 @@ import { resolveAiMode } from "../config.js";
 import { buildBlockCatalog } from "../catalog.js";
 import {
   getConversation, appendMessage, listMessages, setConversationStatus, addTokenUsage, getTodayUsage,
-  consumeCancelRequest, markConversationStopped,
+  consumeCancelRequest, markConversationStopped, getFoundingUserMessage,
   type AiMessage,
 } from "./repo.js";
 import { buildAgentToolDefs, executeAgentTool } from "./tools/index.js";
@@ -186,6 +186,38 @@ function mapRowsToApiMessages(rows: AiMessage[]): Anthropic.MessageParam[] {
 }
 
 /**
+ * W1.5 / D1106 — the bracketed preface that marks a re-injected founding
+ * brief so the model can tell it apart from a message the operator just
+ * sent. Exported for the structural-invariant tests in loop.test.ts.
+ */
+export const FOUNDING_BRIEF_PREFACE =
+  "[Founding brief — the original request this conversation was started with, repeated for context. The newer messages below take precedence.]";
+
+/**
+ * W1.5 / D1106 — build the leading user message that pins the conversation's
+ * founding brief into the model context. Extracts the text blocks of the
+ * first user row (user rows are always text-block arrays — see
+ * admin-ai-agent.ts's appendMessage calls) and prefixes them with a clearly
+ * bracketed marker. Returns null when the founding row has no usable text
+ * (nothing meaningful to pin). Consecutive user-role messages are valid on
+ * the Anthropic Messages API (combined into one turn), so prepending this
+ * ahead of a window that already starts with a user row is safe.
+ */
+function buildFoundingBriefMessage(founding: AiMessage): Anthropic.MessageParam | null {
+  const blocks = Array.isArray(founding.content)
+    ? (founding.content as { type?: unknown; text?: unknown }[])
+    : [];
+  const texts = blocks
+    .filter((b) => b?.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string);
+  if (texts.length === 0) return null;
+  return {
+    role: "user",
+    content: [{ type: "text", text: `${FOUNDING_BRIEF_PREFACE}\n\n${texts.join("\n\n")}` }],
+  };
+}
+
+/**
  * Rebuild the model-facing message list from persisted DB rows. DB roles map
  * 1:1 onto API roles except `tool`, whose `tool_result` blocks ride inside an
  * API `user`-role message (the Anthropic messages convention — there is no
@@ -209,6 +241,14 @@ function mapRowsToApiMessages(rows: AiMessage[]): Anthropic.MessageParam[] {
  * exchange has accumulated since. Returns `null` if the conversation
  * genuinely has no user row anywhere (caller reports this as a turn error
  * instead of sending the API an empty/invalid `messages` array).
+ *
+ * W1.5 / D1106 — the FOUNDING user message (the business brief that started
+ * the conversation) is ALWAYS part of the context: one build turn can
+ * persist up to 61 rows, so after the first build the founding brief is
+ * permanently outside every 40-row window and a later "make the hero
+ * warmer" turn would otherwise run with no memory of what the site is for.
+ * When the founding row isn't already inside the window, a clearly-marked
+ * copy (see `buildFoundingBriefMessage`) is prepended ahead of the tail.
  */
 async function buildApiMessages(
   pool: Pool, conversationId: string,
@@ -221,21 +261,35 @@ async function buildApiMessages(
   // trimming below.
   const rows = (await listMessages(pool, conversationId, { limit: 40 }))
     .filter((m) => m.role !== "system");
+
   const windowUserIdx = rows.findIndex((m) => m.role === "user");
+  let windowRows: AiMessage[];
   if (windowUserIdx !== -1) {
-    return mapRowsToApiMessages(rows.slice(windowUserIdx));
+    windowRows = rows.slice(windowUserIdx);
+  } else {
+    const allRows = (await listMessages(pool, conversationId)).filter((m) => m.role !== "system");
+    let lastUserIdx = -1;
+    for (let i = allRows.length - 1; i >= 0; i--) {
+      if (allRows[i].role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx === -1) return null;
+    windowRows = allRows.slice(lastUserIdx);
   }
 
-  const allRows = (await listMessages(pool, conversationId)).filter((m) => m.role !== "system");
-  let lastUserIdx = -1;
-  for (let i = allRows.length - 1; i >= 0; i--) {
-    if (allRows[i].role === "user") {
-      lastUserIdx = i;
-      break;
-    }
+  const messages = mapRowsToApiMessages(windowRows);
+
+  // D1106: prepend the founding brief unless the founding row itself is
+  // already inside the window (id match — content equality would be fooled
+  // by a user re-sending the same text).
+  const founding = await getFoundingUserMessage(pool, conversationId);
+  if (founding && !windowRows.some((r) => r.id === founding.id)) {
+    const briefMessage = buildFoundingBriefMessage(founding);
+    if (briefMessage) return [briefMessage, ...messages];
   }
-  if (lastUserIdx === -1) return null;
-  return mapRowsToApiMessages(allRows.slice(lastUserIdx));
+  return messages;
 }
 
 async function persistAssistantText(

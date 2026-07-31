@@ -134,6 +134,26 @@ export async function listMessages(
   return r.rows;
 }
 
+/**
+ * W1.5 / D1106 — the conversation's FOUNDING user message (the business
+ * brief that started it all). `buildApiMessages` (loop.ts) windows history
+ * to a 40-row tail, and a single build turn can persist 61 rows, so after
+ * one build the original description would otherwise be permanently outside
+ * every future model context. Ordered `(created_at, id)` for the same
+ * tie-break reason as `listMessages` above.
+ */
+export async function getFoundingUserMessage(
+  pool: Pool, conversationId: string,
+): Promise<AiMessage | null> {
+  const r = await pool.query<AiMessage>(
+    `SELECT ${MSG_COLS} FROM ai_messages
+     WHERE conversation_id = $1 AND role = 'user'
+     ORDER BY ai_messages.created_at ASC, ai_messages.id ASC LIMIT 1`,
+    [conversationId],
+  );
+  return r.rows[0] ?? null;
+}
+
 export async function setConversationStatus(
   pool: Pool, id: string, status: AiConversation["status"],
 ): Promise<void> {

@@ -822,9 +822,74 @@ d("runAgentTurn", () => {
     expect(result).toEqual({ endReason: "completed", toolCalls: 0 });
     expect(create).toHaveBeenCalledTimes(1);
     const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
-    expect(payload.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: "real request" }] },
+    // W1.5 / D1106: the founding "old request" fell out of the window, so a
+    // clearly-marked copy is prepended ahead of the windowed tail.
+    expect(payload.messages).toHaveLength(2);
+    expect(payload.messages[0].role).toBe("user");
+    const briefText = JSON.stringify(payload.messages[0].content);
+    expect(briefText).toContain("Founding brief");
+    expect(briefText).toContain("old request");
+    expect(payload.messages[1]).toMatchObject({
+      role: "user", content: [expect.objectContaining({ type: "text", text: "real request" })],
+    });
+  });
+
+  it("D1106: the founding brief is NOT duplicated when it is already inside the window", async () => {
+    const { site, conv } = await seedConvo(`loop-founding-inwindow-${runId}`);
+    // seedConvo's "Update the homepage copy" is the founding user row and is
+    // well inside the 40-row window here — no prefixed copy may be added.
+    const { client, create } = makeFakeClient([
+      cannedMessage({ content: [textBlock("ok")], stop_reason: "end_turn", usage: usage(10, 5) }),
     ]);
+
+    await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
+    expect(JSON.stringify(payload.messages)).not.toContain("Founding brief");
+    expect(
+      payload.messages.filter((m) => JSON.stringify(m.content).includes("Update the homepage copy")),
+    ).toHaveLength(1);
+  });
+
+  it("D1106: after a long build turn, a follow-up message still carries the founding business brief", async () => {
+    const site = await db.seedSite(`loop-founding-carry-${runId}`);
+    await db.seedPage(site.id, "home", [{ id: "b1", type: "rich-text", props: { html: "<p>Hi</p>" } }]);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    // The founding brief, then a full build turn's worth of rows (enough to
+    // push it out of the 40-row window), then the operator's follow-up.
+    await appendMessage(db.getPool(), conv.id, "user", [
+      { type: "text", text: "A cozy family bakery in Boise called Flour & Ember" },
+    ]);
+    for (let i = 0; i < 25; i++) {
+      await appendMessage(db.getPool(), conv.id, "assistant", [
+        { type: "tool_use", id: `f${i}`, name: "get_site_overview", input: {} },
+      ]);
+      await appendMessage(db.getPool(), conv.id, "tool", [
+        { type: "tool_result", tool_use_id: `f${i}`, content: "ok" },
+      ]);
+    }
+    await appendMessage(db.getPool(), conv.id, "user", [{ type: "text", text: "make the hero warmer" }]);
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({ content: [textBlock("ok")], stop_reason: "end_turn", usage: usage(10, 5) }),
+    ]);
+
+    await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    const payload = create.mock.calls[0][0] as { messages: { role: string; content: unknown }[] };
+    // First message is the marked founding brief; the tail still ends on the
+    // follow-up. API validity: consecutive user messages are legal (combined).
+    expect(payload.messages[0].role).toBe("user");
+    expect(JSON.stringify(payload.messages[0].content)).toContain("Flour & Ember");
+    expect(JSON.stringify(payload.messages[0].content)).toContain("Founding brief");
+    expect(
+      JSON.stringify(payload.messages[payload.messages.length - 1].content),
+    ).toContain("make the hero warmer");
   });
 
   it("widens past the 40-row window to the last user row when a long (job-path-shaped) turn pushes it out", async () => {
