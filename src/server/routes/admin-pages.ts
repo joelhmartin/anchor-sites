@@ -17,7 +17,7 @@ import { seoFieldsSchema } from "../seo/schema.js";
 import { renderPage, type PageRecord } from "../render-page.js";
 import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
-import { tokenFromQuery } from "./admin-ai-agent.js";
+import { mintPreviewToken, previewQueryAuth } from "../preview-token.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
 // Item 6 (final review) — preview-only site-relative link rewriting.
 import { buildPreviewHrefResolver } from "../preview-links.js";
@@ -272,22 +272,67 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/preview-token — mint the short-lived, site-scoped
+  // credential the preview <iframe> carries in its query string.
+  //
+  // Authed by the ordinary dual-mode `requireAdmin` (Studio session OR
+  // X-Admin-Token), because THIS request is a normal `apiFetch` from the SPA
+  // — cookies and headers both reach it. The iframe it mints for is the one
+  // that can use neither (sandbox + no `allow-same-origin` ⇒ no cookies; an
+  // <iframe> can't set headers). See src/server/preview-token.ts.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/preview-token",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId } = req.params;
+      try {
+        // Don't hand out a token for a scope that doesn't exist — a 404 here
+        // is a clearer client error than a token that 404s one request later.
+        const siteRes = await pool.query<{ id: string }>(`SELECT id FROM sites WHERE id = $1`, [
+          siteId,
+        ]);
+        if (siteRes.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+
+        const minted = mintPreviewToken(siteId);
+        if (!minted) {
+          // No BETTER_AUTH_SECRET and no ADMIN_API_TOKEN — nothing to sign
+          // with. Fail loudly rather than returning an unverifiable token.
+          res.status(503).json({ error: "preview tokens not configured" });
+          return;
+        }
+        res.json({ token: minted.token, expires_at: new Date(minted.expiresAt).toISOString() });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // GET /api/sites/:siteId/pages/:pageId/preview — render a page's CURRENT
   // blocks (any status — this is the point: it's how the operator/AI-agent
-  // preview a draft before publishing). `tokenFromQuery` first so an iframe
-  // (which can't set custom headers) can authenticate via `?token=`. This IS
-  // the one route that still needs the query-token shim — the SSE tail
+  // preview a draft before publishing).
+  //
+  // `previewQueryAuth` is the whole auth story: an <iframe> can set no
+  // headers, and this one is sandboxed without `allow-same-origin` so it
+  // sends no cookies either — the query string is its ONLY credential
+  // channel. It accepts EITHER a short-lived site-scoped preview token
+  // (`?token=pv1.…`, minted by the route above — the path prod's Google-OAuth
+  // operators take) OR, unchanged, the static ADMIN_API_TOKEN lifted into the
+  // header requireAdmin reads (curl/dev/the legacy paste-token login). This
+  // is the one route that needs the query-token shim at all — the SSE tail
   // (admin-ai-agent.ts's /events route) dropped it (Important 3, round 1
   // review): the drawer's tail is a `fetch()` call with an X-Admin-Token
-  // header, never a native EventSource, so it never needed `?token=` in the
-  // first place.
+  // header, never a native EventSource.
   // Mirrors the tenant page route's (`src/server/routes/page.ts`) media
   // hydration so images/hero-slider resolve identically in preview.
   // -------------------------------------------------------------------------
   router.get(
     "/sites/:siteId/pages/:pageId/preview",
-    tokenFromQuery,
-    admin,
+    previewQueryAuth(admin),
     async (req: Request, res: Response, next: NextFunction) => {
       const { siteId, pageId } = req.params;
       try {
@@ -438,14 +483,16 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // cache (browser or intermediary), stale or otherwise.
         res.setHeader("Cache-Control", "no-store");
         // Item 13 (CodeRabbit, cheap adjunct to the SSRF/token work above):
-        // the URL this response is served at carries `?token=<admin token>`
-        // (tokenFromQuery, since the <iframe> can't set a header) — without
-        // this, any same-origin/https subresource the rendered page's own
-        // blocks load (an image, a linked resource) would send that whole
-        // URL, token included, as its Referer. `no-referrer` means this
-        // document never sends a Referer header at all. The full fix (a
-        // short-lived, single-use preview token instead of the long-lived
-        // admin token) is deferred — see the route-header comment above.
+        // the URL this response is served at carries `?token=…` (the query
+        // string is the iframe's only credential channel) — without this,
+        // any same-origin/https subresource the rendered page's own blocks
+        // load (an image, a linked resource) would send that whole URL,
+        // token included, as its Referer. `no-referrer` means this document
+        // never sends a Referer header at all. Still worth keeping now that
+        // the deferred follow-up landed: the token in that URL is normally
+        // the 15-minute site-scoped preview token (preview-token.ts), but a
+        // curl/dev caller can still be passing the long-lived
+        // ADMIN_API_TOKEN, and even the short-lived one is a credential.
         res.setHeader("Referrer-Policy", "no-referrer");
         // FINAL whole-branch review, FIX-NOW item 6 — preview iframe nav
         // escape. Template/agent-authored `<a href="/about">` resolves

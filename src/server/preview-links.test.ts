@@ -36,6 +36,22 @@ describe("buildPreviewHrefResolver", () => {
     expect(resolve("/about")).toBe(`/api/sites/${SITE}/pages/pg-about/preview?token=tok-123&v=7`);
   });
 
+  // 2026-07-30 preview-token work: cross-page navigation inside the preview
+  // is only authenticated because `token` rides along on every rewritten
+  // href. A short-lived preview token is base64url (`-`/`_` are legal, `=`
+  // padding is not emitted) — URLSearchParams must carry it through
+  // byte-for-byte or every sibling-page click 401s. Site-scoping is what
+  // makes propagating it correct: every page this resolver can reach belongs
+  // to the same site the token was minted for.
+  it("propagates a base64url preview token verbatim (site-scoped, so every reachable page is in scope)", () => {
+    const token = "pv1.site-1.1785000000.Zm9vLWJhcl9iYXo-cXV4";
+    const resolve = resolver({ token, v: "4" });
+    expect(resolve("/about")).toBe(
+      `/api/sites/${SITE}/pages/pg-about/preview?token=${encodeURIComponent(token)}&v=4`,
+    );
+    expect(decodeURIComponent(resolve("/about")!.split("token=")[1].split("&")[0])).toBe(token);
+  });
+
   it("never propagates edit/bridge — a bridge token is bound to ONE pageId", () => {
     const resolve = resolver({ token: "tok-123", edit: "1", bridge: "tok_abc" });
     const out = resolve("/about")!;
