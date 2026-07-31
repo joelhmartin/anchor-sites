@@ -102,10 +102,26 @@ describe("buildCsp (12.5)", () => {
     expect(connectSrc).toContain("https://forms.example.com");
   });
 
-  it("returns 'none' for frameSrc when no CRM origins set", () => {
-    const directives = buildCsp({});
-    const frameSrc = (directives.frameSrc as string[]).join(" ");
-    expect(frameSrc).toContain("'none'");
+  // Studio preview regression (2026-07-30, operator-reported in prod). The
+  // Studio SPA frames its OWN same-origin draft preview
+  // (`/api/sites/:id/pages/:id/preview`) in `SitePreviewPanel`'s <iframe>.
+  // `frame-src 'none'` blocked that outright — the console showed
+  // "Framing '…/preview?v=0' violates frame-src 'none'" and the workspace
+  // preview column was permanently blank in production. `'self'` is the
+  // minimum that lets the app frame its own routes; it grants nothing to any
+  // third-party origin.
+  it("always includes 'self' in frameSrc so Studio can frame its own preview route", () => {
+    const frameSrc = buildCsp({}).frameSrc as string[];
+    expect(frameSrc).toContain("'self'");
+    expect(frameSrc).not.toContain("'none'");
+  });
+
+  it("keeps 'self' in frameSrc alongside CRM extra origins", () => {
+    const frameSrc = buildCsp({
+      CSP_CRM_EXTRA_ORIGINS: "https://crm.example.com",
+    }).frameSrc as string[];
+    expect(frameSrc).toContain("'self'");
+    expect(frameSrc).toContain("https://crm.example.com");
   });
 });
 

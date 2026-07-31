@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApi } from "../lib/useApi.js";
+import { apiFetch } from "../lib/apiFetch.js";
 import { getAdminToken } from "../lib/adminToken.js";
 import { cn } from "../ui/cn.js";
 import { Spinner } from "../ui/spinner.js";
@@ -11,6 +12,21 @@ import { LinkPopover } from "./LinkPopover.js";
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
 const READONLY_BUSY_REASON = "The AI is working on this site…";
+
+/**
+ * Re-mint at 80% of the token's remaining life, floored so a pathologically
+ * short TTL (or a clock skew that makes one look nearly expired) can't turn
+ * the refresh into a request loop.
+ */
+const TOKEN_REFRESH_FRACTION = 0.8;
+const MIN_TOKEN_REFRESH_MS = 5_000;
+// Retry cadence after a FAILED mint — short enough to recover within a token's
+// remaining validity (refresh fires at 80% of a 15-min TTL, leaving ~3 min).
+const TOKEN_RETRY_MS = 20_000;
+/** Used only if the server's `expires_at` is unparseable. Server default is 15 min. */
+const FALLBACK_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+type PreviewToken = { token: string; expiresAt: number };
 
 export interface SitePreviewPanelProps {
   siteId: string;
@@ -53,7 +69,17 @@ export function SitePreviewPanel({
   const firstPageId = pagesData?.pages[0]?.id ?? null;
   const effectivePreviewPageId = previewPageId ?? firstPageId;
 
+  // Legacy fallback ONLY (see the preview-token block below): the paste-token
+  // /login flow is the only thing that ever writes this, so it is null for
+  // every Google-OAuth operator in production.
   const adminToken = getAdminToken();
+
+  const [previewToken, setPreviewToken] = useState<PreviewToken | null>(null);
+  // The token actually embedded in the CURRENTLY RENDERED src. Deliberately
+  // separate from `previewToken`: React writes `src` straight through to the
+  // element, so adopting a refreshed token immediately would NAVIGATE the live
+  // iframe — fine when idle, silent data loss mid-edit-session.
+  const [srcToken, setSrcToken] = useState<string | null>(null);
 
   const [edit, setEdit] = useState(false);
   const [editToken, setEditToken] = useState<string | null>(null);
@@ -87,6 +113,82 @@ export function SitePreviewPanel({
     if (edit) return;
     setDisplayed({ pageId: effectivePreviewPageId, nonce: previewNonce });
   }, [effectivePreviewPageId, previewNonce, edit]);
+
+  /**
+   * PREVIEW CREDENTIAL (2026-07-30, operator-reported prod break).
+   *
+   * The iframe below is `sandbox="allow-scripts"` with no `allow-same-origin`,
+   * so it loads from an opaque origin: it sends NO cookies (the Studio session
+   * can't authenticate it) and, being an <iframe>, can set no headers either
+   * (`X-Admin-Token` can't reach it). Its query string is the only channel.
+   *
+   * This used to put `getAdminToken()` there — the LEGACY localStorage token
+   * from the deprecated paste-token /login. Prod operators sign in with
+   * Google, so that read returned null, the src degraded to `?v=0`, and the
+   * preview route 401'd every single load (a blank preview column, forever).
+   *
+   * Now: this component asks the server for a short-lived, SITE-SCOPED token
+   * over `apiFetch` — a normal SPA request, so the session cookie authorizes
+   * it — and puts that in the query string instead. A leaked preview URL is
+   * worth ≤15 minutes of read access to one site's drafts, not the admin API.
+   * See src/server/preview-token.ts.
+   *
+   * Refresh is PROACTIVE (a timer at ~80% of the TTL), not reactive: there is
+   * no 401 to react to. The frame is on an opaque origin, so `onLoad` fires
+   * identically for a 401 body and a 200 one and the parent can read neither
+   * the status nor the document.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // A token is scoped to ONE site — the server 401s it anywhere else — so a
+    // site switch must drop the old one rather than briefly reuse it.
+    setPreviewToken(null);
+    setSrcToken(null);
+
+    async function mint(): Promise<void> {
+      try {
+        const res = await apiFetch<{ token: string; expires_at: string }>(
+          `/api/sites/${siteId}/preview-token`,
+          { method: "POST" },
+        );
+        if (cancelled) return;
+        const parsed = Date.parse(res.expires_at);
+        const expiresAt = Number.isNaN(parsed) ? Date.now() + FALLBACK_TOKEN_TTL_MS : parsed;
+        setPreviewToken({ token: res.token, expiresAt });
+        const delay = Math.max(
+          MIN_TOKEN_REFRESH_MS,
+          Math.floor((expiresAt - Date.now()) * TOKEN_REFRESH_FRACTION),
+        );
+        timer = setTimeout(() => void mint(), delay);
+      } catch {
+        // Minting is unavailable (transient network blip, older deployment,
+        // no signing secret, or the session just lapsed — apiFetch already
+        // handles the 401 bounce). Keep any token we already hold: it stays
+        // valid until its own expiry, and discarding it here would blank a
+        // working preview over one failed refresh. Retry on a short timer;
+        // the legacy localStorage token remains the last-resort fallback.
+        if (!cancelled) timer = setTimeout(() => void mint(), TOKEN_RETRY_MS);
+      }
+    }
+
+    void mint();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [siteId]);
+
+  // Adopt a (re)minted token into the rendered src — but never while an edit
+  // session is live, for the same reason `displayed.pageId` is pinned: the
+  // src change navigates the iframe, tearing the contenteditable session down
+  // under the live `InlineEditorHandle`. The pending token is adopted the
+  // moment edit mode turns off (this effect re-runs on `edit`).
+  useEffect(() => {
+    if (edit) return;
+    setSrcToken(previewToken?.token ?? null);
+  }, [previewToken, edit]);
 
   /**
    * Flush + destroy whatever handle is live, then — fix-round-1 directed
@@ -209,8 +311,14 @@ export function SitePreviewPanel({
   // <iframe> pointed at the SAME url (which a cache — browser HTTP cache or
   // an intermediary — could legitimately serve stale for). Paired with the
   // preview route's own `Cache-Control: no-store` (admin-pages.ts).
-  const baseQuery = adminToken
-    ? `token=${encodeURIComponent(adminToken)}&v=${displayed.nonce}`
+  //
+  // Credential precedence: the server-minted, site-scoped, short-lived token
+  // when we have one; the legacy localStorage admin token only as a fallback
+  // (dev / paste-token workflow, and any deployment whose mint endpoint isn't
+  // available yet). The preview route accepts either.
+  const iframeToken = srcToken ?? adminToken;
+  const baseQuery = iframeToken
+    ? `token=${encodeURIComponent(iframeToken)}&v=${displayed.nonce}`
     : `v=${displayed.nonce}`;
   const editQuery = edit && editToken ? `&edit=1&bridge=${encodeURIComponent(editToken)}` : "";
   const previewSrc = displayed.pageId

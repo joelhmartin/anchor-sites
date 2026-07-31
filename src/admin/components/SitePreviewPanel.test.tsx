@@ -50,13 +50,47 @@ function json(body: unknown, status = 200) {
 
 type PageRow = { id: string; slug: string; title: string; status: string; updated_at: string };
 
-/** Routes /api/sites/:id/pages -> pages (the only endpoint the panel itself fetches). */
-function mockPagesApi(siteId: string, pages: PageRow[] = []) {
+const PREVIEW_TTL_MS = 15 * 60 * 1000;
+
+/** Fake mint response shaped like the real one (preview-token.ts's `pv1.` format). */
+function previewTokenFor(siteId: string, seq = 1) {
+  return `pv1.${siteId}.1785000000.sig${seq}`;
+}
+
+/**
+ * Routes the two endpoints the panel itself hits:
+ *   GET  /api/sites/:id/pages         -> pages
+ *   POST /api/sites/:id/preview-token -> the short-lived, site-scoped iframe
+ *                                        credential (2026-07-30 prod fix)
+ *
+ * `mintFails: true` simulates a deployment/route that can't mint, which is
+ * what exercises the legacy-localStorage-token fallback.
+ */
+function mockPagesApi(
+  siteId: string,
+  pages: PageRow[] = [],
+  opts: { mintFails?: boolean; mintFailsAfter?: number } = {},
+) {
+  let mintSeq = 0;
+  const mintCalls: string[] = [];
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === `/api/sites/${siteId}/pages`) return json({ pages });
+    const mint = /^\/api\/sites\/([^/]+)\/preview-token$/.exec(url);
+    if (mint) {
+      mintCalls.push(mint[1]);
+      if (opts.mintFails) return json({ error: "preview tokens not configured" }, 503);
+      if (opts.mintFailsAfter !== undefined && mintCalls.length > opts.mintFailsAfter)
+        return json({ error: "transient" }, 503);
+      mintSeq += 1;
+      return json({
+        token: previewTokenFor(mint[1], mintSeq),
+        expires_at: new Date(Date.now() + PREVIEW_TTL_MS).toISOString(),
+      });
+    }
     return json({ error: "not found" }, 404);
   }) as unknown as typeof fetch;
+  return { mintCalls };
 }
 
 describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B1)", () => {
@@ -80,29 +114,103 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     vi.restoreAllMocks();
   });
 
-  it("shows a draft preview iframe for the first page, with the admin token as a query param", async () => {
+  it("shows a draft preview iframe for the first page, authed by a server-minted preview token", async () => {
     mockPagesApi("s1", [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }]);
     render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
 
     await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
-    const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
     // Item 9: `v=<previewNonce>` (0 on the first render) makes each preview
     // bump a distinct URL, not just a re-mounted iframe pointed at the same one.
-    expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?token=tok&v=0`);
+    await waitFor(() =>
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toBe(
+        `/api/sites/s1/pages/pg1/preview?token=${encodeURIComponent(previewTokenFor("s1", 1))}&v=0`,
+      ),
+    );
+    const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
     // Critical 2: the preview iframe is same-origin (served from /api/...),
     // so it MUST be sandboxed — allow-scripts without allow-same-origin
     // gives it an opaque origin that can't reach the admin's storage/cookies.
+    // That sandbox is also exactly WHY the credential has to be in the query
+    // string: an opaque origin sends no cookies, so the Studio session can't
+    // reach this request.
     expect(iframe.getAttribute("sandbox")).toBe("allow-scripts");
   });
 
-  it("omits the token query param when Studio runs on session auth (no token stored)", async () => {
+  // THE PROD BUG (2026-07-30, operator-reported). Google-OAuth operators have
+  // no localStorage admin token, so the old `getAdminToken()`-only src
+  // degraded to `?v=0` and the preview route 401'd every load. A session-authed
+  // mint (`apiFetch` sends the cookie) is what closes that.
+  it("mints a preview token via the session-authed API when no legacy token is stored", async () => {
     clearAdminToken();
-    mockPagesApi("s1", [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }]);
+    const { mintCalls } = mockPagesApi("s1", [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+    await waitFor(() =>
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toBe(
+        `/api/sites/s1/pages/pg1/preview?token=${encodeURIComponent(previewTokenFor("s1", 1))}&v=0`,
+      ),
+    );
+    expect(mintCalls).toEqual(["s1"]);
+    const post = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => String(c[0]).endsWith("/preview-token"),
+    );
+    expect((post?.[1] as RequestInit).method).toBe("POST");
+    // apiFetch sends the Studio session cookie — the whole point of minting
+    // from the SPA rather than from inside the (cookie-less) iframe.
+    expect((post?.[1] as RequestInit).credentials).toBe("include");
+  });
+
+  it("falls back to the legacy localStorage admin token when minting is unavailable (dev workflow)", async () => {
+    mockPagesApi(
+      "s1",
+      [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }],
+      { mintFails: true },
+    );
+    render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+
+    await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
+    expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toBe(
+      `/api/sites/s1/pages/pg1/preview?token=tok&v=0`,
+    );
+  });
+
+  it("omits the token query param entirely when there is neither a minted nor a legacy token", async () => {
+    clearAdminToken();
+    mockPagesApi(
+      "s1",
+      [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }],
+      { mintFails: true },
+    );
     render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
 
     await waitFor(() => expect(screen.getByTitle("Draft preview")).toBeTruthy());
     const iframe = screen.getByTitle("Draft preview") as HTMLIFrameElement;
     expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?v=0`);
+  });
+
+  // A preview token is scoped to ONE site (the server rejects it for any
+  // other), so switching sites must re-mint, never reuse.
+  it("re-mints for a new siteId instead of reusing the previous site's token", async () => {
+    clearAdminToken();
+    const { mintCalls } = mockPagesApi("s2", [
+      { id: "pg9", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    const { rerender } = render(
+      <SitePreviewPanel siteId="s1" previewPageId="pg9" previewNonce={0} agentBusy={false} />,
+    );
+    await waitFor(() => expect(mintCalls).toContain("s1"));
+
+    rerender(<SitePreviewPanel siteId="s2" previewPageId="pg9" previewNonce={0} agentBusy={false} />);
+
+    await waitFor(() => expect(mintCalls).toContain("s2"));
+    await waitFor(() =>
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+        encodeURIComponent(previewTokenFor("s2", 2)),
+      ),
+    );
   });
 
   it("bubbles a drawer change event into the preview: swaps the page id and forces a reload", async () => {
@@ -177,16 +285,173 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).not.toContain("edit=1");
   });
 
+  // Edit mode rebuilds the src as `…?token=…&v=…&edit=1&bridge=…`. The
+  // preview token has to survive that rebuild or clicking Edit would 401 the
+  // frame — the credential and the bridge token are independent things riding
+  // the same query string.
+  it("carries the preview token into edit mode alongside edit=1&bridge=", async () => {
+    clearAdminToken();
+    mockPagesApi("s1", [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }]);
+    render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+    await waitFor(() =>
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain("token=pv1"),
+    );
+
+    fireEvent.click(within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" }));
+
+    const src = (screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src") ?? "";
+    expect(src).toContain(`token=${encodeURIComponent(previewTokenFor("s1", 1))}`);
+    expect(src).toContain(`&edit=1&bridge=${inlineEditorHandle.token}`);
+  });
+
+  // ── preview-token refresh (2026-07-30) ──
+  //
+  // A 15-minute token would otherwise go stale under a long-open workspace:
+  // the next iframe remount, and every rewritten sibling-page link inside the
+  // CURRENT document, carry whatever token was embedded when it loaded. A
+  // proactive re-mint at ~80% of the TTL keeps that fresh. (There is no
+  // reactive 401 path to test: the iframe is sandboxed onto an opaque origin,
+  // so `onLoad` fires for a 401 body exactly as it does for a 200 and the
+  // parent can read neither status nor document. Proactive refresh is the
+  // only signal available.)
+
+  it("re-mints the preview token at ~80% of its TTL and adopts the fresh one", async () => {
+    clearAdminToken();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { mintCalls } = mockPagesApi("s1", [
+        { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+      ]);
+      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      await waitFor(() =>
+        expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+          encodeURIComponent(previewTokenFor("s1", 1)),
+        ),
+      );
+      expect(mintCalls.length).toBe(1);
+
+      // Just short of 80% — still the original token, no second mint.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS * 0.7);
+      });
+      expect(mintCalls.length).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS * 0.15);
+      });
+      await waitFor(() => expect(mintCalls.length).toBe(2));
+      await waitFor(() =>
+        expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+          encodeURIComponent(previewTokenFor("s1", 2)),
+        ),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Swapping the src mid-edit-session would navigate the iframe out from
+  // under the live contenteditable session — the same class of silent data
+  // loss `displayed.pageId` is pinned for. The refreshed token is held back
+  // until edit mode exits.
+  // Security-review follow-up (2026-07-30): a FAILED refresh must not discard
+  // the token we already hold (still valid ~3 more minutes) — doing so blanked
+  // a working preview over one network blip, with no recovery until remount.
+  it("keeps the current token and retries when a refresh mint fails", async () => {
+    clearAdminToken();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { mintCalls } = mockPagesApi(
+        "s1",
+        [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }],
+        { mintFailsAfter: 1 },
+      );
+      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      const token1 = encodeURIComponent(previewTokenFor("s1", 1));
+      await waitFor(() =>
+        expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(token1),
+      );
+
+      // Refresh timer fires; the mint 503s.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS);
+      });
+      await waitFor(() => expect(mintCalls.length).toBeGreaterThan(1));
+
+      // The still-valid token stays in the src — no blanking, no credential drop.
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(token1);
+
+      // And a bounded retry is scheduled (another mint attempt within ~20s).
+      const before = mintCalls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(21_000);
+      });
+      await waitFor(() => expect(mintCalls.length).toBeGreaterThan(before));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never swaps the credential mid-edit-session — the refreshed token is adopted on exit", async () => {
+    clearAdminToken();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { mintCalls } = mockPagesApi("s1", [
+        { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+      ]);
+      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      await waitFor(() =>
+        expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+          encodeURIComponent(previewTokenFor("s1", 1)),
+        ),
+      );
+
+      const editToggle = within(screen.getByTestId("draft-preview-panel")).getByRole("button", { name: "Edit" });
+      fireEvent.click(editToggle);
+      const editingSrc = (screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src") ?? "";
+      expect(editingSrc).toContain("edit=1");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS);
+      });
+      await waitFor(() => expect(mintCalls.length).toBeGreaterThan(1));
+
+      // Refreshed in state, but the LIVE frame is untouched.
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toBe(editingSrc);
+
+      fireEvent.click(editToggle);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await waitFor(() =>
+        expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+          encodeURIComponent(previewTokenFor("s1", mintCalls.length)),
+        ),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // ── Task B6 (screenshot-driven follow-up): intentional loading/empty
   // states — the operator's screenshot showed a bare, blank-looking box
   // where the preview should be while pages were still loading; `return
   // null` there is indistinguishable from a bug. ──
 
   it("shows a loading skeleton (not a blank/broken box) while the pages fetch is in flight", async () => {
+    // Only the PAGES fetch is held open — the panel also POSTs for a preview
+    // token on mount, and pinning that call's resolver here instead would
+    // leave the pages request hanging forever.
     let resolvePages!: (v: Response) => void;
-    global.fetch = vi.fn(
-      () => new Promise<Response>((resolve) => { resolvePages = resolve; }),
-    ) as unknown as typeof fetch;
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/sites/s1/pages") {
+        return new Promise<Response>((resolve) => {
+          resolvePages = resolve;
+        });
+      }
+      return json({ error: "not found" }, 404);
+    }) as unknown as typeof fetch;
 
     render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
 
