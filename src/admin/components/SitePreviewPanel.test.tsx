@@ -69,7 +69,7 @@ function previewTokenFor(siteId: string, seq = 1) {
 function mockPagesApi(
   siteId: string,
   pages: PageRow[] = [],
-  opts: { mintFails?: boolean } = {},
+  opts: { mintFails?: boolean; mintFailsAfter?: number } = {},
 ) {
   let mintSeq = 0;
   const mintCalls: string[] = [];
@@ -80,6 +80,8 @@ function mockPagesApi(
     if (mint) {
       mintCalls.push(mint[1]);
       if (opts.mintFails) return json({ error: "preview tokens not configured" }, 503);
+      if (opts.mintFailsAfter !== undefined && mintCalls.length > opts.mintFailsAfter)
+        return json({ error: "transient" }, 503);
       mintSeq += 1;
       return json({
         token: previewTokenFor(mint[1], mintSeq),
@@ -352,6 +354,44 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
   // under the live contenteditable session — the same class of silent data
   // loss `displayed.pageId` is pinned for. The refreshed token is held back
   // until edit mode exits.
+  // Security-review follow-up (2026-07-30): a FAILED refresh must not discard
+  // the token we already hold (still valid ~3 more minutes) — doing so blanked
+  // a working preview over one network blip, with no recovery until remount.
+  it("keeps the current token and retries when a refresh mint fails", async () => {
+    clearAdminToken();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { mintCalls } = mockPagesApi(
+        "s1",
+        [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }],
+        { mintFailsAfter: 1 },
+      );
+      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      const token1 = encodeURIComponent(previewTokenFor("s1", 1));
+      await waitFor(() =>
+        expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(token1),
+      );
+
+      // Refresh timer fires; the mint 503s.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS);
+      });
+      await waitFor(() => expect(mintCalls.length).toBeGreaterThan(1));
+
+      // The still-valid token stays in the src — no blanking, no credential drop.
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(token1);
+
+      // And a bounded retry is scheduled (another mint attempt within ~20s).
+      const before = mintCalls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(21_000);
+      });
+      await waitFor(() => expect(mintCalls.length).toBeGreaterThan(before));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never swaps the credential mid-edit-session — the refreshed token is adopted on exit", async () => {
     clearAdminToken();
     vi.useFakeTimers({ shouldAdvanceTime: true });

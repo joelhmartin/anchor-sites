@@ -20,6 +20,9 @@ const READONLY_BUSY_REASON = "The AI is working on this site…";
  */
 const TOKEN_REFRESH_FRACTION = 0.8;
 const MIN_TOKEN_REFRESH_MS = 5_000;
+// Retry cadence after a FAILED mint — short enough to recover within a token's
+// remaining validity (refresh fires at 80% of a 15-min TTL, leaving ~3 min).
+const TOKEN_RETRY_MS = 20_000;
 /** Used only if the server's `expires_at` is unparseable. Server default is 15 min. */
 const FALLBACK_TOKEN_TTL_MS = 10 * 60 * 1000;
 
@@ -160,11 +163,13 @@ export function SitePreviewPanel({
         );
         timer = setTimeout(() => void mint(), delay);
       } catch {
-        // Minting is unavailable (older deployment, no signing secret, or the
-        // session just lapsed — apiFetch already handles the 401 bounce).
-        // Fall back to the legacy localStorage token if there is one; that
-        // keeps the paste-token dev workflow working unchanged.
-        if (!cancelled) setPreviewToken(null);
+        // Minting is unavailable (transient network blip, older deployment,
+        // no signing secret, or the session just lapsed — apiFetch already
+        // handles the 401 bounce). Keep any token we already hold: it stays
+        // valid until its own expiry, and discarding it here would blank a
+        // working preview over one failed refresh. Retry on a short timer;
+        // the legacy localStorage token remains the last-resort fallback.
+        if (!cancelled) timer = setTimeout(() => void mint(), TOKEN_RETRY_MS);
       }
     }
 
