@@ -35,7 +35,7 @@ describe("TemplatePreviewOverlay (W1.1 / D701)", () => {
   }
 
   it("mints a template preview token and mounts the sandboxed iframe on the first page", async () => {
-    const mock = vi.fn(async (url: string) => {
+    const mock = vi.fn(async (url: string, _opts?: RequestInit) => {
       if (url === "/api/templates/tpl-1/preview-token") return mintResponse();
       return json({});
     });

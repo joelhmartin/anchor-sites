@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "../ui/badge.js";
 import { Button } from "../ui/button.js";
@@ -10,31 +10,56 @@ import { cn } from "../ui/cn.js";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
 import { useApi } from "../lib/useApi.js";
 import { DEFAULT_BRAND_TOKENS } from "../components/BrandTokenFields.js";
+import { TemplateCover } from "../components/TemplateCover.js";
+import {
+  TemplateDetailDialog,
+  type TemplatePageRef,
+} from "../components/TemplateDetailDialog.js";
+import { TemplatePreviewOverlay } from "../components/TemplatePreviewOverlay.js";
 
 /**
- * Lovable-style new-site screen (Task B4, 2026-07-30 lovable-workspace SDD):
- * replaces the old two-step `NewSiteWizard.tsx` (deleted, not just renamed —
- * this file is a from-scratch rewrite, not an edit of it) with a single
- * screen — a big
- * "What do you want to build?" prompt above a template gallery ("rip off
- * Lovable's feel": cover image, name, one-line description, category chip).
+ * Lovable-style new-site screen (Task B4; W1.1 remediation, 2026-07-30
+ * product-audit): a big "What do you want to build?" prompt above a template
+ * gallery, with an actual review-before-choose flow.
  *
- * All three of the old wizard's create paths are preserved (blank, template,
- * AI), plus one new combination the old wizard couldn't express — a template
- * pick *and* a prompt together ("compose"): the site materializes from the
- * template first, then an agent conversation runs the prompt against it, the
- * same way the pure-AI path does. Whichever path ends up starting a
- * conversation lands on the workspace (`?ai=1`); a path with no prompt lands
- * on the tab-based management shell (`/manage`), matching the site having no
- * running build to watch.
+ * The W1.1 redesign (operator-verified defect: clicking a template card only
+ * painted a border and silently armed a small "Create site" pill one viewport
+ * above, off-screen):
  *
- * Slug/display-name auto-derive from the first line of the prompt (if any)
- * or the picked template's name, and stay editable in a collapsed "Details"
- * row — same slug rules as the old wizard (`SLUG_RE` below).
+ * - Card click SELECTS the template and opens `TemplateDetailDialog` (cover,
+ *   description, page manifest via `GET /api/templates/:id`) with "Use this
+ *   template" / "Preview" CTAs; a per-card "Use" button is the no-dialog fast
+ *   path (D200, D205).
+ * - "Preview" opens `TemplatePreviewOverlay` — a full-screen sandboxed render
+ *   of the template's own pages (D701).
+ * - Selection arms a FIXED bottom action bar that echoes the selection
+ *   ("«Starter» selected") and carries the primary create CTA — visible at
+ *   any scroll position (D200/D201/D202).
+ * - Selection is one source-of-truth enum (`"blank" | "template:<id>" |
+ *   null`) actually consumed by `handleSubmit` (D204); "Start blank" with no
+ *   prompt auto-opens Details and focuses the name input (D203).
+ * - Create honesty: a synchronous in-flight guard (D207); the from-template
+ *   response's `job.queued` is read and a false surfaces an error with a
+ *   re-enqueue Retry (D208/D703); a template-only create navigates to the
+ *   workspace IMMEDIATELY and the workspace shows a "materializing" state
+ *   driven by pages actually appearing (D213); a slug 409 opens Details and
+ *   focuses the slug field (D209).
+ * - Compose (template + prompt) never races materialization: pages must land
+ *   before the agent conversation starts, and the seed message tells the
+ *   agent the template was already applied (D1107). On a poll timeout it
+ *   does NOT start the agent — the operator gets an explicit "Open
+ *   workspace" affordance instead.
+ * - Gallery hygiene: loading skeletons / error-with-retry / true-empty
+ *   states (D210), a category filter row with counts (D222/D715),
+ *   `aria-pressed` selection (D211), labelled prompt textarea (D212),
+ *   pages-count on cards (D714/D205), compose-mode subcopy (D220), and a
+ *   Details echo that reads as information (D219).
  */
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const POLL_MS = 700;
-const POLL_TIMEOUT_MS = 8000;
+/** Compose only: how long to wait for materialization before refusing to
+ * start the agent (D1107). Template-only creates don't wait at all (D213). */
+const COMPOSE_POLL_TIMEOUT_MS = 30_000;
 
 type TemplateOption = {
   id: string;
@@ -43,6 +68,18 @@ type TemplateOption = {
   category?: string | null;
   cover_image_url?: string | null;
   pages_count?: number;
+};
+
+/** D204 — the single source of truth `handleSubmit` consumes. */
+type Selection = "blank" | `template:${string}` | null;
+
+type EnqueueFailure = {
+  siteId: string;
+  templateId: string;
+  siteSlug: string;
+  templateName: string;
+  pagesCount?: number;
+  message: string;
 };
 
 function firstLineOf(text: string): string {
@@ -58,53 +95,16 @@ function slugify(text: string): string {
     .slice(0, 63);
 }
 
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).slice(0, 2);
-  const letters = parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
-  return letters || "?";
-}
-
-/** Deterministic hue from a string so the same template always gets the same
- * placeholder gradient across renders/reloads. */
-function hashHue(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  return h % 360;
-}
-
-/** Cover image, or (every current template, until Phase C) a tasteful
- * branded placeholder block using the template's initials. Task B6
- * (2026-07-30 lovable-workspace SDD): a bigger cover area (h-40, was h-36)
- * that scales up slightly on the card's hover (`group-hover:scale-*`, the
- * card itself supplies `group`) — Lovable's own template-gallery hover. */
-function TemplateCover({ name, coverImageUrl }: { name: string; coverImageUrl?: string | null }) {
-  if (coverImageUrl) {
-    return (
-      <img
-        src={coverImageUrl}
-        alt=""
-        className="h-40 w-full object-cover transition-transform duration-200 group-hover:scale-[1.04]"
-      />
-    );
-  }
-  const hue = hashHue(name);
-  return (
-    <div
-      className="flex h-40 w-full items-center justify-center text-2xl font-semibold text-white transition-transform duration-200 group-hover:scale-[1.04]"
-      style={{
-        background: `linear-gradient(135deg, hsl(${hue} 70% 42%), hsl(${(hue + 40) % 360} 70% 32%))`,
-      }}
-    >
-      {initialsOf(name)}
-    </div>
-  );
+/** D1107 — the compose seed message must state the template is already on the
+ * site, so the agent adapts it instead of building from scratch. */
+export function composeSeedMessage(templateName: string, prompt: string): string {
+  return `The template "${templateName}" was already applied to this site — adapt and extend it rather than starting from scratch.\n\n${prompt}`;
 }
 
 export function NewSitePage() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
-  const [blankSelected, setBlankSelected] = useState(false);
+  const [selection, setSelection] = useState<Selection>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [nameTouched, setNameTouched] = useState(false);
   const [slugTouched, setSlugTouched] = useState(false);
@@ -113,11 +113,62 @@ export function NewSitePage() {
   const [busy, setBusy] = useState(false);
   const [materializing, setMaterializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
 
-  const { data: templatesData } = useApi<{ templates: TemplateOption[] }>("/api/templates?kind=site");
-  const templates = templatesData?.templates ?? [];
+  // Review-before-choose surfaces.
+  const [detailTemplate, setDetailTemplate] = useState<TemplateOption | null>(null);
+  const [preview, setPreview] = useState<{ template: TemplateOption; pages: TemplatePageRef[] } | null>(null);
+
+  // D208/D703 — a created site whose materialize enqueue failed.
+  const [enqueueFailure, setEnqueueFailure] = useState<EnqueueFailure | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // D1107 — compose materialization didn't land in time; don't start the agent.
+  const [slowSite, setSlowSite] = useState<{ slug: string; templateName: string; pagesCount?: number } | null>(null);
+
+  // D207 — synchronous double-submit guard (React state is too late).
+  const inFlightRef = useRef(false);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const slugInputRef = useRef<HTMLInputElement | null>(null);
+  const barCreateRef = useRef<HTMLButtonElement | null>(null);
+  const [pendingFocus, setPendingFocus] = useState<"name" | "slug" | "createBar" | null>(null);
+
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const el =
+      pendingFocus === "name"
+        ? nameInputRef.current
+        : pendingFocus === "slug"
+          ? slugInputRef.current
+          : barCreateRef.current;
+    el?.focus();
+    setPendingFocus(null);
+  }, [pendingFocus]);
+
+  const {
+    data: templatesData,
+    loading: templatesLoading,
+    error: templatesError,
+    reload: reloadTemplates,
+  } = useApi<{ templates: TemplateOption[] }>("/api/templates?kind=site");
+  const templates = useMemo(() => templatesData?.templates ?? [], [templatesData]);
+
+  // D222/D715 — category filter row (with counts), "All" default. Categories
+  // keep gallery order (sort_order asc via the API).
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of templates) {
+      const c = t.category ?? "Other";
+      counts.set(c, (counts.get(c) ?? 0) + 1);
+    }
+    return Array.from(counts.entries());
+  }, [templates]);
+  const visibleTemplates = categoryFilter
+    ? templates.filter((t) => (t.category ?? "Other") === categoryFilter)
+    : templates;
 
   const hasPrompt = prompt.trim().length > 0;
+  const selectedTemplateId = selection?.startsWith("template:") ? selection.slice("template:".length) : null;
+  const blankSelected = selection === "blank";
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) ?? null;
 
   const autoName = hasPrompt ? firstLineOf(prompt) : selectedTemplate ? selectedTemplate.name : "";
@@ -131,81 +182,139 @@ export function NewSitePage() {
 
   const primaryLabel = busy
     ? materializing
-      ? "Creating pages…"
+      ? "Applying template…"
       : "Creating…"
     : hasPrompt
       ? "Build with AI"
-      : "Create site";
+      : selectedTemplate
+        ? `Create from ${selectedTemplate.name}`
+        : "Create site";
+
+  // D202 — a disabled primary action says why.
+  const disabledReason = busy
+    ? null
+    : !formValid
+      ? blankSelected || selectedTemplate
+        ? "Add a name in Details to continue"
+        : "Describe the site, pick a template, or start blank"
+      : null;
 
   function handleConflict(err: unknown) {
     if (err instanceof ApiError && err.status === 409) {
       setError(`The slug "${effectiveSlug}" is already in use. Pick another.`);
+      // D209 — reveal and focus the field the error names.
+      setDetailsOpen(true);
+      setPendingFocus("slug");
     } else {
       setError(err instanceof Error ? err.message : "Couldn't create the site.");
     }
   }
 
-  // Poll site detail until the materialization job has created at least one
-  // page, so the operator lands on a populated Pages tab. Bounded; proceeds
-  // anyway on timeout (the site exists regardless).
-  async function waitForPages(siteId: string) {
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
+  /** Poll site detail until materialization created at least one page.
+   * Returns true when pages landed, false on timeout (caller decides). */
+  async function waitForPages(siteId: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
     for (;;) {
       try {
         const d = await apiFetch<{ site: { pages_count: number } }>(`/api/sites/${siteId}`);
-        if (d.site.pages_count > 0) return;
+        if (d.site.pages_count > 0) return true;
       } catch {
         // transient — keep polling until the deadline
       }
-      if (Date.now() >= deadline) return;
+      if (Date.now() >= deadline) return false;
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
   }
 
-  // Shared by every path that ends up with a prompt to run: create the
-  // job-run conversation, then land on the workspace with the Studio drawer
-  // focused. A conversation-create failure must not strand the operator —
-  // the site is already real, so navigate anyway with `ai_error=1` (mirrors
-  // the old wizard's AI-branch bot-review fix, item 8).
-  async function startConversationAndNavigate(siteId: string, message: string) {
+  /** The workspace URL that shows the "materializing pages…" state (D213). */
+  function workspaceMaterializingUrl(slug: string, templateName: string, pagesCount?: number): string {
+    const params = new URLSearchParams();
+    params.set("materializing", String(pagesCount && pagesCount > 0 ? pagesCount : 1));
+    params.set("template", templateName);
+    return `/sites/${slug}?${params.toString()}`;
+  }
+
+  async function startConversationAndNavigate(siteId: string, slug: string, message: string) {
     try {
       await apiFetch(`/api/sites/${siteId}/agent/conversations`, {
         method: "POST",
         body: { title: "Initial build", message, run: "job" },
       });
-      navigate(`/sites/${effectiveSlug}?ai=1`);
+      navigate(`/sites/${slug}?ai=1`);
     } catch {
-      navigate(`/sites/${effectiveSlug}?ai=1&ai_error=1`);
+      navigate(`/sites/${slug}?ai=1&ai_error=1`);
     }
   }
 
+  /** Shared by first submit and the D208 retry once the job is queued. */
+  async function proceedAfterQueued(input: {
+    siteId: string;
+    siteSlug: string;
+    templateName: string;
+    pagesCount?: number;
+    trimmedPrompt: string;
+  }) {
+    const { siteId, siteSlug, templateName, pagesCount, trimmedPrompt } = input;
+    if (!trimmedPrompt) {
+      // D213 — navigate immediately; the workspace renders the materializing
+      // state driven by pages actually appearing.
+      navigate(workspaceMaterializingUrl(siteSlug, templateName, pagesCount));
+      return;
+    }
+    // Compose: the agent must not race materialization (D1107).
+    setMaterializing(true);
+    const landed = await waitForPages(siteId, COMPOSE_POLL_TIMEOUT_MS);
+    setMaterializing(false);
+    if (!landed) {
+      setSlowSite({ slug: siteSlug, templateName, pagesCount });
+      setError(
+        `"${templateName}" is taking longer than expected to apply. The site was created — you can open it and start the AI once its pages are in.`,
+      );
+      return;
+    }
+    await startConversationAndNavigate(siteId, siteSlug, composeSeedMessage(templateName, trimmedPrompt));
+  }
+
   async function handleSubmit() {
-    if (!canSubmit) return;
+    // D207 — synchronous guard: two clicks in one render can't double-POST.
+    if (inFlightRef.current || !canSubmit) return;
+    inFlightRef.current = true;
     const trimmedPrompt = prompt.trim();
     setBusy(true);
     setError(null);
+    setSlowSite(null);
     try {
-      if (selectedTemplateId) {
-        const res = await apiFetch<{ site: { id: string } }>("/api/sites/from-template", {
+      if (selectedTemplateId && selectedTemplate) {
+        const res = await apiFetch<{
+          site: { id: string };
+          job?: { queued: boolean; error?: string };
+        }>("/api/sites/from-template", {
           method: "POST",
           body: { slug: effectiveSlug, display_name: effectiveName.trim(), template_id: selectedTemplateId },
         });
-        setMaterializing(true);
-        await waitForPages(res.site.id);
-        setMaterializing(false);
-        if (trimmedPrompt) {
-          await startConversationAndNavigate(res.site.id, trimmedPrompt);
-        } else {
-          // FINAL whole-branch review, FIX-NOW item 5: a no-prompt create
-          // used to land on the tab-based management shell. The workspace
-          // (`/sites/:slug`) is the primary landing surface for a site — it
-          // is where the preview and the agent chat live, and it is where
-          // every prompt-carrying path already lands. Dropping the operator
-          // into /manage instead meant a template-only create showed a
-          // settings-shaped screen with no sign of the site they just made.
-          navigate(`/sites/${effectiveSlug}`);
+        // D208 — the server reports enqueue failure; don't narrate success.
+        if (res.job && res.job.queued === false) {
+          setEnqueueFailure({
+            siteId: res.site.id,
+            templateId: selectedTemplateId,
+            siteSlug: effectiveSlug,
+            templateName: selectedTemplate.name,
+            pagesCount: selectedTemplate.pages_count,
+            message: res.job.error ?? "the page-creation job could not be queued",
+          });
+          return;
         }
+        await proceedAfterQueued({
+          siteId: res.site.id,
+          siteSlug: effectiveSlug,
+          templateName: selectedTemplate.name,
+          pagesCount: selectedTemplate.pages_count,
+          trimmedPrompt,
+        });
       } else {
+        // Blank (explicit or implicit) / AI-only path — `selection` is the
+        // consumed source of truth (D204): blank-with-no-prompt gets the
+        // default brand tokens, a prompt runs the agent afterwards.
         const body: Record<string, unknown> = { slug: effectiveSlug, display_name: effectiveName.trim() };
         if (!trimmedPrompt) body.default_brand_tokens = DEFAULT_BRAND_TOKENS;
         const site = await apiFetch<{ site?: { id: string }; id?: string }>("/api/sites", {
@@ -215,38 +324,78 @@ export function NewSitePage() {
         const siteId = site.site?.id ?? site.id;
         if (!siteId) throw new Error("Site created, but no id was returned.");
         if (trimmedPrompt) {
-          await startConversationAndNavigate(siteId, trimmedPrompt);
+          await startConversationAndNavigate(siteId, effectiveSlug, trimmedPrompt);
         } else {
-          // FINAL whole-branch review, FIX-NOW item 5: a no-prompt create
-          // used to land on the tab-based management shell. The workspace
-          // (`/sites/:slug`) is the primary landing surface for a site — it
-          // is where the preview and the agent chat live, and it is where
-          // every prompt-carrying path already lands. Dropping the operator
-          // into /manage instead meant a template-only create showed a
-          // settings-shaped screen with no sign of the site they just made.
           navigate(`/sites/${effectiveSlug}`);
         }
       }
     } catch (err) {
       handleConflict(err);
     } finally {
+      inFlightRef.current = false;
       setBusy(false);
       setMaterializing(false);
     }
   }
 
-  function pickTemplate(t: TemplateOption) {
-    setSelectedTemplateId(t.id);
-    setBlankSelected(false);
+  /** D208 — re-enqueue the failed materialization, then proceed normally. */
+  async function retryMaterialize() {
+    if (!enqueueFailure || retrying) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/sites/${enqueueFailure.siteId}/materialize-template`, {
+        method: "POST",
+        body: { template_id: enqueueFailure.templateId },
+      });
+      const failure = enqueueFailure;
+      setEnqueueFailure(null);
+      await proceedAfterQueued({
+        siteId: failure.siteId,
+        siteSlug: failure.siteSlug,
+        templateName: failure.templateName,
+        pagesCount: failure.pagesCount,
+        trimmedPrompt: prompt.trim(),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Retry failed.");
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  /** Card click — select AND open the detail dialog (D200/D205). */
+  function openTemplate(t: TemplateOption) {
+    setSelection(`template:${t.id}`);
+    setDetailTemplate(t);
+  }
+
+  /** "Use" fast path / dialog CTA — select, close surfaces, focus the bar. */
+  function armTemplate(t: TemplateOption) {
+    setSelection(`template:${t.id}`);
+    setDetailTemplate(null);
+    setPreview(null);
+    setPendingFocus("createBar");
   }
 
   function pickBlank() {
-    setSelectedTemplateId(null);
-    setBlankSelected(true);
+    setSelection("blank");
+    // D203 — blank with nothing to derive a name from is a dead end unless
+    // the operator finds the hidden Details row; open it and focus the name.
+    if (!hasPrompt && !nameTouched) {
+      setDetailsOpen(true);
+      setPendingFocus("name");
+    }
   }
 
+  function clearSelection() {
+    setSelection(null);
+  }
+
+  const actionBarVisible = selection !== null || enqueueFailure !== null;
+
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-16 px-6 py-16">
+    <div className={cn("mx-auto flex max-w-4xl flex-col gap-16 px-6 py-16", actionBarVisible && "pb-36")}>
       <div className="flex flex-col items-center gap-6 text-center">
         <h1 className="text-[2.75rem] font-semibold leading-[1.05] tracking-tight text-zinc-900">
           What do you want to build?
@@ -264,6 +413,7 @@ export function NewSitePage() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe the site you want to build…"
+              aria-label="Describe the site to build"
               className="w-full resize-none bg-transparent text-base text-zinc-900 placeholder:text-zinc-400 focus-visible:outline-none"
             />
 
@@ -274,9 +424,12 @@ export function NewSitePage() {
                 className="text-xs font-medium text-zinc-400 hover:text-zinc-600"
               >
                 {detailsOpen ? "Hide details" : "Details"}
-                <span className="ml-2 text-zinc-300">
-                  {effectiveName || "Untitled site"} · {effectiveSlug || "—"}
-                </span>
+                {/* D219 — echo only once there is real information to echo. */}
+                {effectiveName ? (
+                  <span className="ml-2 text-zinc-300">
+                    {effectiveName} · {effectiveSlug || "no slug yet"}
+                  </span>
+                ) : null}
               </button>
               <Button variant="dark" className="rounded-full px-5" onClick={handleSubmit} disabled={!canSubmit}>
                 {busy ? (
@@ -288,6 +441,9 @@ export function NewSitePage() {
                 )}
               </Button>
             </div>
+            {disabledReason && !actionBarVisible && (
+              <p className="mt-2 text-right text-xs text-zinc-400">{disabledReason}</p>
+            )}
           </div>
 
           {detailsOpen && (
@@ -297,6 +453,7 @@ export function NewSitePage() {
                   <Label htmlFor="display_name">Display name</Label>
                   <Input
                     id="display_name"
+                    ref={nameInputRef}
                     value={effectiveName}
                     onChange={(e) => {
                       setNameTouched(true);
@@ -309,6 +466,7 @@ export function NewSitePage() {
                   <Label htmlFor="slug">Slug</Label>
                   <Input
                     id="slug"
+                    ref={slugInputRef}
                     value={effectiveSlug}
                     onChange={(e) => {
                       setSlugTouched(true);
@@ -330,53 +488,270 @@ export function NewSitePage() {
           )}
 
           {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+          {slowSite && (
+            <div className="mt-2 flex justify-center">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(workspaceMaterializingUrl(slowSite.slug, slowSite.templateName, slowSite.pagesCount))
+                }
+              >
+                Open workspace
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="flex flex-col gap-6">
-        <h2 className="text-lg font-medium text-zinc-900">Start from a template</h2>
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {templates.map((t) => (
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-medium text-zinc-900">Start from a template</h2>
+          {/* D220 — the marquee combination is stated in the UI, not a comment. */}
+          <p className="text-sm text-zinc-500">
+            Pick one to review its pages — add a prompt above and the agent will customize it for you.
+          </p>
+        </div>
+
+        {/* D222/D715 — category filter with counts; "All" default. */}
+        {!templatesLoading && !templatesError && categories.length > 1 && (
+          <div role="group" aria-label="Filter by category" className="flex flex-wrap items-center gap-1.5">
             <button
-              key={t.id}
               type="button"
-              onClick={() => pickTemplate(t)}
+              aria-pressed={categoryFilter === null}
+              onClick={() => setCategoryFilter(null)}
               className={cn(
-                "group flex flex-col overflow-hidden rounded-lg border bg-white text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-lg",
-                selectedTemplateId === t.id ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-200",
+                "rounded-full border px-3 py-1 text-xs font-medium transition",
+                categoryFilter === null
+                  ? "border-zinc-900 bg-zinc-900 text-white"
+                  : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
               )}
             >
-              <div className="overflow-hidden">
-                <TemplateCover name={t.name} coverImageUrl={t.cover_image_url} />
+              All ({templates.length})
+            </button>
+            {categories.map(([cat, count]) => (
+              <button
+                key={cat}
+                type="button"
+                aria-pressed={categoryFilter === cat}
+                onClick={() => setCategoryFilter(categoryFilter === cat ? null : cat)}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs font-medium transition",
+                  categoryFilter === cat
+                    ? "border-zinc-900 bg-zinc-900 text-white"
+                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
+                )}
+              >
+                {cat} ({count})
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* D210 — loading / error / true-empty are all distinct states. */}
+        {templatesLoading ? (
+          <div data-testid="template-skeletons" className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex animate-pulse flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                <div className="h-40 w-full bg-zinc-100" />
+                <div className="flex flex-col gap-2 p-4">
+                  <div className="h-4 w-1/2 rounded bg-zinc-100" />
+                  <div className="h-3 w-3/4 rounded bg-zinc-100" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : templatesError ? (
+          <div className="flex flex-col items-start gap-2 rounded-lg border border-zinc-200 bg-white p-4">
+            <p className="text-sm text-red-600">Couldn't load templates: {templatesError}</p>
+            <Button variant="outline" size="sm" onClick={reloadTemplates}>
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {templates.length === 0 && (
+              <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50/60 p-4 text-sm text-zinc-500 sm:col-span-2 lg:col-span-2">
+                No templates yet — start blank, or describe the site above and let the agent build it.
+              </div>
+            )}
+            {visibleTemplates.map((t) => (
+              <div
+                key={t.id}
+                className={cn(
+                  "group flex flex-col overflow-hidden rounded-lg border bg-white transition duration-150 hover:-translate-y-0.5 hover:shadow-lg",
+                  selectedTemplateId === t.id ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-200",
+                )}
+              >
+                <button
+                  type="button"
+                  aria-pressed={selectedTemplateId === t.id}
+                  onClick={() => openTemplate(t)}
+                  className="flex flex-col text-left focus-visible:outline-none"
+                >
+                  <div className="overflow-hidden">
+                    <TemplateCover name={t.name} coverImageUrl={t.cover_image_url} />
+                  </div>
+                  <div className="flex w-full flex-col gap-2 p-4 pb-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-zinc-900">{t.name}</span>
+                      {t.category && <Badge tone="neutral">{t.category}</Badge>}
+                    </div>
+                    {t.description && <p className="line-clamp-2 text-sm text-zinc-500">{t.description}</p>}
+                  </div>
+                </button>
+                <div className="mt-auto flex items-center justify-between px-4 pb-3 pt-1">
+                  {/* D714/D205 — the fetched pages_count finally reaches eyes. */}
+                  <span className="text-xs text-zinc-400">
+                    {typeof t.pages_count === "number"
+                      ? `${t.pages_count} ${t.pages_count === 1 ? "page" : "pages"}`
+                      : ""}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Use ${t.name}`}
+                    onClick={() => armTemplate(t)}
+                  >
+                    Use
+                  </Button>
+                </div>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={pickBlank}
+              aria-pressed={blankSelected}
+              className={cn(
+                "group flex flex-col overflow-hidden rounded-lg border border-dashed bg-zinc-50/60 text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-lg",
+                blankSelected ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-300",
+              )}
+            >
+              <div className="flex h-40 w-full items-center justify-center text-3xl font-light text-zinc-300 transition-transform duration-200 group-hover:scale-[1.04]">
+                +
               </div>
               <div className="flex flex-col gap-2 p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-zinc-900">{t.name}</span>
-                  {t.category && <Badge tone="neutral">{t.category}</Badge>}
-                </div>
-                {t.description && <p className="line-clamp-2 text-sm text-zinc-500">{t.description}</p>}
+                <span className="font-medium text-zinc-900">Start blank</span>
+                <p className="text-sm text-zinc-500">An empty site you'll build page by page.</p>
               </div>
             </button>
-          ))}
-
-          <button
-            type="button"
-            onClick={pickBlank}
-            className={cn(
-              "group flex flex-col overflow-hidden rounded-lg border border-dashed bg-zinc-50/60 text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-lg",
-              blankSelected ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-300",
-            )}
-          >
-            <div className="flex h-40 w-full items-center justify-center text-3xl font-light text-zinc-300 transition-transform duration-200 group-hover:scale-[1.04]">
-              +
-            </div>
-            <div className="flex flex-col gap-2 p-4">
-              <span className="font-medium text-zinc-900">Start blank</span>
-              <p className="text-sm text-zinc-500">An empty site you'll build page by page.</p>
-            </div>
-          </button>
-        </div>
+          </div>
+        )}
       </div>
+
+      {/* Review-before-choose surfaces (W1.1). */}
+      {detailTemplate && (
+        <TemplateDetailDialog
+          template={detailTemplate}
+          open
+          onOpenChange={(open) => {
+            if (!open) setDetailTemplate(null);
+          }}
+          onUse={() => armTemplate(detailTemplate)}
+          onPreview={(pages) => {
+            setPreview({ template: detailTemplate, pages });
+            setDetailTemplate(null);
+          }}
+        />
+      )}
+      {preview && (
+        <TemplatePreviewOverlay
+          template={preview.template}
+          pages={preview.pages}
+          onUse={() => armTemplate(preview.template)}
+          onClose={() => setPreview(null)}
+        />
+      )}
+
+      {/* D200/D201/D202 — the armed state lives in a FIXED bottom action bar,
+          visible at any scroll position. left-56 clears the admin sidebar. */}
+      {actionBarVisible && (
+        <div
+          data-testid="new-site-action-bar"
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white/95 backdrop-blur sm:left-56"
+        >
+          <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 px-6 py-3">
+            {enqueueFailure ? (
+              <>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-900">
+                    "{enqueueFailure.templateName}" site created, but its pages failed to queue.
+                  </p>
+                  <p className="truncate text-xs text-red-600">{enqueueFailure.message}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      navigate(
+                        workspaceMaterializingUrl(
+                          enqueueFailure.siteSlug,
+                          enqueueFailure.templateName,
+                          enqueueFailure.pagesCount,
+                        ),
+                      )
+                    }
+                  >
+                    Open workspace
+                  </Button>
+                  <Button variant="dark" size="sm" className="rounded-full px-4" disabled={retrying} onClick={retryMaterialize}>
+                    {retrying ? "Retrying…" : "Retry"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-900">
+                    {selectedTemplate ? (
+                      <>“{selectedTemplate.name}” selected</>
+                    ) : blankSelected ? (
+                      <>Start blank selected</>
+                    ) : null}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {disabledReason
+                      ? disabledReason
+                      : selectedTemplate && hasPrompt
+                        ? `Creates the template's pages, then the agent applies your prompt to them.`
+                        : selectedTemplate
+                          ? `Creates ${
+                              typeof selectedTemplate.pages_count === "number" && selectedTemplate.pages_count > 0
+                                ? `${selectedTemplate.pages_count} ${selectedTemplate.pages_count === 1 ? "page" : "pages"}`
+                                : "its pages"
+                            } as ${effectiveName || "a new site"} — add a prompt to customize it with AI.`
+                          : `An empty site named ${effectiveName || "…"} — add a prompt to build it with AI.`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={clearSelection} disabled={busy}>
+                    Clear
+                  </Button>
+                  <Button
+                    ref={barCreateRef}
+                    variant="dark"
+                    size="sm"
+                    className="rounded-full px-5"
+                    onClick={handleSubmit}
+                    disabled={!canSubmit}
+                    title={disabledReason ?? undefined}
+                  >
+                    {busy ? (
+                      <span className="flex items-center gap-2">
+                        <Spinner /> {primaryLabel}
+                      </span>
+                    ) : (
+                      primaryLabel
+                    )}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
