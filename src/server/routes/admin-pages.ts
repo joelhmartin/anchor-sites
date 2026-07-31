@@ -27,6 +27,8 @@ import { resolveGitMode } from "../git/client.js";
 import { getGitState } from "../git/state-repo.js";
 import { GIT_EXPORT } from "../jobs/index.js";
 import type { GitExportInput } from "../jobs/git-export.js";
+// D301 snapshot-on-publish — shared SQL + full design rationale.
+import { PAGE_HAS_UNPUBLISHED_CHANGES_SQL, PAGE_SNAPSHOT_SQL } from "../publish-snapshot.js";
 
 // Inline Editing Task 4 — Studio mints this token (`crypto.randomUUID()`) and
 // passes it in as `?bridge=`; the server never generates or stores it (keeps
@@ -159,6 +161,15 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // for its before/after revision snapshots, but atomically — no
         // separate SELECT ... FOR UPDATE needed since this UPDATE already
         // touches the row).
+        // D301: when THIS save publishes (payload.status === 'published'),
+        // freeze the render payload the tenant route serves — built from
+        // the NEW values this same UPDATE writes (SET expressions read the
+        // OLD row, so the snapshot must repeat the new-value expressions,
+        // not reference the columns). A save that doesn't touch status
+        // leaves the snapshot alone — that's the whole point: post-publish
+        // edits stay off the live site until the next publish. D504:
+        // published_at stamps on publish, clears on unpublish (mirrors
+        // blog/repo.ts).
         const pageRes = await client.query<{ id: string; status: string; seo: Record<string, unknown> }>(
           `UPDATE pages
               SET blocks = $1::jsonb,
@@ -168,7 +179,25 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
                     WHEN 'clear'     THEN NULL
                     WHEN 'set'       THEN $6::jsonb
                   END,
-                  status = COALESCE($7, status)
+                  status = COALESCE($7, status),
+                  published_snapshot = CASE
+                    WHEN $7::text = 'published' THEN jsonb_build_object(
+                      'title', title,
+                      'blocks', $1::jsonb,
+                      'seo', COALESCE($2::jsonb, seo),
+                      'brand_tokens_override', CASE $5
+                        WHEN 'unchanged' THEN brand_tokens_override
+                        WHEN 'clear'     THEN NULL::jsonb
+                        WHEN 'set'       THEN $6::jsonb
+                      END
+                    )
+                    ELSE published_snapshot
+                  END,
+                  published_at = CASE
+                    WHEN $7::text = 'published' THEN now()
+                    WHEN $7::text = 'draft'     THEN NULL
+                    ELSE published_at
+                  END
             WHERE id = $3 AND site_id = $4
             RETURNING id, status, seo`,
           [
@@ -716,10 +745,20 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         }
 
         await client.query("BEGIN");
+        // D301: publish = freeze the working copy as the live payload. The
+        // WHERE picks up drafts AND published pages whose working copy
+        // diverged from the snapshot (post-publish agent/inline/SEO edits),
+        // so re-publishing an edited page actually ships the edit — and an
+        // untouched site publishes 0, keeping the route idempotent. SET
+        // expressions read the OLD row, which here IS the working copy
+        // (this UPDATE never writes content columns). D504: published_at
+        // stamps whenever content goes live.
         const publishedRes = await client.query<{ id: string; blocks: Block[]; seo: Record<string, unknown> }>(
           `UPDATE pages
-              SET status = 'published'
-            WHERE site_id = $1 AND status != 'published'
+              SET status = 'published',
+                  published_snapshot = ${PAGE_SNAPSHOT_SQL},
+                  published_at = now()
+            WHERE site_id = $1 AND ${PAGE_HAS_UNPUBLISHED_CHANGES_SQL}
             RETURNING id, blocks, seo`,
           [siteId],
         );

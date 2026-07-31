@@ -67,6 +67,29 @@ d("sitemap + robots (P9-T9.5/9.6)", () => {
     expect(res.text).toContain("<loc>https://muldoon-dental.sites.anchorcorps.com/events/sm-event</loc>");
   });
 
+  it("D301: page <lastmod> reflects published_at, not draft-edit updated_at", async () => {
+    // A draft edit bumps updated_at (touch trigger) but must not advertise
+    // freshness for content that never shipped — pages' lastmod reads
+    // published_at. Pin it to a known date and edit the working copy.
+    await pool.query(
+      `UPDATE pages SET published_at = '2026-01-05T12:00:00Z', title = title
+        WHERE site_id = $1 AND slug = 'home'`,
+      [siteId],
+    );
+    try {
+      const res = await request(app).get("/sitemap.xml").set("Host", HOST);
+      const homeEntry = res.text
+        .split("\n")
+        .find((l) => l.includes(">https://muldoon-dental.sites.anchorcorps.com/</loc>"));
+      expect(homeEntry).toContain("<lastmod>2026-01-05</lastmod>");
+    } finally {
+      await pool.query(
+        `UPDATE pages SET published_at = now() WHERE site_id = $1 AND slug = 'home'`,
+        [siteId],
+      );
+    }
+  });
+
   it("excludes robots.index=false content from the sitemap", async () => {
     const res = await request(app).get("/sitemap.xml").set("Host", HOST);
     expect(res.text).not.toContain("sm-noindex");

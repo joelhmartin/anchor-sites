@@ -154,6 +154,41 @@ d("admin sites API — detail + pages (P4-T4.3)", () => {
     expect(home.title).toBeTruthy();
   });
 
+  it("D301: pages list carries has_unpublished_changes — false for a clean published page, true after a working-copy edit, true for drafts", async () => {
+    const before = await pool.query<{ blocks: unknown[] }>(
+      `SELECT blocks FROM pages WHERE site_id = $1 AND slug = 'home'`,
+      [muldoonId],
+    );
+    try {
+      const clean = await request(app)
+        .get(`/api/sites/${muldoonId}/pages`)
+        .set("X-Admin-Token", ADMIN_TOKEN);
+      const homeClean = clean.body.pages.find((p: { slug: string }) => p.slug === "home");
+      expect(homeClean.has_unpublished_changes).toBe(false);
+
+      // Post-publish edit (agent / inline editor path): working blocks
+      // diverge from published_snapshot -> the page is publishable again.
+      await pool.query(
+        `UPDATE pages SET blocks = '[]'::jsonb WHERE site_id = $1 AND slug = 'home'`,
+        [muldoonId],
+      );
+      const dirty = await request(app)
+        .get(`/api/sites/${muldoonId}/pages`)
+        .set("X-Admin-Token", ADMIN_TOKEN);
+      const homeDirty = dirty.body.pages.find((p: { slug: string }) => p.slug === "home");
+      expect(homeDirty.has_unpublished_changes).toBe(true);
+
+      // A plain draft is always publishable.
+      const about = dirty.body.pages.find((p: { slug: string; status: string }) => p.status === "draft");
+      if (about) expect(about.has_unpublished_changes).toBe(true);
+    } finally {
+      await pool.query(
+        `UPDATE pages SET blocks = $2::jsonb WHERE site_id = $1 AND slug = 'home'`,
+        [muldoonId, JSON.stringify(before.rows[0].blocks)],
+      );
+    }
+  });
+
   it("GET /api/sites/:id/pages 404 for unknown site", async () => {
     const r = await request(app)
       .get(`/api/sites/00000000-0000-0000-0000-000000000000/pages`)

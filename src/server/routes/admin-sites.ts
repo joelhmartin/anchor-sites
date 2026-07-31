@@ -13,6 +13,7 @@ import type { CrmClient } from "../crm/client.js";
 import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
 import type { CrmSyncInput } from "../crm/sync-job.js";
 import { SYSTEM_TEMPLATES_SITE_SLUG } from "../templates/system-site.js";
+import { PAGE_HAS_UNPUBLISHED_CHANGES_SQL } from "../publish-snapshot.js";
 
 /**
  * Admin sites API (P4-T4.2 …). Read + light-write surface the control
@@ -200,8 +201,13 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           res.status(404).json({ error: "site not found" });
           return;
         }
+        // D301: `has_unpublished_changes` — drafts, plus published pages
+        // whose working copy diverged from the published snapshot. The
+        // workspace Publish pill counts THIS flag, so it can never again
+        // say "Nothing to publish" while edits are sitting unshipped.
         const result = await pool.query(
-          `SELECT id, slug, title, status, updated_at
+          `SELECT id, slug, title, status, updated_at,
+                  ${PAGE_HAS_UNPUBLISHED_CHANGES_SQL} AS has_unpublished_changes
              FROM pages
             WHERE site_id = $1
             ORDER BY updated_at DESC`,

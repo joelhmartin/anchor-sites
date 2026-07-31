@@ -160,6 +160,21 @@ d("handleGitImport — validated apply + reporting", () => {
     expect(pageRow.rows[0].status).toBe("published");
     expect(pageRow.rows[0].title).toBe("New Home");
 
+    // D301: the file's status field is a declared release state — applying
+    // status:'published' IS a publish, so import must freeze the snapshot
+    // the tenant route serves (and stamp published_at), or the round-trip
+    // would leave live sites stuck on the pre-import snapshot forever.
+    const snapRow = await db.getPool().query<{
+      snapshot: { title: string; blocks: unknown[] } | null;
+      published_at: string | null;
+    }>(
+      `SELECT published_snapshot AS snapshot, published_at FROM pages WHERE id = $1`,
+      [pageId],
+    );
+    expect(snapRow.rows[0].published_at).not.toBeNull();
+    expect(snapRow.rows[0].snapshot?.title).toBe("New Home");
+    expect(snapRow.rows[0].snapshot?.blocks).toEqual([{ id: "b1", type: "hero", props: { title: "New" } }]);
+
     const revRes = await db.getPool().query(
       `SELECT source FROM page_revisions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1`,
       [pageId],

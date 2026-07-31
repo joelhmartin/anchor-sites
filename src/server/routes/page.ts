@@ -32,10 +32,21 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
     const slug = normalizeSlug(req.path);
 
     try {
+      // D301 snapshot-on-publish: the live site serves ONLY the frozen
+      // publish-time payload, never the working columns — post-publish
+      // edits (agent, inline editor, SEO tab) stay off the live site until
+      // the next publish. Fails closed: a published row missing its
+      // snapshot renders nothing rather than leaking the draft (the
+      // migration backfilled every pre-existing published row, and every
+      // publish path writes the snapshot — see src/server/publish-snapshot.ts).
       const result = await pool.query<PageRecord>(
-        `SELECT title, blocks, seo, brand_tokens_override
+        `SELECT published_snapshot->>'title'              AS title,
+                published_snapshot->'blocks'              AS blocks,
+                published_snapshot->'seo'                 AS seo,
+                published_snapshot->'brand_tokens_override' AS brand_tokens_override
            FROM pages
           WHERE site_id = $1 AND slug = $2 AND status = 'published'
+            AND published_snapshot IS NOT NULL
           LIMIT 1`,
         [req.site.id, slug],
       );

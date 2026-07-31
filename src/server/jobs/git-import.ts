@@ -305,15 +305,33 @@ async function applyPageFile(
     let pageId: string;
     if ((existingPage.rowCount ?? 0) > 0) {
       pageId = existingPage.rows[0].id;
+      // D301: the file's `status` field is a declared release state —
+      // applying status:'published' IS a publish, so freeze the snapshot
+      // the tenant route serves (from the NEW values; the row's existing
+      // brand_tokens_override rides along — page files don't carry it).
+      // Without this, the repo round-trip could never update a live site
+      // again. D504: published_at stamps/clears with the declared status.
       await dbClient.query(
-        `UPDATE pages SET blocks = $1::jsonb, seo = $2::jsonb, title = $3, status = $4, updated_at = now()
+        `UPDATE pages SET blocks = $1::jsonb, seo = $2::jsonb, title = $3, status = $4, updated_at = now(),
+                published_snapshot = CASE WHEN $4 = 'published'
+                  THEN jsonb_build_object(
+                    'title', $3::text, 'blocks', $1::jsonb, 'seo', $2::jsonb,
+                    'brand_tokens_override', brand_tokens_override)
+                  ELSE published_snapshot END,
+                published_at = CASE WHEN $4 = 'published' THEN now() ELSE NULL END
          WHERE id = $5`,
         [JSON.stringify(page.blocks), JSON.stringify(seo), page.title, page.status, pageId],
       );
     } else {
       const inserted = await dbClient.query<{ id: string }>(
-        `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
-         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+        `INSERT INTO pages (site_id, slug, title, blocks, seo, status, published_snapshot, published_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6,
+                 CASE WHEN $6 = 'published'
+                   THEN jsonb_build_object(
+                     'title', $3::text, 'blocks', $4::jsonb, 'seo', $5::jsonb,
+                     'brand_tokens_override', NULL)
+                   ELSE NULL END,
+                 CASE WHEN $6 = 'published' THEN now() ELSE NULL END)
          RETURNING id`,
         [data.siteId, slug, page.title, JSON.stringify(page.blocks), JSON.stringify(seo), page.status],
       );

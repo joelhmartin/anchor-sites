@@ -36,8 +36,12 @@ function buildSitemap(urls: Url[]): string {
 }
 
 // Published, indexable rows for one content table, newest-changed first.
-const indexableQuery = (table: string) =>
-  `SELECT slug, to_char(updated_at, 'YYYY-MM-DD') AS lastmod
+// D301: `lastmodExpr` — pages advertise `published_at` (when the live
+// content last changed), because a draft edit bumps `updated_at` without
+// shipping anything; posts/events edits DO go live directly, so their
+// `updated_at` remains the honest freshness signal.
+const indexableQuery = (table: string, lastmodExpr = "updated_at") =>
+  `SELECT slug, to_char(${lastmodExpr}, 'YYYY-MM-DD') AS lastmod
      FROM ${table}
     WHERE site_id = $1 AND status = 'published'
       AND (seo->'robots'->>'index') IS DISTINCT FROM 'false'
@@ -54,7 +58,10 @@ export function sitemapRouter(opts: { pool?: Pool } = {}): Router {
     try {
       const base = `https://${hostnameForSlug(site.slug)}`;
       const [pages, posts, events] = await Promise.all([
-        pool.query<{ slug: string; lastmod: string }>(indexableQuery("pages"), [site.id]),
+        pool.query<{ slug: string; lastmod: string }>(
+          indexableQuery("pages", "COALESCE(published_at, updated_at)"),
+          [site.id],
+        ),
         pool.query<{ slug: string; lastmod: string }>(indexableQuery("posts"), [site.id]),
         pool.query<{ slug: string; lastmod: string }>(indexableQuery("events"), [site.id]),
       ]);

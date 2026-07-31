@@ -194,6 +194,88 @@ d("admin pages API (integration)", () => {
     expect(res.status).toBe(400);
   });
 
+  // ---------- D301/D504 — snapshot-on-publish (single-page save) ----------
+
+  it("D301/D504: save with status:'published' freezes published_snapshot from the SAVED payload and stamps published_at", async () => {
+    const before = await pool.query<{ status: string; snapshot: unknown; published_at: string | null }>(
+      `SELECT status, published_snapshot AS snapshot, published_at FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    try {
+      const res = await request(app)
+        .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+        .set("X-Admin-Token", ADMIN_TOKEN)
+        .send({ blocks: validBlocks("-snap"), seo: { title: "Snap SEO" }, status: "published" });
+      expect(res.status).toBe(200);
+
+      const row = await pool.query<{
+        title: string;
+        snapshot: { title: string; blocks: unknown[]; seo: Record<string, unknown> };
+        published_at: string | null;
+      }>(
+        `SELECT title, published_snapshot AS snapshot, published_at FROM pages WHERE id = $1`,
+        [muldoonPageId],
+      );
+      expect(row.rows[0].published_at).not.toBeNull();
+      expect(row.rows[0].snapshot.blocks).toEqual(validBlocks("-snap"));
+      expect(row.rows[0].snapshot.seo).toEqual({ title: "Snap SEO" });
+      // This route never writes title — the snapshot carries the row's own.
+      expect(row.rows[0].snapshot.title).toBe(row.rows[0].title);
+    } finally {
+      await pool.query(
+        `UPDATE pages SET status = $2, published_snapshot = $3::jsonb, published_at = $4 WHERE id = $1`,
+        [muldoonPageId, before.rows[0].status, JSON.stringify(before.rows[0].snapshot), before.rows[0].published_at],
+      );
+    }
+  });
+
+  it("D301: a plain save (no status) on an already-published page leaves the snapshot untouched — the edit stays off live", async () => {
+    const before = await pool.query<{ snapshot: unknown }>(
+      `SELECT published_snapshot AS snapshot FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    expect(before.rows[0].snapshot).not.toBeNull(); // seeded published page has one
+
+    const res = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ blocks: validBlocks("-inline-edit") });
+    expect(res.status).toBe(200);
+
+    const after = await pool.query<{ snapshot: { blocks: unknown[] }; blocks: unknown[] }>(
+      `SELECT published_snapshot AS snapshot, blocks FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    expect(after.rows[0].blocks).toEqual(validBlocks("-inline-edit"));
+    expect(after.rows[0].snapshot).toEqual(before.rows[0].snapshot);
+  });
+
+  it("D301/D504: save with status:'draft' clears published_at and keeps the snapshot", async () => {
+    const before = await pool.query<{ status: string; snapshot: unknown; published_at: string | null }>(
+      `SELECT status, published_snapshot AS snapshot, published_at FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    try {
+      const res = await request(app)
+        .post(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}`)
+        .set("X-Admin-Token", ADMIN_TOKEN)
+        .send({ blocks: validBlocks("-unpub"), status: "draft" });
+      expect(res.status).toBe(200);
+
+      const row = await pool.query<{ snapshot: unknown; published_at: string | null }>(
+        `SELECT published_snapshot AS snapshot, published_at FROM pages WHERE id = $1`,
+        [muldoonPageId],
+      );
+      expect(row.rows[0].published_at).toBeNull();
+      expect(row.rows[0].snapshot).toEqual(before.rows[0].snapshot);
+    } finally {
+      await pool.query(
+        `UPDATE pages SET status = $2, published_snapshot = $3::jsonb, published_at = $4 WHERE id = $1`,
+        [muldoonPageId, before.rows[0].status, JSON.stringify(before.rows[0].snapshot), before.rows[0].published_at],
+      );
+    }
+  });
+
   // ---------- SAVE ----------
 
   it("saving valid blocks creates a revision and returns it", async () => {
@@ -584,6 +666,67 @@ d("admin pages — bulk publish (Task B3)", () => {
     );
     expect(revs.rows).toHaveLength(2);
     for (const row of revs.rows) expect(row.source).toBe("manual");
+  });
+
+  // ---------- D301/D504 — snapshot-on-publish (bulk publish) ----------
+
+  it("D301/D504: publish freezes each page's published_snapshot and stamps published_at", async () => {
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/publish`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body.published).toBe(2);
+
+    const rows = await pool.query<{
+      id: string;
+      snapshot: { title: string; blocks: unknown[]; seo: Record<string, unknown> } | null;
+      published_at: string | null;
+    }>(
+      `SELECT id, published_snapshot AS snapshot, published_at
+         FROM pages WHERE id = ANY($1::uuid[])`,
+      [[draftAId, draftBId]],
+    );
+    for (const row of rows.rows) {
+      expect(row.published_at).not.toBeNull();
+      expect(row.snapshot).not.toBeNull();
+      expect(row.snapshot!.blocks).toEqual([]);
+    }
+    const draftA = rows.rows.find((r) => r.id === draftAId)!;
+    expect(draftA.snapshot!.title).toBe("Draft A");
+    expect(draftA.snapshot!.seo).toEqual({ title: "Draft A SEO" });
+  });
+
+  it("D301: a post-publish edit counts as publishable again, and re-publishing re-freezes the snapshot", async () => {
+    // First publish: both drafts go live.
+    const first = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(first.body.published).toBe(2);
+
+    // Simulate the agent / inline editor: edit working blocks WITHOUT
+    // touching status (the exact D301 leak path).
+    const editedBlocks = [{ id: "r-edit", type: "rich-text", props: { html: "<p>edited</p>", max_width: "medium" } }];
+    await pool.query(`UPDATE pages SET blocks = $2::jsonb WHERE id = $1`, [
+      draftAId,
+      JSON.stringify(editedBlocks),
+    ]);
+
+    // The edit must NOT have reached the snapshot…
+    const mid = await pool.query<{ snapshot: { blocks: unknown[] } }>(
+      `SELECT published_snapshot AS snapshot FROM pages WHERE id = $1`,
+      [draftAId],
+    );
+    expect(mid.rows[0].snapshot.blocks).toEqual([]);
+
+    // …and a second publish picks up EXACTLY that one dirty page.
+    const second = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(second.status).toBe(200);
+    expect(second.body.published).toBe(1);
+
+    const after = await pool.query<{ snapshot: { blocks: unknown[] }; published_at: string | null }>(
+      `SELECT published_snapshot AS snapshot, published_at FROM pages WHERE id = $1`,
+      [draftAId],
+    );
+    expect(after.rows[0].snapshot.blocks).toEqual(editedBlocks);
+    expect(after.rows[0].published_at).not.toBeNull();
   });
 
   // FINAL whole-branch review, FIX-NOW item 2b — the publish response's

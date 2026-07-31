@@ -34,6 +34,25 @@ function buildApp(pool: Pool): express.Express {
   return app;
 }
 
+/**
+ * D301 — the tenant route serves `published_snapshot`, not the working
+ * columns; tests that mutate a page via direct SQL and want the mutation
+ * VISIBLE on the live render must "publish" it, exactly like the publish
+ * routes do (same jsonb_build_object as src/server/publish-snapshot.ts).
+ */
+async function publishWorkingCopy(pool: Pool, siteSlug: string, pageSlug: string): Promise<void> {
+  await pool.query(
+    `UPDATE pages
+        SET status = 'published',
+            published_snapshot = jsonb_build_object(
+              'title', title, 'blocks', blocks, 'seo', seo,
+              'brand_tokens_override', brand_tokens_override),
+            published_at = now()
+      WHERE site_id = (SELECT id FROM sites WHERE slug = $1) AND slug = $2`,
+    [siteSlug, pageSlug],
+  );
+}
+
 d("page renderer catch-all (integration)", () => {
   let pool: Pool;
   let app: express.Express;
@@ -150,6 +169,7 @@ d("page renderer catch-all (integration)", () => {
           AND slug = 'home'`,
       [JSON.stringify({ "--theme-main": "#ff00aa" })],
     );
+    await publishWorkingCopy(pool, "muldoon-dental", "home");
     try {
       const r = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
       expect(r.status).toBe(200);
@@ -165,6 +185,7 @@ d("page renderer catch-all (integration)", () => {
           WHERE site_id = (SELECT id FROM sites WHERE slug='muldoon-dental')
             AND slug = 'home'`,
       );
+      await publishWorkingCopy(pool, "muldoon-dental", "home");
     }
   });
 
@@ -200,6 +221,7 @@ d("page renderer catch-all (integration)", () => {
         `UPDATE pages SET blocks = $1::jsonb WHERE site_id = $2 AND slug = 'home'`,
         [JSON.stringify(newBlocks), muldoonId],
       );
+      await publishWorkingCopy(pool, "muldoon-dental", "home");
 
       const r = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
       expect(r.status).toBe(200);
@@ -220,7 +242,64 @@ d("page renderer catch-all (integration)", () => {
         `UPDATE pages SET blocks = $1::jsonb WHERE site_id = $2 AND slug = 'home'`,
         [JSON.stringify(originalBlocks), muldoonId],
       );
+      await publishWorkingCopy(pool, "muldoon-dental", "home");
       await pool.query(`DELETE FROM media_assets WHERE id = $1`, [assetId]);
+    }
+  });
+
+  // ---------- D301 — snapshot-on-publish ----------
+
+  it("D301: after a post-publish edit, the live site serves the SNAPSHOT, not the working blocks", async () => {
+    const muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    const before = await pool.query<{ blocks: unknown[] }>(
+      `SELECT blocks FROM pages WHERE site_id = $1 AND slug = 'home'`,
+      [muldoonId],
+    );
+    try {
+      // Simulate the agent / inline editor: mutate working blocks, DON'T publish.
+      await pool.query(
+        `UPDATE pages SET blocks = $1::jsonb WHERE site_id = $2 AND slug = 'home'`,
+        [
+          JSON.stringify([
+            { id: "leak-1", type: "rich-text", props: { html: "<p>UNPUBLISHED DRAFT EDIT</p>", max_width: "medium" } },
+          ]),
+          muldoonId,
+        ],
+      );
+      const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.status).toBe(200);
+      // Live still serves the published snapshot…
+      expect(res.text).toContain("Modern dental care, gentle hands.");
+      // …and the draft edit did NOT leak.
+      expect(res.text).not.toContain("UNPUBLISHED DRAFT EDIT");
+    } finally {
+      await pool.query(
+        `UPDATE pages SET blocks = $1::jsonb WHERE site_id = $2 AND slug = 'home'`,
+        [JSON.stringify(before.rows[0].blocks), muldoonId],
+      );
+      await publishWorkingCopy(pool, "muldoon-dental", "home");
+    }
+  });
+
+  it("D301: a published row with a NULL snapshot fails closed (404) — never leaks the working copy", async () => {
+    const muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+       VALUES ($1, 'no-snapshot', 'No Snapshot', '[]'::jsonb, '{}'::jsonb, 'published')
+       RETURNING id`,
+      [muldoonId],
+    );
+    try {
+      const res = await request(app)
+        .get("/no-snapshot")
+        .set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.status).toBe(404);
+    } finally {
+      await pool.query(`DELETE FROM pages WHERE id = $1`, [ins.rows[0].id]);
     }
   });
 
