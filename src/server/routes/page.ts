@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { pool as defaultPool } from "../db.js";
 import { resolveSite } from "../../middleware/resolveSite.js";
 import { flagAdminHost } from "../../middleware/flagAdminHost.js";
-import { renderNotFound, renderPage, type PageRecord } from "../render-page.js";
+import { renderComingSoon, renderNotFound, renderPage, type PageRecord } from "../render-page.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { resolveOgImage } from "../seo/og-image.js";
 import { parseSeoLoose } from "../seo/schema.js";
@@ -52,7 +52,13 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
       );
 
       if (result.rowCount === 0) {
-        const { html, status } = renderNotFound(req.site);
+        // D904: no published home means the site's ROOT — the exact URL the
+        // operator was handed at provisioning — used to be a 404 error page
+        // until first publish. A missing home is a deliberate "nothing
+        // published yet" state, so the root renders a branded, noindex
+        // coming-soon instead. Non-home slugs keep the honest 404.
+        const { html, status } =
+          slug === "home" ? renderComingSoon(req.site) : renderNotFound(req.site);
         res.status(status).type("text/html").send(html);
         return;
       }

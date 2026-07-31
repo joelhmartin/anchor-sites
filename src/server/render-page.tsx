@@ -346,6 +346,40 @@ export function renderPage(
   });
 }
 
+/**
+ * D904 — a provisioned site with zero published home is a deliberate state,
+ * not an error: the live URL is handed to the operator the moment
+ * provisioning is announced, well before first publish (and W1.3 makes
+ * "unpublished" a real state again). Branded (site shell + brand tokens),
+ * minimal, noindex, and HTTP 200 — the site exists; there is simply nothing
+ * published yet.
+ */
+export function renderComingSoon(site: ResolvedSite): { html: string; status: number } {
+  const bodyHtml = renderShellContent(
+    site,
+    <div className="ac-coming-soon">
+      <h1>{site.display_name}</h1>
+      <p>Coming soon.</p>
+      <p className="ac-coming-soon__sub">This site is being prepared — check back shortly.</p>
+    </div>,
+  );
+  const extraCss = `
+    .ac-coming-soon { max-width: 40rem; margin: 6rem auto; padding: 0 1.5rem; text-align: center; }
+    .ac-coming-soon h1 { color: var(--theme-main, #111); margin: 0 0 0.75rem; }
+    .ac-coming-soon p { margin: 0 0 0.25rem; font-size: 1.125rem; }
+    .ac-coming-soon__sub { color: #777; font-size: 0.875rem; }
+  `;
+  return shell({
+    site,
+    title: `${site.display_name} — coming soon`,
+    bodyHtml,
+    status: 200,
+    extraCss,
+    // Never index a placeholder.
+    headExtra: `<meta name="robots" content="noindex" />`,
+  });
+}
+
 export function renderNotFound(site: ResolvedSite): { html: string; status: number } {
   const bodyHtml = renderShellContent(
     site,

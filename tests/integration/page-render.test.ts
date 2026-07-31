@@ -303,14 +303,47 @@ d("page renderer catch-all (integration)", () => {
     }
   });
 
-  it("draft pages are not served", async () => {
-    // flip muldoon home to draft, request it, then restore.
+  it("draft pages are not served (non-home slugs still 404)", async () => {
+    const muldoonId = (
+      await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug='muldoon-dental'`)
+    ).rows[0].id;
+    const ins = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+       VALUES ($1, 'draft-only', 'Draft Only', '[]'::jsonb, '{}'::jsonb, 'draft')
+       RETURNING id`,
+      [muldoonId],
+    );
+    try {
+      const res = await request(app)
+        .get("/draft-only")
+        .set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.status).toBe(404);
+      expect(res.text).toMatch(/Page not found/);
+    } finally {
+      await pool.query(`DELETE FROM pages WHERE id = $1`, [ins.rows[0].id]);
+    }
+  });
+
+  // ---------- D904 — deliberate "coming soon" for an unpublished root ----------
+
+  it("D904: a site with no published home serves a branded, noindex 'coming soon' at the root — not a 404", async () => {
+    // flip muldoon home to draft, request "/", then restore.
     await pool.query(
       `UPDATE pages SET status = 'draft' WHERE site_id = (SELECT id FROM sites WHERE slug='muldoon-dental') AND slug = 'home'`,
     );
     try {
       const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
+      expect(res.text).toMatch(/coming soon/i);
+      // Deliberate page, not the 404 branch…
+      expect(res.text).not.toMatch(/Page not found/);
+      // …wearing the site's brand…
+      expect(res.text).toContain("Muldoon Dental");
+      expect(res.text).toMatch(/--theme-main:\s*#0a3d62/);
+      // …and never indexed.
+      expect(res.text).toContain('<meta name="robots" content="noindex" />');
+      // The draft home's content must NOT leak into the placeholder.
+      expect(res.text).not.toContain("Modern dental care, gentle hands.");
     } finally {
       await pool.query(
         `UPDATE pages SET status = 'published' WHERE site_id = (SELECT id FROM sites WHERE slug='muldoon-dental') AND slug = 'home'`,
