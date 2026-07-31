@@ -195,6 +195,38 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(res.text).not.toContain("ctm-test-123");
   });
 
+  // D1201 (W2-SEC) — the editor (the ?edit=1 SSR preview) must NEVER render
+  // a live crm_form embed: EditModeProvider wraps the block tree, and the
+  // CrmForm component consumes that context to render its placeholder card
+  // instead. The plain preview keeps the real embed (it is sandboxed +
+  // script-blocked by this route's CSP, and it's what "preview" means).
+  it("edit mode renders the crm_form placeholder, never the live embed [D1201]", async () => {
+    const site = await db.seedSite("inline-preview-crmform");
+    const page = await db.seedPage(site.id, "home", [
+      {
+        id: "f1",
+        type: "crm_form",
+        props: {
+          embed_code:
+            '<form action="/api/leads" method="post"><input type="text" name="name" /></form>',
+          label: "Contact",
+        },
+      },
+    ]);
+
+    const edit = await auth(
+      request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview?edit=1&bridge=tok_crm1`),
+    );
+    expect(edit.status).toBe(200);
+    expect(edit.text).toContain("[CRM Form: Contact]");
+    expect(edit.text).not.toContain('action="/api/leads"');
+
+    const plain = await auth(request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview`));
+    expect(plain.status).toBe(200);
+    expect(plain.text).toContain('action="/api/leads"');
+    expect(plain.text).not.toContain("[CRM Form: Contact]");
+  });
+
   it("?edit=1 with a malformed bridge token 400s", async () => {
     const site = await db.seedSite("inline-preview-bad-bridge");
     const page = await db.seedPage(site.id, "home", heroAndRichText);

@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CrmForm } from "./CrmForm.js";
 import { crmFormSchema } from "./schema.js";
+import { EditModeProvider } from "../../editable.js";
 
 describe("CrmForm block", () => {
   it("SSR path: renders embed_code as innerHTML", () => {
@@ -33,6 +34,32 @@ describe("CrmForm block", () => {
     const props = crmFormSchema.parse({ embed_code: '<form data-secret="yes"></form>' });
     const { container } = render(<CrmForm {...props} isEditorPreview />);
     expect(container.querySelector("form")).toBeNull();
+  });
+
+  // D1201 (W2-SEC) — the workspace editor IS the SSR preview wrapped in
+  // EditModeProvider (render-page.tsx). The context alone must flip the
+  // placeholder: the editor never executes a live operator/AI-authored embed.
+  describe("[D1201] EditModeContext renders the placeholder without any prop", () => {
+    it("edit mode: placeholder card, embed_code NOT in the DOM", () => {
+      const props = crmFormSchema.parse({
+        embed_code: '<form data-live="yes"><input name="a" /></form>',
+        label: "Contact",
+      });
+      const { container } = render(
+        <EditModeProvider>
+          <CrmForm {...props} />
+        </EditModeProvider>,
+      );
+      expect(screen.getByText("[CRM Form: Contact]")).toBeInTheDocument();
+      expect(container.querySelector("form")).toBeNull();
+      expect(container.innerHTML).not.toContain("data-live");
+    });
+
+    it("outside the provider the SSR embed path is unchanged", () => {
+      const props = crmFormSchema.parse({ embed_code: "<form data-crm><input /></form>" });
+      const { container } = render(<CrmForm {...props} />);
+      expect(container.querySelector("form[data-crm]")).not.toBeNull();
+    });
   });
 
   it("has ac-crm-form root class in both modes", () => {

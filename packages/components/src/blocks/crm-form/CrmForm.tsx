@@ -1,4 +1,6 @@
+import * as React from "react";
 import type { CrmFormProps } from "./schema.js";
+import { EditModeContext } from "../../editable.js";
 
 /**
  * D-053 — CRM embed block.
@@ -9,15 +11,21 @@ import type { CrmFormProps } from "./schema.js";
  * embed string, outside React's event system.
  *
  * Editor preview path: a styled placeholder card.
- * Detected via `isEditorPreview` prop so the Puck editor never renders
- * a live form-in-editor, which would violate the editor constraint.
+ * D1201 (W2-SEC) — the workspace editor is the SSR preview wrapped in
+ * `EditModeProvider` (render-page.tsx), so the component consumes
+ * `EditModeContext` directly: in edit mode the live embed HTML is never
+ * rendered (an editor must not execute operator/AI-authored embeds — and a
+ * live form under the click-to-edit overlay would be a submit trap anyway).
+ * The `isEditorPreview` prop remains for editors that inject props instead
+ * of context (buildPuckConfig honors the manifest's `requiresEditorWrapper`).
  */
 export function CrmForm({
   embed_code,
   label,
   isEditorPreview = false,
 }: CrmFormProps & { isEditorPreview?: boolean }) {
-  if (isEditorPreview) {
+  const editMode = React.useContext(EditModeContext);
+  if (isEditorPreview || editMode) {
     return (
       <div className="ac-crm-form ac-crm-form--preview">
         <div
