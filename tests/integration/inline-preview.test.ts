@@ -162,6 +162,26 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(res.text).not.toContain("preview?token=tok&amp;edit=1");
   });
 
+  // Previews must never inject third-party tracking: the sandboxed iframe
+  // (no allow-same-origin) makes cookie-writing scripts throw on load, and a
+  // draft view is not real traffic (operator console report, 2026-07-30).
+  it("preview HTML omits CTM/analytics scripts even when the site has them enabled", async () => {
+    const site = await db.seedSite("inline-preview-notrack");
+    const page = await db.seedPage(site.id, "home", heroAndRichText);
+    await db
+      .getPool()
+      .query(
+        `UPDATE sites SET ctm_account_id = 'ctm-test-123', analytics_disabled = false WHERE id = $1`,
+        [site.id],
+      );
+
+    const res = await auth(request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview`));
+
+    expect(res.status).toBe(200);
+    expect(res.text).not.toContain("calltracking");
+    expect(res.text).not.toContain("ctm-test-123");
+  });
+
   it("?edit=1 with a malformed bridge token 400s", async () => {
     const site = await db.seedSite("inline-preview-bad-bridge");
     const page = await db.seedPage(site.id, "home", heroAndRichText);
@@ -175,3 +195,4 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(res.status).toBe(400);
   });
 });
+
