@@ -51,8 +51,14 @@ export class GoDaddyDnsProvider implements DnsProvider {
     } catch {
       body = text;
     }
-    // 404 is a normal "no such record" answer, not an error.
-    if (!res.ok && res.status !== 404) {
+    // D1001: 404 is a normal "no such record" answer ONLY for reads. For a
+    // write (PUT/DELETE), a 404 means GoDaddy rejected it — e.g. the zone
+    // isn't hosted here at all (UNKNOWN_DOMAIN: the documented
+    // anchorcorps.com case, whose zone lives on Kinsta DNS). The old
+    // behavior reported "created"/silent success with zero records written.
+    const method = (init.method ?? "GET").toUpperCase();
+    const benign404 = res.status === 404 && method === "GET";
+    if (!res.ok && !benign404) {
       const detail = typeof body === "string" ? body : JSON.stringify(body);
       throw new Error(`GoDaddy ${res.status} ${path}: ${detail}`);
     }
@@ -86,11 +92,31 @@ export class GoDaddyDnsProvider implements DnsProvider {
     return existing.some((r) => normalizeData(record.type, r.data) === data);
   }
 
+  /**
+   * D1022: remove exactly the record we created. GoDaddy's DELETE at
+   * `/records/{type}/{name}` drops the ENTIRE recordset at that name/type
+   * regardless of value — destroying any co-resident record (e.g. multiple
+   * A values). GoDaddy has no per-value delete, so: read the set, filter
+   * out the target value, PUT the remainder — and only when the target was
+   * the sole value is the whole-set DELETE issued.
+   */
   async removeRecord(zone: string, record: DnsRecord): Promise<void> {
     const name = relativeName(record.name, zone);
-    await this.req(
-      `/v1/domains/${encodeURIComponent(zone)}/records/${record.type}/${encodeURIComponent(name)}`,
-      { method: "DELETE" },
-    );
+    const data = normalizeData(record.type, record.data);
+    const path = `/v1/domains/${encodeURIComponent(zone)}/records/${record.type}/${encodeURIComponent(name)}`;
+
+    const existing = await this.getRecords(zone, record.type, name);
+    if (existing.length === 0) return; // nothing at name/type — idempotent
+    const remainder = existing.filter((r) => normalizeData(record.type, r.data) !== data);
+    if (remainder.length === existing.length) return; // target value absent — not ours to touch
+
+    if (remainder.length === 0) {
+      await this.req(path, { method: "DELETE" });
+    } else {
+      await this.req(path, {
+        method: "PUT",
+        body: JSON.stringify(remainder.map((r) => ({ data: r.data, ttl: r.ttl ?? 3600 }))),
+      });
+    }
   }
 }

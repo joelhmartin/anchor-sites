@@ -76,9 +76,12 @@ describe("GoDaddyDnsProvider.verifyRecord", () => {
   });
 });
 
-describe("GoDaddyDnsProvider.removeRecord", () => {
-  it("issues a DELETE to the relative record path", async () => {
-    const fetchMock = mockFetch(() => ({ status: 200, body: undefined }));
+describe("GoDaddyDnsProvider.removeRecord (D1022 — remove exactly the record we created)", () => {
+  it("DELETEs the recordset when the target value is the only one present", async () => {
+    const fetchMock = mockFetch((_url, init) => {
+      if (init?.method === "DELETE") return { status: 204, body: undefined };
+      return { status: 200, body: [{ data: "ghs.googlehosted.com." }] };
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     await new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", record);
@@ -90,11 +93,78 @@ describe("GoDaddyDnsProvider.removeRecord", () => {
     );
   });
 
-  it("resolves without throwing on a 404 (idempotent removal)", async () => {
+  it("PUTs the remainder (never DELETE) when co-resident values exist at the same name/type", async () => {
+    const aRecord = { name: "muldoon-dental.sites.anchorcorps.com.", type: "A", data: "1.1.1.1" };
+    const fetchMock = mockFetch((_url, init) => {
+      if (init?.method === "PUT") return { status: 200, body: undefined };
+      return {
+        status: 200,
+        body: [
+          { data: "1.1.1.1", ttl: 600 },
+          { data: "2.2.2.2", ttl: 600 },
+        ],
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", aRecord);
+
+    expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit)?.method === "DELETE")).toBe(false);
+    const put = fetchMock.mock.calls.find((c) => (c[1] as RequestInit)?.method === "PUT")!;
+    expect(put).toBeDefined();
+    expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual([
+      { data: "2.2.2.2", ttl: 600 },
+    ]);
+  });
+
+  it("no-ops (neither PUT nor DELETE) when the target value is not in the recordset", async () => {
+    const fetchMock = mockFetch(() => ({ status: 200, body: [{ data: "other.example.com." }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", record);
+
+    expect(
+      fetchMock.mock.calls.filter((c) =>
+        ["PUT", "DELETE"].includes(((c[1] as RequestInit)?.method ?? "GET") as string),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("resolves without throwing on a 404 (idempotent removal — nothing at name/type)", async () => {
     vi.stubGlobal("fetch", mockFetch(() => ({ status: 404, body: { code: "NOT_FOUND" } })));
     await expect(
       new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", record),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("GoDaddyDnsProvider 404 honesty (D1001 — tolerate 404 only on GET)", () => {
+  it("ensureRecord THROWS when the PUT 404s (zone not hosted by GoDaddy — the anchorcorps.com case)", async () => {
+    // GET answers 404 ("no such record" — benign); the PUT then 404s too
+    // because GoDaddy has no zone file at all. The old adapter reported
+    // "created" with zero records written.
+    const fetchMock = mockFetch((_url, init) =>
+      init?.method === "PUT"
+        ? { status: 404, body: { code: "UNKNOWN_DOMAIN" } }
+        : { status: 404, body: { code: "UNKNOWN_DOMAIN" } },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new GoDaddyDnsProvider(CFG).ensureRecord("anchorcorps.com", record),
+    ).rejects.toThrow(/GoDaddy 404/);
+  });
+
+  it("removeRecord THROWS when the DELETE itself 404s (write rejected, not a benign miss)", async () => {
+    const fetchMock = mockFetch((_url, init) => {
+      if (init?.method === "DELETE") return { status: 404, body: { code: "UNKNOWN_DOMAIN" } };
+      return { status: 200, body: [{ data: "ghs.googlehosted.com." }] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new GoDaddyDnsProvider(CFG).removeRecord("anchorcorps.com", record),
+    ).rejects.toThrow(/GoDaddy 404/);
   });
 });
 
