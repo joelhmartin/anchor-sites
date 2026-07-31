@@ -138,6 +138,42 @@ d("POST /api/sites/:siteId/media/upload-url (P3-T3.9)", () => {
     expect(row.rows[0].variants_status).toBe("pending");
   });
 
+  // ── W2-CONC / D509: single-statement insert, no shared 'pending' key ──
+
+  it("D509: concurrent upload-url calls all succeed (no shared-placeholder unique_violation), and a stranded legacy 'pending' row no longer blocks anything", async () => {
+    // Simulate what the OLD two-step flow left behind after a crash between
+    // its INSERT and UPDATE: a row whose gcs_key is the literal 'pending'.
+    // Under the old code, the next INSERT of 'pending' collided with it —
+    // every future upload on the whole platform 500'd.
+    await pool.query(
+      `INSERT INTO media_assets (site_id, gcs_key, content_type, alt)
+       VALUES ($1, 'pending', 'image/jpeg', '')`,
+      [muldoonSiteId],
+    );
+
+    const results = await Promise.all(
+      [1, 2, 3].map(() =>
+        request(app)
+          .post(`/api/sites/${muldoonSiteId}/media/upload-url`)
+          .set("X-Admin-Token", ADMIN_TOKEN)
+          .send({ content_type: "image/jpeg", alt: "concurrent" }),
+      ),
+    );
+    for (const r of results) {
+      expect(r.status).toBe(200);
+      // The row is born with its final id-derived key — never 'pending'.
+      expect(r.body.gcs_key).toBe(`originals/${muldoonSiteId}/${r.body.asset_id}.jpg`);
+      const row = await pool.query<{ gcs_key: string }>(
+        `SELECT gcs_key FROM media_assets WHERE id = $1`,
+        [r.body.asset_id],
+      );
+      expect(row.rows[0].gcs_key).toBe(`originals/${muldoonSiteId}/${r.body.asset_id}.jpg`);
+    }
+
+    // Cleanup the simulated legacy strand so other tests never trip on it.
+    await pool.query(`DELETE FROM media_assets WHERE gcs_key = 'pending'`);
+  });
+
   it("rejects out-of-range focal_point coords", async () => {
     const r = await request(app)
       .post(`/api/sites/${muldoonSiteId}/media/upload-url`)

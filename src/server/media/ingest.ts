@@ -1,4 +1,5 @@
 import net from "node:net";
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { getStorage, MEDIA_BUCKET, extForContentType } from "./storage.js";
 import { MEDIA_PROCESS_UPLOAD } from "../jobs/index.js";
@@ -249,23 +250,22 @@ export async function ingestImageFromUrl(
     throw new Error(`unsupported image content-type: ${contentType}`);
   }
 
-  // Mirrors the media.ts route insert (site_id, gcs_key placeholder,
-  // content_type, alt, focal_point) — alt is NOT NULL in the schema, and
+  // Mirrors the media.ts route insert — alt is NOT NULL in the schema, and
   // focal_point is nullable jsonb (the agent never picks one). D1117 adds
   // source_url + credit so attribution/provenance survive the import and
   // the dedupe lookup above has something to match on.
-  const ins = await pool.query<{ id: string }>(
-    `INSERT INTO media_assets (site_id, gcs_key, content_type, alt, focal_point, source_url, credit)
-     VALUES ($1, 'pending', $2, $3, NULL, $4, $5)
-     RETURNING id`,
-    [input.siteId, contentType, input.alt, input.url, input.credit ?? null],
-  );
-  const assetId = ins.rows[0].id;
+  //
+  // D509 (W2-CONC): ONE INSERT with an app-side uuid and the id-derived
+  // gcs_key, same as the route — the old INSERT-'pending'-then-UPDATE pair
+  // collided on the UNIQUE gcs_key under concurrency and could strand a
+  // 'pending'-keyed row that blocked every later upload platform-wide.
+  const assetId = randomUUID();
   const gcsKey = `originals/${input.siteId}/${assetId}.${ext}`;
-
-  // Replace the placeholder gcs_key now that we know the asset id (same
-  // two-step pattern as the route: insert, then fill in the id-derived key).
-  await pool.query(`UPDATE media_assets SET gcs_key = $1 WHERE id = $2`, [gcsKey, assetId]);
+  await pool.query(
+    `INSERT INTO media_assets (id, site_id, gcs_key, content_type, alt, focal_point, source_url, credit)
+     VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)`,
+    [assetId, input.siteId, gcsKey, contentType, input.alt, input.url, input.credit ?? null],
+  );
 
   const storage = deps.storage ?? getStorage();
   await storage

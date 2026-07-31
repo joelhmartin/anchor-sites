@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -131,22 +132,26 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
           return;
         }
 
-        const ins = await pool.query<{ id: string }>(
-          `INSERT INTO media_assets (site_id, gcs_key, content_type, alt, focal_point)
-           VALUES ($1, 'pending', $2, $3, $4::jsonb)
-           RETURNING id`,
+        // D509 (W2-CONC): ONE INSERT with an app-side uuid and the id-derived
+        // gcs_key — never the old two-step INSERT-'pending'-then-UPDATE.
+        // That shape put a shared magic placeholder into a UNIQUE column:
+        // two concurrent upload-url calls collided with unique_violation
+        // (500), and a crash between the two statements stranded a
+        // 'pending'-keyed row that blocked ALL future uploads platform-wide.
+        const assetId = randomUUID();
+        const gcsKey = `originals/${siteId}/${assetId}.${ext}`;
+        await pool.query(
+          `INSERT INTO media_assets (id, site_id, gcs_key, content_type, alt, focal_point)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
           [
+            assetId,
             siteId,
+            gcsKey,
             content_type,
             alt,
             focal_point ? JSON.stringify(focal_point) : null,
           ],
         );
-        const assetId = ins.rows[0].id;
-        const gcsKey = `originals/${siteId}/${assetId}.${ext}`;
-
-        // Replace the placeholder gcs_key now that we know the asset id.
-        await pool.query(`UPDATE media_assets SET gcs_key = $1 WHERE id = $2`, [gcsKey, assetId]);
 
         const signed: SignedUploadUrl = await sign({ gcsKey, contentType: content_type });
 
