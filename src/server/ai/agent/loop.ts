@@ -292,6 +292,36 @@ async function buildApiMessages(
   return messages;
 }
 
+/**
+ * W1.5 / D1108 — incremental prompt caching on the growing message prefix.
+ * cache_control previously sat only on system+catalog, so the message
+ * history — every full get_page dump and tool result, re-sent on all of up
+ * to ~120 model calls per user message — was uncached input on every call
+ * (near-quadratic spend inside a build). Marking the LAST content block of
+ * the LAST message is the standard incremental-caching pattern: each call
+ * caches the whole prefix up to and including that block, and the next call
+ * (whose prefix extends it by one assistant+tool round) reads it back.
+ * Budget: 1 breakpoint here + 1 on system = 2 of the 4 allowed. Non-mutating
+ * (the input arrays come straight from DB rows). Exported for unit tests.
+ */
+export function withTrailingCacheBreakpoint(
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+  const last = messages[messages.length - 1];
+  if (!Array.isArray(last.content) || last.content.length === 0) return messages;
+  const blocks = last.content as Record<string, unknown>[];
+  const marked = [...blocks];
+  marked[marked.length - 1] = {
+    ...marked[marked.length - 1],
+    cache_control: { type: "ephemeral" },
+  };
+  return [
+    ...messages.slice(0, -1),
+    { ...last, content: marked } as unknown as Anthropic.MessageParam,
+  ];
+}
+
 async function persistAssistantText(
   pool: Pool, conversationId: string, text: string, onEvent: (e: AgentTurnEvent) => void,
 ): Promise<void> {
@@ -490,7 +520,14 @@ export async function runAgentTurn(input: {
       for (;;) {
         try {
           ({ message } = await runMessage(
-            { system, messages, tools, tool_choice: { type: "auto" }, max_tokens: 8192 },
+            {
+              system,
+              // D1108 — see withTrailingCacheBreakpoint.
+              messages: withTrailingCacheBreakpoint(messages),
+              tools,
+              tool_choice: { type: "auto" },
+              max_tokens: 8192,
+            },
             { client: input.client, env },
           ));
           break;

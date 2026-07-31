@@ -7,6 +7,7 @@ import {
 } from "./repo.js";
 import {
   runAgentTurn, parsePositiveIntEnv, describeAnthropicError, AGENT_SYSTEM_INTRO,
+  withTrailingCacheBreakpoint,
   type AgentTurnEvent, type AgentTurnResult,
 } from "./loop.js";
 
@@ -99,6 +100,38 @@ describe("AGENT_SYSTEM_INTRO design playbook (D1100)", () => {
   it("keeps adapt-don't-rebuild for pre-applied templates", () => {
     expect(AGENT_SYSTEM_INTRO).toMatch(/adapt/i);
     expect(AGENT_SYSTEM_INTRO).toMatch(/never delete-and-rebuild/i);
+  });
+});
+
+// W1.5 / D1108 — pure-function coverage for the trailing cache breakpoint.
+// Ungated (no DB needed).
+describe("withTrailingCacheBreakpoint (D1108)", () => {
+  it("marks only the last content block of the last message, without mutating the input", () => {
+    const input = [
+      { role: "user" as const, content: [{ type: "text", text: "brief" }] },
+      {
+        role: "user" as const,
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "a" },
+          { type: "tool_result", tool_use_id: "t2", content: "b" },
+        ],
+      },
+    ];
+    const out = withTrailingCacheBreakpoint(input as never);
+    const flat = out.flatMap((m) => m.content as Record<string, unknown>[]);
+    const marked = flat.filter((b) => b.cache_control !== undefined);
+    expect(marked).toHaveLength(1);
+    expect(flat[flat.length - 1].cache_control).toEqual({ type: "ephemeral" });
+    // Non-mutating: the original DB-row-backed arrays are untouched.
+    expect(
+      (input[1].content as Record<string, unknown>[])[1].cache_control,
+    ).toBeUndefined();
+  });
+
+  it("passes through empty message lists and non-array content unchanged", () => {
+    expect(withTrailingCacheBreakpoint([])).toEqual([]);
+    const stringContent = [{ role: "user" as const, content: "plain" }];
+    expect(withTrailingCacheBreakpoint(stringContent as never)).toEqual(stringContent);
   });
 });
 
@@ -481,8 +514,15 @@ d("runAgentTurn", () => {
     expect(firstCall.max_tokens).toBe(8192);
     expect(firstCall.tool_choice).toEqual({ type: "auto" });
     expect(firstCall.tools.length).toBeGreaterThan(0);
+    // D1108: the sole (trailing) message block also carries the incremental
+    // cache breakpoint.
     expect(firstCall.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: "Update the homepage copy" }] },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Update the homepage copy", cache_control: { type: "ephemeral" } },
+        ],
+      },
     ]);
 
     // Second call's history must include the persisted tool-result row
@@ -930,6 +970,44 @@ d("runAgentTurn", () => {
       role: "user", content: [{ type: "text", text: "build the whole site" }],
     });
     expect(payload.messages).toHaveLength(51); // 1 user + 25*(assistant, tool)
+  });
+
+  it("D1108: every model call marks the trailing message block with cache_control while system keeps its own breakpoint", async () => {
+    const { site, conv } = await seedConvo(`loop-cache-mark-${runId}`);
+
+    const { client, create } = makeFakeClient([
+      cannedMessage({
+        content: [toolUseBlock("c1", "get_site_overview", {})],
+        stop_reason: "tool_use",
+        usage: usage(100, 20),
+      }),
+      cannedMessage({ content: [textBlock("done")], stop_reason: "end_turn", usage: usage(50, 10) }),
+    ]);
+
+    await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+    });
+
+    expect(create).toHaveBeenCalledTimes(2);
+    for (const call of create.mock.calls) {
+      const payload = call[0] as {
+        system: { cache_control?: unknown }[];
+        messages: { content: Record<string, unknown>[] }[];
+      };
+      // System+catalog breakpoint intact (pre-existing behavior).
+      expect(payload.system[payload.system.length - 1].cache_control).toEqual({ type: "ephemeral" });
+      // Exactly ONE message-side breakpoint, on the trailing block — the
+      // incremental-caching pattern (2 of the 4 allowed breakpoints total).
+      const blocks = payload.messages.flatMap((m) => m.content);
+      const marked = blocks.filter((b) => b.cache_control !== undefined);
+      expect(marked).toHaveLength(1);
+      expect(blocks[blocks.length - 1].cache_control).toEqual({ type: "ephemeral" });
+    }
+    // The second call's context grew by the assistant+tool round, so its
+    // marked block differs from the first call's — the breakpoint advances.
+    const first = create.mock.calls[0][0] as { messages: unknown[] };
+    const second = create.mock.calls[1][0] as { messages: unknown[] };
+    expect((second.messages as unknown[]).length).toBeGreaterThan((first.messages as unknown[]).length);
   });
 
   it("reports a turn error instead of calling the API when a conversation has no user row at all", async () => {
