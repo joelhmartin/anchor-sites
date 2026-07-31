@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchMe, signInWithGoogle, signOut } from "./session.js";
+import { fetchMe, signInWithGoogle, signOut, signOutEverywhere } from "./session.js";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -54,6 +54,31 @@ describe("session helpers (P8-T8.5)", () => {
     global.fetch = f as unknown as typeof fetch;
     await signOut();
     expect(f).toHaveBeenCalledWith("/api/auth/sign-out", expect.objectContaining({ method: "POST" }));
+    expect(localStorage.getItem("anchorcorps.admin_token")).toBeNull();
+  });
+
+  // D805 — "sign out everywhere" must revoke ALL server sessions first, then
+  // run the normal local sign-out.
+  it("signOutEverywhere revokes all sessions, then signs out locally", async () => {
+    localStorage.setItem("anchorcorps.admin_token", "tok");
+    const f = vi.fn(async (..._args: unknown[]) => new Response(null, { status: 200 }));
+    global.fetch = f as unknown as typeof fetch;
+    await signOutEverywhere();
+    const urls = f.mock.calls.map((c) => c[0]);
+    expect(urls[0]).toBe("/api/auth/revoke-sessions");
+    expect(urls).toContain("/api/auth/sign-out");
+    expect(localStorage.getItem("anchorcorps.admin_token")).toBeNull();
+  });
+
+  it("signOutEverywhere still signs out locally when the revoke call fails (token-mode operator)", async () => {
+    localStorage.setItem("anchorcorps.admin_token", "tok");
+    const f = vi.fn(async (url: string) =>
+      url === "/api/auth/revoke-sessions"
+        ? new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })
+        : new Response(null, { status: 200 }),
+    );
+    global.fetch = f as unknown as typeof fetch;
+    await signOutEverywhere();
     expect(localStorage.getItem("anchorcorps.admin_token")).toBeNull();
   });
 });

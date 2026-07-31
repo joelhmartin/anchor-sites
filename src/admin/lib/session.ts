@@ -64,3 +64,23 @@ export async function signOut(): Promise<void> {
   );
   clearAdminToken();
 }
+
+/**
+ * D805 — "sign out everywhere": revoke ALL of this user's server sessions
+ * (Better-auth's `/revoke-sessions` deletes every auth_session row for the
+ * user), then run the normal local sign-out (clears this device's cookie +
+ * any break-glass token). Best-effort on the revoke call: a token-mode
+ * operator has no server session to revoke (the endpoint 401s — that's
+ * fine), and a network failure shouldn't strand the local sign-out.
+ * Other devices' cookieCache windows mean revocation lands within ≤60s
+ * (see studio-auth.ts's D817 note).
+ */
+export async function signOutEverywhere(): Promise<void> {
+  await fetch("/api/auth/revoke-sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "include",
+    body: "{}",
+  }).catch(() => undefined);
+  await signOut();
+}

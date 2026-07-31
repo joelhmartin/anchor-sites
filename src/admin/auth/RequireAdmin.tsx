@@ -3,7 +3,7 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { Spinner } from "../ui/spinner.js";
 import { clearSessionExpired } from "../lib/sessionExpiry.js";
 import { SessionExpiredDialog } from "./SessionExpiredDialog.js";
-import { useStudioSession } from "./useStudioSession.js";
+import { StudioSessionContext, useStudioSession } from "./useStudioSession.js";
 
 /**
  * Route guard (P8-T8.5 — D-034). Verifies the admin via `GET /api/me`, which
@@ -19,7 +19,8 @@ import { useStudioSession } from "./useStudioSession.js";
  * post-login destination doesn't re-carry a stale error.
  */
 export function RequireAdmin() {
-  const { status } = useStudioSession();
+  const session = useStudioSession();
+  const { status } = session;
   const location = useLocation();
 
   // D801 — a fresh successful probe means whatever raised the shared
@@ -57,10 +58,12 @@ export function RequireAdmin() {
   // D801: the expired-session dialog rides ALONGSIDE the outlet — when the
   // shared 401 signal fires mid-use it overlays the live SPA instead of
   // tearing it down, preserving unsaved editor state under it.
+  // D813: the resolved identity is provided down the tree (UserMenu renders
+  // it) instead of being fetched-and-dropped here.
   return (
-    <>
+    <StudioSessionContext.Provider value={session}>
       <Outlet />
       <SessionExpiredDialog />
-    </>
+    </StudioSessionContext.Provider>
   );
 }
