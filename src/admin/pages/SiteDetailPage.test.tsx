@@ -115,6 +115,24 @@ describe("SiteDetailPage (P4-T4.12) — management shell (served at /manage sinc
     await waitFor(() => expect(screen.getByText(/No site found for/)).toBeTruthy());
   });
 
+  // D911 — the live render strips "(placeholder)" from public surfaces; the
+  // Studio's job is to get the operator to RENAME, so the strip stops mattering.
+  it("nudges a rename when the display name still carries a placeholder marker", async () => {
+    const placeholderSite = { ...SITE, display_name: "Acme Dental (placeholder)" };
+    mockApi([placeholderSite], placeholderSite);
+    renderAt("acme");
+    await waitFor(() =>
+      expect(screen.getByText(/won’t appear on the live site — rename/)).toBeTruthy(),
+    );
+  });
+
+  it("shows no rename nudge for a real display name", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
+    expect(screen.queryByText(/rename/i)).toBeNull();
+  });
+
   it("does not mount any AI chat/preview affordance — that moved to WorkspacePage (Task B2)", async () => {
     mockApi([SITE], SITE, [
       { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },

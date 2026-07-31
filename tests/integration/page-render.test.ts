@@ -351,6 +351,21 @@ d("page renderer catch-all (integration)", () => {
     }
   });
 
+  // D911 — the muldoon seed's display_name is "Muldoon Dental (placeholder)"
+  // and that marker reached og:site_name, JSON-LD and the page chrome on a
+  // live index,follow page (verified live in the audit).
+  describe("D911 — placeholder markers never reach the public render", () => {
+    it("strips '(placeholder)' from og:site_name, JSON-LD and the body chrome", async () => {
+      const res = await request(app).get("/").set("Host", "muldoon-dental.sites.anchorcorps.com");
+      expect(res.status).toBe(200);
+      expect(res.text).not.toContain("(placeholder)");
+      expect(res.text).toContain('<meta property="og:site_name" content="Muldoon Dental" />');
+      expect(res.text).toContain('"name":"Muldoon Dental"');
+      // The header/footer chrome shows the clean name.
+      expect(res.text).toContain("Muldoon Dental");
+    });
+  });
+
   // D902 — normalizeSlug maps /home → the home page but never redirected, so
   // /home served a byte-identical duplicate of / with its own canonical
   // (verified live): one page, two indexable URLs, split canonicals.

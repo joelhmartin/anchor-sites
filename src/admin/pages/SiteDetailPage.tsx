@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
+import { hasPlaceholderMarker } from "../../shared/public-name.js";
 import type { SiteDetail, SiteListRow, SiteStatus } from "../lib/siteTypes.js";
 import { Badge } from "../ui/badge.js";
 import { Card, CardContent } from "../ui/card.js";
@@ -122,6 +123,15 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>
+        {/* D911 — the live render strips the "(placeholder)" seed marker from
+            public surfaces, but the honest fix is a real name; keep nudging
+            until the operator renames. */}
+        {site && hasPlaceholderMarker(site.display_name) && (
+          <p className="text-xs text-amber-600">
+            “(placeholder)” won’t appear on the live site — rename this site to its real name in
+            Settings.
+          </p>
+        )}
       </div>
 
       {loading && (

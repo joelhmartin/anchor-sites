@@ -2,6 +2,7 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { Pool } from "pg";
 import { pool as defaultPool } from "../server/db.js";
 import { hostnameForSlug, subdomainPattern } from "../config/domain.js";
+import { publicDisplayName } from "../shared/public-name.js";
 
 // Reserved per D-016 — Phase 7.5 will populate this from `site_plugins`. Empty
 // array in Phase 1 so downstream consumers can already iterate without retrofit.
@@ -182,7 +183,12 @@ function toResolvedSite(row: SiteRow, matched_via: ResolvedSite["matched_via"]):
   return {
     id: row.id,
     slug: row.slug,
-    display_name: row.display_name,
+    // D911 — resolveSite is the single gate every PUBLIC tenant surface goes
+    // through (pages, blog/events, sitemap, leads, previews), so stripping
+    // seed placeholder markers here keeps them out of og:site_name, JSON-LD,
+    // titles and the rendered chrome in one move. Admin APIs query `sites`
+    // directly and still see the raw name (the Studio nudges a rename).
+    display_name: publicDisplayName(row.display_name, row.slug),
     default_brand_tokens: row.default_brand_tokens ?? {},
     seo_defaults: row.seo_defaults ?? {},
     ctm_account_id: row.ctm_account_id ?? null,
