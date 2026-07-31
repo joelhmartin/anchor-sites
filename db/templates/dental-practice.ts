@@ -63,8 +63,8 @@ const footer = (pageSlug: string) => ({
       },
     ],
     social_links: [
-      { platform: "facebook", href: "https://facebook.com/willowbrookdentaltn" },
-      { platform: "instagram", href: "https://instagram.com/willowbrookdentaltn" },
+      { platform: "facebook", href: "#" },
+      { platform: "instagram", href: "#" },
     ],
     hours: "Mon–Thu 7:30am–5pm · Fri 8am–1pm · Sat–Sun Closed",
     small_print: "© 2026 Willowbrook Dental & TMJ Care. All rights reserved.",

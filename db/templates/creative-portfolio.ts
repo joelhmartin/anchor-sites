@@ -74,8 +74,8 @@ const footer = (pageSlug: string) => ({
       },
     ],
     social_links: [
-      { platform: "instagram", href: "https://instagram.com/marlowestudio" },
-      { platform: "twitter", href: "https://twitter.com/marlowestudio" },
+      { platform: "instagram", href: "#" },
+      { platform: "twitter", href: "#" },
     ],
     hours: "Currently booking into Q1 2027 — inquire for availability.",
     small_print: "© 2026 Marlowe Studio. All rights reserved.",

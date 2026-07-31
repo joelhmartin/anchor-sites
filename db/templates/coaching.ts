@@ -191,8 +191,8 @@ export const coaching: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "instagram", href: "https://instagram.com/crossroadscoachingco" },
-              { platform: "linkedin", href: "https://linkedin.com/company/crossroads-coaching" },
+              { platform: "instagram", href: "#" },
+              { platform: "linkedin", href: "#" },
             ],
             hours: "Mon–Thu 9am–5pm MT · Fri by appointment",
             small_print: "1901 Pearl Street, Boulder, CO 80302 · © 2026 Crossroads Coaching. All rights reserved.",
@@ -313,8 +313,8 @@ export const coaching: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "instagram", href: "https://instagram.com/crossroadscoachingco" },
-              { platform: "linkedin", href: "https://linkedin.com/company/crossroads-coaching" },
+              { platform: "instagram", href: "#" },
+              { platform: "linkedin", href: "#" },
             ],
             hours: "Mon–Thu 9am–5pm MT · Fri by appointment",
             small_print: "1901 Pearl Street, Boulder, CO 80302 · © 2026 Crossroads Coaching. All rights reserved.",
@@ -421,8 +421,8 @@ export const coaching: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "instagram", href: "https://instagram.com/crossroadscoachingco" },
-              { platform: "linkedin", href: "https://linkedin.com/company/crossroads-coaching" },
+              { platform: "instagram", href: "#" },
+              { platform: "linkedin", href: "#" },
             ],
             hours: "Mon–Thu 9am–5pm MT · Fri by appointment",
             small_print: "1901 Pearl Street, Boulder, CO 80302 · © 2026 Crossroads Coaching. All rights reserved.",
@@ -548,8 +548,8 @@ export const coaching: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "instagram", href: "https://instagram.com/crossroadscoachingco" },
-              { platform: "linkedin", href: "https://linkedin.com/company/crossroads-coaching" },
+              { platform: "instagram", href: "#" },
+              { platform: "linkedin", href: "#" },
             ],
             hours: "Mon–Thu 9am–5pm MT · Fri by appointment",
             small_print: "1901 Pearl Street, Boulder, CO 80302 · © 2026 Crossroads Coaching. All rights reserved.",

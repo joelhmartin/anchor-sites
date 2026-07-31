@@ -190,8 +190,8 @@ export const lawFirm: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "linkedin", href: "https://linkedin.com/company/ashford-voss-llp" },
-              { platform: "facebook", href: "https://facebook.com/ashfordvossllp" },
+              { platform: "linkedin", href: "#" },
+              { platform: "facebook", href: "#" },
             ],
             hours: "Mon-Fri 8:30am-5:30pm · Consultations by Appointment",
             small_print: "Georgia Bar Registered · © 2026 Ashford & Voss LLP. Attorney Advertising. Prior results do not guarantee a similar outcome.",
@@ -300,8 +300,8 @@ export const lawFirm: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "linkedin", href: "https://linkedin.com/company/ashford-voss-llp" },
-              { platform: "facebook", href: "https://facebook.com/ashfordvossllp" },
+              { platform: "linkedin", href: "#" },
+              { platform: "facebook", href: "#" },
             ],
             hours: "Mon-Fri 8:30am-5:30pm · Consultations by Appointment",
             small_print: "Georgia Bar Registered · © 2026 Ashford & Voss LLP. Attorney Advertising. Prior results do not guarantee a similar outcome.",
@@ -453,8 +453,8 @@ export const lawFirm: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "linkedin", href: "https://linkedin.com/company/ashford-voss-llp" },
-              { platform: "facebook", href: "https://facebook.com/ashfordvossllp" },
+              { platform: "linkedin", href: "#" },
+              { platform: "facebook", href: "#" },
             ],
             hours: "Mon-Fri 8:30am-5:30pm · Consultations by Appointment",
             small_print: "Georgia Bar Registered · © 2026 Ashford & Voss LLP. Attorney Advertising. Prior results do not guarantee a similar outcome.",
@@ -510,7 +510,7 @@ export const lawFirm: TemplateSeed = {
             heading: "Three decades of trial-ready advocacy.",
             stats: [
               { value: "38", label: "Years in practice" },
-              { value: "$85M+", label: "Recovered for clients" },
+              { value: "12", label: "Attorneys and staff" },
               { value: "24", label: "Trial verdicts" },
               { value: "1,200+", label: "Matters resolved" },
             ],
@@ -603,8 +603,8 @@ export const lawFirm: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "linkedin", href: "https://linkedin.com/company/ashford-voss-llp" },
-              { platform: "facebook", href: "https://facebook.com/ashfordvossllp" },
+              { platform: "linkedin", href: "#" },
+              { platform: "facebook", href: "#" },
             ],
             hours: "Mon-Fri 8:30am-5:30pm · Consultations by Appointment",
             small_print: "Georgia Bar Registered · © 2026 Ashford & Voss LLP. Attorney Advertising. Prior results do not guarantee a similar outcome.",
@@ -706,8 +706,8 @@ export const lawFirm: TemplateSeed = {
               },
             ],
             social_links: [
-              { platform: "linkedin", href: "https://linkedin.com/company/ashford-voss-llp" },
-              { platform: "facebook", href: "https://facebook.com/ashfordvossllp" },
+              { platform: "linkedin", href: "#" },
+              { platform: "facebook", href: "#" },
             ],
             hours: "Mon-Fri 8:30am-5:30pm · Consultations by Appointment",
             small_print: "Georgia Bar Registered · © 2026 Ashford & Voss LLP. Attorney Advertising. Prior results do not guarantee a similar outcome.",

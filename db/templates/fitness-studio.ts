@@ -63,8 +63,8 @@ function richFooter(id: string) {
         },
       ],
       social_links: [
-        { platform: "instagram" as const, href: "https://instagram.com/pulsefitnessdenver" },
-        { platform: "facebook" as const, href: "https://facebook.com/pulsefitnessdenver" },
+        { platform: "instagram" as const, href: "#" },
+        { platform: "facebook" as const, href: "#" },
       ],
       hours: "Mon–Fri 5:00am–9:00pm\nSat 7:00am–3:00pm\nSun 8:00am–1:00pm",
       small_print: "© 2026 Pulse Fitness Studio. 2020 Larimer Street, Denver, CO 80205.",

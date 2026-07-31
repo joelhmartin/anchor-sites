@@ -47,4 +47,39 @@ describe("template catalog invariants (W1.6)", () => {
       }
     });
   });
+
+  describe("D710 — no fabricated legal/identity artifacts", () => {
+    it("no EIN-shaped tax IDs anywhere in any template", () => {
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(/EIN\s*:?\s*\d{2}-\d{7}/i);
+      }
+    });
+
+    it("no license-number-shaped credentials", () => {
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(/Lic(?:ense)?\.?\s*#/i);
+      }
+    });
+
+    it("no dollar-figure results claims in stats bands", () => {
+      for (const t of allTemplates) {
+        for (const { page, block } of blocksOf(t)) {
+          if (block.type !== "stats-band") continue;
+          const stats = (block.props.stats ?? []) as { value?: string; label?: string }[];
+          for (const s of stats) {
+            expect(String(s.value ?? ""), `${t.slug}/${page} ${block.id}`).not.toMatch(
+              /\$\s*\d+(\.\d+)?\s*[MBK]/i,
+            );
+          }
+        }
+      }
+    });
+
+    it("social links never point real platforms at fictional handles", () => {
+      const realPlatforms = /https?:\/\/(www\.)?(facebook|instagram|twitter|x|linkedin|youtube|tiktok)\.com\//i;
+      for (const t of allTemplates) {
+        expect(templateJson(t), t.slug).not.toMatch(realPlatforms);
+      }
+    });
+  });
 });

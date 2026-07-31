@@ -49,8 +49,8 @@ const FOOTER_COLUMNS = [
 ];
 
 const SOCIAL_LINKS = [
-  { platform: "instagram" as const, href: "https://instagram.com/rowhouserecords" },
-  { platform: "facebook" as const, href: "https://facebook.com/rowhouserecords" },
+  { platform: "instagram" as const, href: "#" },
+  { platform: "facebook" as const, href: "#" },
 ];
 
 const HOURS = "Tue–Sat 11am–7pm · Sun 12–5pm · Closed Mon";
