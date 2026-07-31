@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Pool } from "pg";
 import { pool } from "../db.js";
 import {
   __resetStudioAuthForTests,
@@ -6,6 +7,7 @@ import {
   createStudioAuth,
   getStudioAuth,
   isAllowedStudioEmail,
+  makeSessionCreateGate,
   resolveStudioAuthMode,
   STUDIO_AUTH_BASE_PATH,
   STUDIO_AUTH_TABLES,
@@ -116,6 +118,54 @@ describe("team gate (isAllowedStudioEmail) — P8-T8.3 / D-034", () => {
       new Set(["a@b.com", "c@d.com"]),
     );
     expect(adminAllowedEmails({})).toEqual(new Set());
+  });
+});
+
+// D804 — the allowlist must be enforced at EVERY sign-in (session creation),
+// not only at first sign-in (user creation). Otherwise removing an
+// ADMIN_ALLOWED_EMAILS entry / shrinking STUDIO_ALLOWED_DOMAIN never stops an
+// already-created account's future Google sign-ins.
+describe("session-create gate (makeSessionCreateGate) — D804", () => {
+  function fakePool(rows: Array<{ email: string }>): Pool {
+    return { query: vi.fn(async () => ({ rows, rowCount: rows.length })) } as unknown as Pool;
+  }
+
+  it("allows session creation for a still-allowlisted email (returns undefined)", async () => {
+    const gate = makeSessionCreateGate({ pool: fakePool([{ email: "jmartin@anchorcorps.com" }]), env: {} });
+    await expect(gate({ userId: "u1" })).resolves.toBeUndefined();
+  });
+
+  it("BLOCKS session creation once the email is no longer allowed (returns false)", async () => {
+    const gate = makeSessionCreateGate({ pool: fakePool([{ email: "offboarded@gmail.com" }]), env: {} });
+    await expect(gate({ userId: "u1" })).resolves.toBe(false);
+  });
+
+  it("fails closed when the auth_user row is missing", async () => {
+    const gate = makeSessionCreateGate({ pool: fakePool([]), env: {} });
+    await expect(gate({ userId: "ghost" })).resolves.toBe(false);
+  });
+
+  it("honors env changes at sign-in time — the whole point of the directive", async () => {
+    const p = fakePool([{ email: "contractor@gmail.com" }]);
+    const allowed = makeSessionCreateGate({ pool: p, env: { ADMIN_ALLOWED_EMAILS: "contractor@gmail.com" } });
+    await expect(allowed({ userId: "u1" })).resolves.toBeUndefined();
+    const revoked = makeSessionCreateGate({ pool: p, env: { ADMIN_ALLOWED_EMAILS: "" } });
+    await expect(revoked({ userId: "u1" })).resolves.toBe(false);
+  });
+
+  it("is wired into the Better-auth instance's databaseHooks", () => {
+    const auth = createStudioAuth({ pool, env: GOOGLE_ENV });
+    expect(typeof auth.options.databaseHooks?.session?.create?.before).toBe("function");
+  });
+});
+
+// D817 — session cookieCache: admin polling shouldn't pay a DB read per
+// request for a verifiable cookie. Small maxAge keeps the revocation-latency
+// window tight.
+describe("session cookieCache — D817", () => {
+  it("is enabled with a small maxAge (60s)", () => {
+    const auth = createStudioAuth({ pool, env: GOOGLE_ENV });
+    expect(auth.options.session?.cookieCache).toMatchObject({ enabled: true, maxAge: 60 });
   });
 });
 

@@ -118,6 +118,37 @@ export function isAllowedStudioEmail(
 }
 
 /**
+ * D804 — enforce the team gate at SESSION creation (every sign-in), not only
+ * at user creation (first sign-in). This is what makes allowlist removal an
+ * actual revocation: editing `ADMIN_ALLOWED_EMAILS` / `STUDIO_ALLOWED_DOMAIN`
+ * now stops that account's future Google sign-ins, even though its
+ * `auth_user` row still exists.
+ *
+ * The hook RETURNS FALSE to block (never throws): Better-auth's OAuth
+ * callback wraps only user-creation in try/catch — a throw from
+ * `createSession` would escape `handleOAuthUserInfo` and surface as a raw
+ * JSON error mid-redirect. Returning false makes `createSession` yield null,
+ * which the callback turns into a clean `?error=unable_to_create_session`
+ * redirect — the code LoginPage explains (D800).
+ *
+ * Fails closed: a missing `auth_user` row (or an unreadable email) blocks the
+ * session. Exported as a factory so the gate is unit-testable with a fake
+ * pool.
+ */
+export function makeSessionCreateGate(opts: { pool: Pool; env: NodeJS.ProcessEnv }) {
+  return async (session: { userId: string }): Promise<false | undefined> => {
+    const res = await opts.pool.query<{ email: string }>(
+      `SELECT email FROM ${STUDIO_AUTH_TABLES.user} WHERE id = $1`,
+      [session.userId],
+    );
+    const email = res.rows[0]?.email;
+    if (!isAllowedStudioEmail(email, opts.env)) return false;
+    // undefined → proceed unchanged.
+    return undefined;
+  };
+}
+
+/**
  * Build a Studio Better-auth instance. Pure factory (no module state) so tests
  * can construct with injected env + pool. Only valid when the env resolves to
  * "google" mode — callers in "dev"/"disabled" must not build an instance (no
@@ -151,13 +182,28 @@ export function createStudioAuth(opts: {
       },
     },
     user: { modelName: STUDIO_AUTH_TABLES.user },
-    session: { modelName: STUDIO_AUTH_TABLES.session },
+    session: {
+      modelName: STUDIO_AUTH_TABLES.session,
+      // D817 — cache the session in a signed short-lived cookie so the
+      // busiest admin surfaces (workspace polling, SSE setup, autosaves)
+      // stop paying an `auth_session` SELECT per request.
+      //
+      // TRADEOFF (deliberate, acceptable for an internal tool): revocation
+      // latency. Within `maxAge` (60s) a request can be authorized from the
+      // cookie without touching the DB, so "sign out everywhere" (D805's
+      // revoke-all) and an allowlist removal (D804) take up to 60s to bite
+      // on OTHER devices. D804's gate itself is unaffected — it runs at
+      // session CREATION (sign-in), which always hits the DB; and the
+      // device that clicks sign-out clears its own cookies immediately.
+      cookieCache: { enabled: true, maxAge: 60 },
+    },
     account: { modelName: STUDIO_AUTH_TABLES.account },
     verification: { modelName: STUDIO_AUTH_TABLES.verification },
     // Team gate (D-034): block account creation for anyone outside the
-    // Workspace domain / allowlist. Fires on the FIRST sign-in (user create);
-    // since a non-team account can never be created, it can never get a
-    // session — so gating creation gates all access.
+    // Workspace domain / allowlist. Fires on the FIRST sign-in (user create).
+    // D804: the session.create gate below re-fires the same check on EVERY
+    // sign-in, so shrinking the allowlist revokes existing accounts' future
+    // sign-ins too (user-create alone never re-fires for an existing row).
     databaseHooks: {
       user: {
         create: {
@@ -170,6 +216,11 @@ export function createStudioAuth(opts: {
             // undefined → proceed unchanged.
             return undefined;
           },
+        },
+      },
+      session: {
+        create: {
+          before: makeSessionCreateGate({ pool, env }),
         },
       },
     },
