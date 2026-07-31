@@ -75,11 +75,30 @@ d("materialize-template job (integration, P7-T7.5)", () => {
       brand_tokens_adopted: true,
     });
 
-    const pages = await pool.query<{ slug: string }>(
-      `SELECT slug FROM pages WHERE site_id = $1 ORDER BY slug`,
+    const pages = await pool.query<{
+      slug: string;
+      status: string;
+      snapshot: { title: string; blocks: unknown[] } | null;
+      published_at: string | null;
+    }>(
+      `SELECT slug, status, published_snapshot AS snapshot, published_at
+         FROM pages WHERE site_id = $1 ORDER BY slug`,
       [siteId],
     );
     expect(pages.rows.map((p) => p.slug)).toEqual(["about", "home"]);
+
+    // D716: create-from-template must yield a BROWSABLE live URL — the
+    // provision job has already been enqueued for a public hostname, so
+    // pages materialize as published, with the D301 snapshot + published_at
+    // the tenant route needs. (Post-create agent/compose edits then stay
+    // draft until the operator publishes, thanks to D301.)
+    for (const p of pages.rows) {
+      expect(p.status).toBe("published");
+      expect(p.published_at).not.toBeNull();
+      expect(p.snapshot).not.toBeNull();
+      expect(Array.isArray(p.snapshot!.blocks)).toBe(true);
+      expect(p.snapshot!.title).toBeTruthy();
+    }
 
     // Each created page has exactly one 'import' revision.
     const revs = await pool.query<{ source: string; count: string }>(

@@ -66,9 +66,22 @@ export async function handleMaterializeTemplate(
     let created = 0;
     let skipped = 0;
     for (const page of pages) {
+      // D716 publish-on-materialize: the from-template flow has ALREADY
+      // enqueued `site.provision` for a public hostname, so materializing
+      // as 'draft' meant a template-created site 404'd publicly forever
+      // (no publish step exists anywhere in that create flow). Template
+      // pages are finished content — they go live at materialize, with the
+      // D301 snapshot + published_at the tenant route serves. Compose-mode
+      // (template + prompt) rides the same path: the agent's follow-up
+      // edits touch only the working columns, so they stay draft until the
+      // operator publishes.
       const ins = await client.query<{ id: string }>(
-        `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
-         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'draft')
+        `INSERT INTO pages (site_id, slug, title, blocks, seo, status, published_snapshot, published_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'published',
+                 jsonb_build_object(
+                   'title', $3::text, 'blocks', $4::jsonb, 'seo', $5::jsonb,
+                   'brand_tokens_override', NULL),
+                 now())
          ON CONFLICT (site_id, slug) DO NOTHING
          RETURNING id`,
         [siteId, page.slug, page.title, JSON.stringify(page.blocks ?? []), JSON.stringify(page.seo ?? {})],
