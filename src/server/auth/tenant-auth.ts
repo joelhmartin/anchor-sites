@@ -34,10 +34,29 @@ function tenantModelConfig() {
   } as const;
 }
 
-function tenantSecret(env: NodeJS.ProcessEnv = process.env): string {
-  // Reuse the app session secret; a dev fallback keeps local/test working
-  // (prod provisions BETTER_AUTH_SECRET — same prereq as Studio auth).
-  return env.BETTER_AUTH_SECRET || "dev-tenant-auth-secret-please-set-in-prod";
+/**
+ * D812 (W2-SEC) — session-signing secret for tenant auth.
+ *
+ * STATUS: tenant auth is DORMANT — `getTenantAuth` has zero production
+ * consumers today (nothing mounts it; only tests exercise it). This function
+ * used to fall back SILENTLY to a hardcoded, repo-public string, which would
+ * have signed real visitor sessions with a known key on the day someone
+ * finally mounted it without config. Now: reuse the app session secret
+ * (BETTER_AUTH_SECRET — same prereq as Studio auth), FAIL LOUDLY in
+ * production when it's missing, and keep the dev/test fallback only outside
+ * production (local work without secrets stays possible; the string is
+ * useless to sign anything real with because prod refuses to use it).
+ */
+export function tenantSecret(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.BETTER_AUTH_SECRET) return env.BETTER_AUTH_SECRET;
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "tenant-auth: BETTER_AUTH_SECRET is not set — refusing to construct tenant auth " +
+        "with the shared dev fallback secret in production (D812). Tenant auth is dormant; " +
+        "provision the secret before mounting it.",
+    );
+  }
+  return "dev-tenant-auth-secret-please-set-in-prod";
 }
 
 // Builders are factored out so their (narrowed) return types can be inferred —
@@ -142,6 +161,11 @@ export async function getTenantAuth(
 ): Promise<TenantAuth> {
   const cached = tenantAuthBySite.get(siteId);
   if (cached) return cached;
+
+  // D812 — resolve the secret FIRST so a misconfigured production deployment
+  // fails here, loudly, before any adapter/DB work (and before anything gets
+  // cached).
+  tenantSecret(opts.env);
 
   const base = await getBaseAdapter(opts.pool ?? defaultPool);
   const auth = buildScopedAuth(scopedAdapter(base, siteId), opts);

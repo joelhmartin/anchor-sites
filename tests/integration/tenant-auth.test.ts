@@ -3,7 +3,11 @@ import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import migrate from "node-pg-migrate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getTenantAuth, __resetTenantAuthForTests } from "../../src/server/auth/tenant-auth.js";
+import {
+  getTenantAuth,
+  tenantSecret,
+  __resetTenantAuthForTests,
+} from "../../src/server/auth/tenant-auth.js";
 
 /**
  * P8-T8.8 — per-site Better-auth must isolate by `site_id` (D-048). Two sites
@@ -95,5 +99,34 @@ d("per-site tenant auth isolation (P8-T8.8)", () => {
       where: [{ field: "id", value: foundInB!.id }],
     });
     expect(crossed).toBeNull();
+  });
+});
+
+// D812 (W2-SEC) — tenant auth is DORMANT (zero non-test consumers). The old
+// tenantSecret silently fell back to a hardcoded, repo-public string; a
+// production mount without config would have signed real visitor sessions
+// with a known key. Now production fails loudly, dev/test keep working.
+describe("tenantSecret hard-fails in production without BETTER_AUTH_SECRET (D812)", () => {
+  it("prefers BETTER_AUTH_SECRET whenever set", () => {
+    expect(tenantSecret({ BETTER_AUTH_SECRET: "real-secret", NODE_ENV: "production" })).toBe(
+      "real-secret",
+    );
+  });
+
+  it("throws in production when the secret is missing", () => {
+    expect(() => tenantSecret({ NODE_ENV: "production" })).toThrowError(/BETTER_AUTH_SECRET/);
+  });
+
+  it("keeps the dev fallback outside production", () => {
+    expect(tenantSecret({ NODE_ENV: "test" })).toBe("dev-tenant-auth-secret-please-set-in-prod");
+  });
+
+  it("getTenantAuth rejects before any adapter work on a misconfigured prod env", async () => {
+    __resetTenantAuthForTests();
+    await expect(
+      getTenantAuth("deadbeef-dead-4dea-8dea-deadbeefdead", {
+        env: { NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      }),
+    ).rejects.toThrowError(/BETTER_AUTH_SECRET/);
   });
 });
