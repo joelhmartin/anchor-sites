@@ -235,4 +235,59 @@ d("provisionSiteHostname (integration)", () => {
       provisionSiteHostname("00000000-0000-0000-0000-000000000000", { pool }),
     ).rejects.toThrow(/site not found/);
   });
+
+  // D1014: «"Upserted" must not paper over a hostname owned by another
+  // site». ON CONFLICT DO NOTHING used to report ok+upserted even when the
+  // site_domains row belonged to a DIFFERENT site_id — and provisioning
+  // proceeded against a hostname that routes elsewhere.
+  it("emits a site_domains step error (and stops) when the hostname belongs to a different site", async () => {
+    const slug = "d1014-conflict-site";
+    const siteRes = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ($1, 'D1014 Conflict') RETURNING id`,
+      [slug],
+    );
+    const newSiteId = siteRes.rows[0].id;
+    // The canonical hostname for the NEW site is already claimed by muldoon.
+    const hostname = `${slug}.sites.anchorcorps.com`;
+    await pool.query(
+      `INSERT INTO site_domains (site_id, hostname, is_primary) VALUES ($1, $2, false)`,
+      [muldoonId, hostname],
+    );
+
+    const dns = makeDnsMock();
+    const cloudRun = makeCloudRunMock(true);
+    try {
+      const result = await provisionSiteHostname(newSiteId, { pool, dns, cloudRun, wait: true });
+
+      const step = result.steps.find((s) => s.step === "site_domains");
+      expect(step?.status).toBe("error");
+      expect(step?.status === "error" && step.detail).toMatch(/different site/i);
+      expect(result.ready).toBe(false);
+      // Provisioning must NOT proceed against a hostname that routes elsewhere.
+      expect(cloudRun.createIfMissing).not.toHaveBeenCalled();
+      expect(dns.ensureRecord).not.toHaveBeenCalled();
+      // The other site's row is untouched — still owned by muldoon, no
+      // failed/last_error stomped onto it.
+      const row = await pool.query<{ site_id: string; last_error: string | null }>(
+        `SELECT site_id, last_error FROM site_domains WHERE hostname = $1`,
+        [hostname],
+      );
+      expect(row.rows[0].site_id).toBe(muldoonId);
+      expect(row.rows[0].last_error).toBeNull();
+    } finally {
+      await pool.query(`DELETE FROM site_domains WHERE hostname = $1`, [hostname]);
+      await pool.query(`DELETE FROM sites WHERE id = $1`, [newSiteId]);
+    }
+  });
+
+  it("treats the site's OWN pre-existing row as ok (idempotent re-provision)", async () => {
+    // muldoon's canonical row already exists (seed) and belongs to muldoon.
+    const dns = makeDnsMock("exists");
+    const cloudRun = makeCloudRunMock(true);
+    const result = await provisionSiteHostname(muldoonId, { pool, dns, cloudRun });
+
+    const step = result.steps.find((s) => s.step === "site_domains");
+    expect(step?.status).toBe("ok");
+    expect(cloudRun.createIfMissing).toHaveBeenCalledOnce();
+  });
 });

@@ -110,14 +110,40 @@ export async function provisionSiteHostname(
   const cloudRun = options.cloudRun ?? new CloudRunDomainsClient();
 
   // ---- 2. site_domains row -------------------------------------------
-  await pool.query(
+  // D1014: ON CONFLICT DO NOTHING must not paper over a hostname that
+  // belongs to a DIFFERENT site — "upserted" followed by provisioning would
+  // wire up a hostname that routes to someone else's site. Detect the
+  // conflicting owner and stop before touching Cloud Run/DNS. (The other
+  // site's row is deliberately NOT written to — it isn't ours to mark.)
+  const upsert = await pool.query<{ id: string }>(
     `INSERT INTO site_domains (site_id, hostname, is_primary, verification_status, ssl_status)
      VALUES ($1, $2, true, 'pending', 'pending')
-     ON CONFLICT (hostname) DO NOTHING`,
+     ON CONFLICT (hostname) DO NOTHING
+     RETURNING id`,
     [siteId, hostname],
   );
+  if (upsert.rowCount === 0) {
+    const owner = await pool.query<{ site_id: string }>(
+      `SELECT site_id FROM site_domains WHERE hostname = $1`,
+      [hostname],
+    );
+    const ownerId = owner.rows[0]?.site_id;
+    if (ownerId && ownerId !== siteId) {
+      steps.push({
+        step: "site_domains",
+        status: "error",
+        detail:
+          `hostname ${hostname} already belongs to a different site (${ownerId}) — ` +
+          `provisioning it for this site would route the hostname elsewhere. ` +
+          `Remove it from the other site first.`,
+      });
+      return { site_id: siteId, slug, hostname, steps, ready: false };
+    }
+    steps.push({ step: "site_domains", status: "ok", detail: `row for ${hostname} already present` });
+  } else {
+    steps.push({ step: "site_domains", status: "ok", detail: `upserted ${hostname}` });
+  }
   evictSiteCache(hostname);
-  steps.push({ step: "site_domains", status: "ok", detail: `upserted ${hostname}` });
 
   // ---- 3. Cloud Run mapping ------------------------------------------
   // Created BEFORE DNS because the records we must set come FROM the mapping.
