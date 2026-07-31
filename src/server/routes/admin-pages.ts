@@ -19,6 +19,8 @@ import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { tokenFromQuery } from "./admin-ai-agent.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
+// Item 6 (final review) — preview-only site-relative link rewriting.
+import { buildPreviewHrefResolver } from "../preview-links.js";
 import { buildEditableFieldMap, buildUrlValues } from "../../blocks/editable-fields.js";
 // Publish trigger (T4, GitHub sync).
 import { resolveGitMode } from "../git/client.js";
@@ -445,7 +447,24 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // short-lived, single-use preview token instead of the long-lived
         // admin token) is deferred — see the route-header comment above.
         res.setHeader("Referrer-Policy", "no-referrer");
-        const { html } = renderPage(site, page, { assets, path: previewPath, editable });
+        // FINAL whole-branch review, FIX-NOW item 6 — preview iframe nav
+        // escape. Template/agent-authored `<a href="/about">` resolves
+        // against THIS document's URL, which is on the admin origin, so a
+        // click inside the sandboxed preview navigated the frame to the
+        // admin SPA. One extra SELECT gives the slug→pageId map needed to
+        // point those links at the sibling pages' own previews instead.
+        // Preview-only: `rewriteHref` is never passed by the published
+        // tenant route. See src/server/preview-links.ts.
+        const previewPages = await pool.query<{ id: string; slug: string }>(
+          `SELECT id, slug FROM pages WHERE site_id = $1`,
+          [siteId],
+        );
+        const rewriteHref = buildPreviewHrefResolver({
+          siteId,
+          pages: previewPages.rows,
+          query: req.query as Record<string, unknown>,
+        });
+        const { html } = renderPage(site, page, { assets, path: previewPath, editable, rewriteHref });
         res.status(200).type("html").send(html);
       } catch (err) {
         next(err);
@@ -686,13 +705,40 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           }
         }
 
-        const domainRes = await pool.query<{ hostname: string }>(
-          `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+        // FINAL whole-branch review, FIX-NOW item 2b: this used to return a
+        // bare `live_url` with no provisioning state, and the workspace
+        // rendered it as a success-styled external link the moment publish
+        // resolved. But the canonical hostname's Cloud Run mapping and cert
+        // are provisioned ASYNCHRONOUSLY (the `site.provision` job), so for
+        // the first minutes of a brand-new site that link goes nowhere —
+        // the single most confidence-destroying thing this flow could do.
+        // The two status columns ride along so the client can say "still
+        // provisioning" instead of lying.
+        const domainRes = await pool.query<{
+          hostname: string;
+          verification_status: string;
+          ssl_status: string;
+        }>(
+          `SELECT hostname, verification_status, ssl_status
+             FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
           [siteId],
         );
-        const live_url = domainRes.rows[0]?.hostname ? `https://${domainRes.rows[0].hostname}` : null;
+        const domain = domainRes.rows[0];
+        const live_url = domain?.hostname ? `https://${domain.hostname}` : null;
+        const live_url_ready =
+          domain?.verification_status === "verified" && domain?.ssl_status === "active";
 
-        res.status(200).json({ published, live_url });
+        res.status(200).json({
+          published,
+          live_url,
+          live_url_ready,
+          live_url_status: domain
+            ? {
+                verification_status: domain.verification_status,
+                ssl_status: domain.ssl_status,
+              }
+            : null,
+        });
       } catch (err) {
         await client.query("ROLLBACK").catch(() => undefined);
         next(err);

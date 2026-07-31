@@ -59,6 +59,23 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * How long a settled (non-'running', non-'error') status is HELD before it's
+ * accepted as "the turn is over" — see `handleTailEvent`'s status branch.
+ *
+ * FINAL whole-branch review, FIX-NOW item 1: the auto-continue loop releases
+ * the conversation lock (status → 'active') BEFORE enqueueing the next
+ * round's job, and pg-boss polls on a ~2s interval, so the row genuinely
+ * reads 'active' for 1-3s BETWEEN rounds of a build that is very much still
+ * running. Accepting that downgrade instantly made the whole tail flicker
+ * up to 3× per build: the typing pulse stopped, the composer flipped
+ * Stop→Send, and WorkspacePage's Publish button re-enabled mid-build (a
+ * click there would have shipped a half-finished site). 4s comfortably
+ * covers the observed 1-3s gap while still being short enough that a genuine
+ * end-of-build doesn't feel stuck.
+ */
+const SETTLE_DEBOUNCE_MS = 4000;
+
 export function useAgentConversation({
   siteId,
   active,
@@ -85,11 +102,17 @@ export function useAgentConversation({
   const tailAbortRef = useRef<AbortController | null>(null);
   const sendAbortRef = useRef<AbortController | null>(null);
   // A `send()` marks this true right before starting its tail, and clears it
-  // the first time that tail reports a settled (non-"running") status —
-  // that's the signal to fetch the per-turn token-usage delta (only for a
-  // turn THIS hook instance kicked off, not e.g. an unrelated autoTail
-  // observing someone else's job).
+  // when that tail's settle is ACCEPTED (i.e. after the debounce below, so
+  // an inter-round 'active' that's immediately followed by another 'running'
+  // never consumes it) — that's the signal to fetch the per-turn token-usage
+  // delta (only for a turn THIS hook instance kicked off, not e.g. an
+  // unrelated autoTail observing someone else's job). Item 1 of the final
+  // review: firing on the FIRST settle made "+N this turn" report only round
+  // 0's tokens for a multi-round build; it must be the FINAL settle.
   const pendingUsageRefreshRef = useRef(false);
+  // Pending debounced settle (see `SETTLE_DEBOUNCE_MS`). Non-null only while
+  // a non-'running' status is being held.
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const usageBeforeRef = useRef<{ input: number; output: number }>({ input: 0, output: 0 });
 
   function nextId(): string {
@@ -205,6 +228,28 @@ export function useAgentConversation({
     }
   }
 
+  function clearSettleTimer() {
+    if (settleTimerRef.current !== null) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+  }
+
+  /**
+   * Accept a settled status: publish it onto `conversation`, re-enable the
+   * composer, and — only for a turn THIS instance's `send()` kicked off —
+   * fetch the usage delta. Called immediately for 'error', and via the
+   * `SETTLE_DEBOUNCE_MS` timer for every other settled status.
+   */
+  function applySettledStatus(status: AiConversation["status"], id: string) {
+    setConversation((prev) => (prev ? { ...prev, status } : prev));
+    setSending(false);
+    if (pendingUsageRefreshRef.current) {
+      pendingUsageRefreshRef.current = false;
+      void maybeRefreshUsageDelta(id);
+    }
+  }
+
   function handleTailEvent(e: AgentTailEvent, cursor: string | null, id: string) {
     if (e.type === "snapshot") {
       setConversation(e.conversation);
@@ -226,17 +271,34 @@ export function useAgentConversation({
     } else if (e.type === "message") {
       appendPersistedMessage(e.message);
     } else if (e.type === "status") {
-      setConversation((prev) => (prev ? { ...prev, status: e.status } : prev));
-      if (e.status === "running") return;
-      // The job has settled ("active" or "error") — a tailed `status`
-      // event settling is this hook's "turn is done" signal: re-enable the
-      // composer, and — only for a turn THIS instance's `send()` kicked
-      // off — fetch the usage delta.
-      setSending(false);
-      if (pendingUsageRefreshRef.current) {
-        pendingUsageRefreshRef.current = false;
-        void maybeRefreshUsageDelta(id);
+      // Item 1 (final review) — inter-round busy flicker. Three cases:
+      //
+      //  'running' : apply immediately AND cancel any held settle. This is
+      //              the round-N+1 pickup that proves the previous 'active'
+      //              was just the auto-continue loop's release-before-
+      //              enqueue gap, not the end of the build.
+      //  'error'   : apply immediately, never debounced — an error carries a
+      //              labeled message the operator needs to see now, and
+      //              nothing ever "un-errors" back into 'running'.
+      //  otherwise : HOLD for SETTLE_DEBOUNCE_MS. `conversation.status` stays
+      //              'running' for the duration, so `busy` (and therefore
+      //              the typing pulse, the Stop button, and WorkspacePage's
+      //              Publish gate) never blinks off between rounds.
+      if (e.status === "running") {
+        clearSettleTimer();
+        setConversation((prev) => (prev ? { ...prev, status: e.status } : prev));
+        return;
       }
+      clearSettleTimer();
+      if (e.status === "error") {
+        applySettledStatus(e.status, id);
+        return;
+      }
+      const settled = e.status;
+      settleTimerRef.current = setTimeout(() => {
+        settleTimerRef.current = null;
+        applySettledStatus(settled, id);
+      }, SETTLE_DEBOUNCE_MS);
     }
   }
 
@@ -288,15 +350,18 @@ export function useAgentConversation({
   }, [active, siteId]);
 
   // Abort any in-flight tail AND any in-flight turn when the host
-  // deactivates or unmounts.
+  // deactivates or unmounts. The held settle timer (item 1) goes with them —
+  // it would otherwise fire into an unmounted hook.
   useEffect(() => {
     if (!active) {
       tailAbortRef.current?.abort();
       sendAbortRef.current?.abort();
+      clearSettleTimer();
     }
     return () => {
       tailAbortRef.current?.abort();
       sendAbortRef.current?.abort();
+      clearSettleTimer();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
@@ -392,6 +457,7 @@ export function useAgentConversation({
     if (!sending) return;
     sendAbortRef.current?.abort();
     tailAbortRef.current?.abort();
+    clearSettleTimer();
     pendingUsageRefreshRef.current = false;
     setSending(false);
     setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Stopped." }]);

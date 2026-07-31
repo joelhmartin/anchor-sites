@@ -281,7 +281,16 @@ export async function runAgentTurn(input: {
   env?: NodeJS.ProcessEnv;
   client?: Anthropic; // injected mock in tests
   onEvent?: (e: AgentTurnEvent) => void;
-  limits?: { maxToolCalls?: number; deadlineMs?: number }; // route passes {15, 45_000}; job passes {}
+  // Task A2 (2026-07-30 lovable-workspace SDD) deleted the last production
+  // caller that passed a `deadlineMs` (the inline HTTP turn route used to
+  // pass `{maxToolCalls: 15, deadlineMs: 45_000}` so a slow turn could
+  // "promote" itself to a background job mid-request). Every turn now runs
+  // as an AGENT_TURN job (src/server/jobs/agent-turn.ts's `handleAgentTurn`),
+  // which calls `runAgentTurn` with no `limits` at all — full `maxToolCalls`
+  // from `AI_AGENT_MAX_TOOL_CALLS` (default 30), no deadline, ever. `limits`
+  // (and the `deadline`/"promoted" branch below) stay only for direct unit
+  // coverage in loop.test.ts; nothing production reaches them anymore.
+  limits?: { maxToolCalls?: number; deadlineMs?: number };
   genId?: () => string;
 }): Promise<AgentTurnResult> {
   const { pool, conversationId, siteId } = input;

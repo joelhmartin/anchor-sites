@@ -200,9 +200,16 @@ relative time, any error in red, and a link to
    `echo` it once so you can see it, and `printf '%s'` (no trailing newline)
    into the secret. Paste that **same** printed value into GitHub's webhook
    "Secret" field in step 5 below.
-4. Set `GITHUB_CONTENT_REPO=<owner>/anchor-sites-content` — update the
-   `--set-env-vars` value in `cloudbuild.yaml` (currently left empty on
-   purpose) and redeploy.
+4. `GITHUB_CONTENT_REPO` is **already configured** — `cloudbuild.yaml`'s
+   `deploy` step's `--set-env-vars` already sets it to the work-account
+   content repo (`jmartin-anchorcorps/anchor-sites-content`), so there's
+   nothing to do here unless the target repo changes. Once steps 2–3's real
+   token/secret are in place (replacing the `"disabled"` placeholder) and
+   this redeploys, `resolveGitMode()` flips to `"api"` and the server-side
+   half of sync is live — per-site sync still needs the operator to flip the
+   GitHub card's enable toggle (Studio UI, see below) before the publish
+   trigger actually enqueues anything for that site (`getGitState(...).enabled`
+   gates it; see "Sync semantics" → "Triggers" above).
 5. Add the repo webhook: payload URL
    `https://studio.anchorcorps.com/api/git/webhook`, content type
    `application/json`, secret from step 3, **push events only**.

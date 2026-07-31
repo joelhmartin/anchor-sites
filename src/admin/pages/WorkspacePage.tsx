@@ -207,9 +207,18 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   // resolves, so there's no separate success surface to wire up.
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [publishResult, setPublishResult] = useState<{ published: number; live_url: string | null } | null>(
-    null,
-  );
+  // `live_url_ready` (final review item 2b) is the primary domain's
+  // verification_status==='verified' && ssl_status==='active' — i.e. whether
+  // the `site.provision` job has finished mapping the hostname on Cloud Run
+  // and getting its cert. Optional in the type only so an older/mocked
+  // response shape stays non-fatal; absent is treated as "not ready", which
+  // is the safe direction (a note instead of a possibly-dead link).
+  const [publishResult, setPublishResult] = useState<{
+    published: number;
+    live_url: string | null;
+    live_url_ready?: boolean;
+    live_url_status?: { verification_status?: string; ssl_status?: string };
+  } | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   // Fix round 1 (Critical finding 1): outside-click/Escape close + initial
   // focus need refs into the popover's DOM — the toggle button (so an
@@ -287,10 +296,11 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     setPublishing(true);
     setPublishError(null);
     try {
-      const result = await apiFetch<{ published: number; live_url: string | null }>(
-        `/api/sites/${siteId}/publish`,
-        { method: "POST" },
-      );
+      const result = await apiFetch<{
+        published: number;
+        live_url: string | null;
+        live_url_ready?: boolean;
+      }>(`/api/sites/${siteId}/publish`, { method: "POST" });
       setPublishResult(result);
       reloadPages();
     } catch (err) {
@@ -546,16 +556,44 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                         Published {publishResult.published}{" "}
                         {publishResult.published === 1 ? "page" : "pages"}.
                       </p>
-                      {publishResult.live_url && (
-                        <a
-                          href={publishResult.live_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600"
-                        >
-                          {publishResult.live_url} ↗
-                        </a>
-                      )}
+                      {/* Final review items 2c + 3 — a site's canonical
+                          hostname is provisioned asynchronously (Cloud Run
+                          mapping + cert, via the `site.provision` job), so
+                          for the first minutes of a new site this URL
+                          resolves to nothing. Rendering it as a success-
+                          styled external link the moment publish returned
+                          sent the operator straight to a dead page and made
+                          a working publish look broken. Only link it once
+                          the server says the domain is actually ready;
+                          otherwise show the same URL as plain text with a
+                          note that says what's happening. */}
+                      {publishResult.live_url &&
+                        (publishResult.live_url_ready ? (
+                          <a
+                            href={publishResult.live_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600"
+                          >
+                            {publishResult.live_url} ↗
+                          </a>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            <span className="break-all text-xs font-medium text-zinc-500">
+                              {publishResult.live_url}
+                            </span>
+                            {publishResult.live_url_status?.verification_status === "failed" ||
+                            publishResult.live_url_status?.ssl_status === "failed" ? (
+                              <span className="text-xs text-red-600">
+                                Domain provisioning failed — see Manage → Domains for details.
+                              </span>
+                            ) : (
+                              <span className="text-xs text-amber-600">
+                                Domain still provisioning — the link will go live shortly.
+                              </span>
+                            )}
+                          </div>
+                        ))}
                       <div className="flex justify-end">
                         <Button
                           ref={publishDoneRef}

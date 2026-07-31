@@ -141,7 +141,7 @@ describe("NewSitePage (Task B4, 2026-07-30 lovable-workspace SDD)", () => {
     expect((screen.getByRole("button", { name: "Create site" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("blank: 'Start blank' + Details name/slug submits POST /api/sites with brand-token defaults and navigates to /manage", async () => {
+  it("blank: 'Start blank' + Details name/slug submits POST /api/sites with brand-token defaults and navigates to the workspace", async () => {
     const fetchMock = routeFetch();
     global.fetch = fetchMock as unknown as typeof fetch;
     renderPage();
@@ -160,11 +160,11 @@ describe("NewSitePage (Task B4, 2026-07-30 lovable-workspace SDD)", () => {
     expect(body.default_brand_tokens["--theme-main"]).toMatch(/^#[0-9a-f]{6}$/i);
 
     await waitFor(() =>
-      expect(screen.getByText(/path=\/sites\/muldoon-dental\/manage/)).toBeTruthy(),
+      expect(screen.getByText(/path=\/sites\/muldoon-dental(?!\/manage)/)).toBeTruthy(),
     );
   });
 
-  it("template-only: selecting a template card (no prompt) creates from-template, polls for pages, and navigates to /manage", async () => {
+  it("template-only: selecting a template card (no prompt) creates from-template, polls for pages, and navigates to the workspace", async () => {
     const fetchMock = routeFetch({ templates: [{ id: "tpl-starter", name: "Starter", description: "x", category: "General" }] });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderPage();
@@ -183,7 +183,7 @@ describe("NewSitePage (Task B4, 2026-07-30 lovable-workspace SDD)", () => {
 
     // Polls site detail (pages_count) before navigating.
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === "/api/sites/s9")).toBe(true));
-    await waitFor(() => expect(screen.getByText(/path=\/sites\/starter\/manage/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/path=\/sites\/starter(?!\/manage)/)).toBeTruthy());
   });
 
   it("ai-only: typing a prompt with no template creates a blank site (no brand tokens), starts a job-run conversation, and navigates to ?ai=1", async () => {

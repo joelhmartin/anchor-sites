@@ -75,31 +75,83 @@ gcloud sql users create anchor --instance=anchor-postgres --password='REPLACE_ME
 
 ## 4 — Secrets
 
-The deploy step injects three secrets via `--set-secrets`:
+**As of this SDD round the deploy step's `--set-secrets` (the `deploy` step in
+`cloudbuild.yaml`) injects 17 secrets, not three, and there is no
+`RESEND_API_KEY`** — transactional email is Mailgun (D-023), shared with
+anchor-hub, not Resend; the "Resend" name only ever existed in this doc as a
+Task 1.8-era placeholder that was never wired up. Enumerated straight from
+`cloudbuild.yaml`'s `deploy` step (`ENV_VAR_NAME=SECRET_NAME:latest` pairs):
+
+| Env var (what the app reads) | Secret Manager name | Notes |
+| --- | --- | --- |
+| `DATABASE_URL` | `ANCHOR_SITES_DATABASE_URL` | `postgres:///...?host=/cloudsql/...` — Cloud SQL Unix socket. |
+| `ADMIN_API_TOKEN` | `ANCHOR_SITES_ADMIN_API_TOKEN` | Opaque string; `X-Admin-Token` header. |
+| `MAILGUN_API_KEY` | `MAILGUN_API_KEY` | Shared with anchor-hub. |
+| `MAILGUN_DOMAIN` | `MAILGUN_DOMAIN` | Shared with anchor-hub. |
+| `MAILGUN_DEFAULT_FROM` | `MAILGUN_DEFAULT_FROM` | Shared with anchor-hub. |
+| `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_ID` | Studio Google OAuth web client (D-034). |
+| `GOOGLE_CLIENT_SECRET` | `GOOGLE_CLIENT_SECRET` | Studio Google OAuth secret. |
+| `BETTER_AUTH_SECRET` | `BETTER_AUTH_SECRET` | 32+ random bytes; Studio session signing. |
+| `GODADDY_API_KEY` | `GODADDY_API_KEY` | Shared project-wide (`docs/security.md`). |
+| `GODADDY_API_SECRET` | `GODADDY_API_SECRET` | Shared project-wide. |
+| `KINSTA_API_KEY` | `KINSTA_API_KEY` | DnsProvider — anchorcorps.com's real zone lives on Kinsta (§9 below). |
+| `KINSTA_COMPANY_ID` | `KINSTA_AGENCY_ID` | Note the name mismatch: the app's env var is `KINSTA_COMPANY_ID`, the Secret Manager secret is `KINSTA_AGENCY_ID` (same value — the Kinsta API just calls it "company"). |
+| `ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | AI site agent (`docs/ai-agent.md`); unset → stub mode. |
+| `PIXABAY_API_KEY` | `PIXABAY_API_KEY` | Stock image search/import; unset → deterministic stub hits. |
+| `PLUGIN_CONFIG_ENC_KEY` | `PLUGIN_CONFIG_ENC_KEY` | **Must be base64**, not hex — `openssl rand -base64 32`, must decode to exactly 32 bytes (`docs/plugins.md`). |
+| `GITHUB_CONTENT_TOKEN` | `GITHUB_CONTENT_TOKEN` | GitHub sync (`docs/github-sync.md`); placeholder `"disabled"` until a real fine-grained PAT is set. |
+| `GITHUB_WEBHOOK_SECRET` | `GITHUB_WEBHOOK_SECRET` | GitHub sync push-webhook HMAC secret; same placeholder convention. |
+
+Only the two secrets isolating this service's own data from anchor-hub's
+(`DATABASE_URL`, `ADMIN_API_TOKEN`) use the `ANCHOR_SITES_*` naming — every
+other secret above is either genuinely shared across services (Mailgun,
+GoDaddy) or just doesn't collide with anything in anchor-hub's own secret
+namespace, so it kept its bare name.
 
 ```bash
 # DATABASE_URL — note the host=/cloudsql/... form
 printf 'postgres://anchor:REPLACE_ME@/anchor_prod?host=/cloudsql/PROJECT_ID:us-central1:anchor-postgres' \
-  | gcloud secrets create DATABASE_URL --data-file=-
+  | gcloud secrets create ANCHOR_SITES_DATABASE_URL --data-file=-
 
 # ADMIN_API_TOKEN — opaque string; the editor / curl uses this via X-Admin-Token
-openssl rand -base64 48 | gcloud secrets create ADMIN_API_TOKEN --data-file=-
-
-# RESEND_API_KEY — placeholder until Task 1.9 wires Resend
-printf 'placeholder' | gcloud secrets create RESEND_API_KEY --data-file=-
+openssl rand -base64 48 | gcloud secrets create ANCHOR_SITES_ADMIN_API_TOKEN --data-file=-
 ```
 
-Grant the Cloud Run service account `roles/secretmanager.secretAccessor`:
+The other 15 secrets in the table above are provisioned the same way
+(`gcloud secrets create <SECRET_NAME> --data-file=-`) as each integration is
+wired up — see the table's "Notes" column for the value each one expects.
+
+Grant the Cloud Run service account `roles/secretmanager.secretAccessor` on
+every secret name in the table above:
 
 ```bash
 PROJECT_NUMBER=$(gcloud projects describe $(gcloud config get-value project) --format='value(projectNumber)')
 SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-for secret in DATABASE_URL ADMIN_API_TOKEN RESEND_API_KEY; do
+for secret in ANCHOR_SITES_DATABASE_URL ANCHOR_SITES_ADMIN_API_TOKEN \
+  MAILGUN_API_KEY MAILGUN_DOMAIN MAILGUN_DEFAULT_FROM \
+  GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET BETTER_AUTH_SECRET \
+  GODADDY_API_KEY GODADDY_API_SECRET KINSTA_API_KEY KINSTA_AGENCY_ID \
+  ANTHROPIC_API_KEY PIXABAY_API_KEY PLUGIN_CONFIG_ENC_KEY \
+  GITHUB_CONTENT_TOKEN GITHUB_WEBHOOK_SECRET; do
   gcloud secrets add-iam-policy-binding $secret \
     --member="serviceAccount:${SA}" \
     --role=roles/secretmanager.secretAccessor
 done
 ```
+
+> **`--set-secrets` REPLACES the entire secret list on every deploy — it does
+> not merge with what's already on the running revision.** Any secret name
+> missing from `cloudbuild.yaml`'s `deploy` step's `--set-secrets` value is
+> silently dropped from the next revision, even if you added it manually with
+> `gcloud run services update` in between deploys. A manual patch to add or
+> fix a secret binding **always lapses on the next CI deploy** unless the same
+> change also lands in `cloudbuild.yaml` — this caused a real OAuth outage
+> (Studio Google sign-in silently stopped working after a deploy that didn't
+> know about a manually-added secret) and a real domain-provisioning outage
+> for tmj-new-england (same gotcha, for `--set-env-vars`, which has the
+> identical replace-not-merge behavior — see the `deploy` step's inline
+> comment in `cloudbuild.yaml`). **The fix is always the same: edit
+> `cloudbuild.yaml`, never `gcloud run services update` alone.**
 
 ## 5 — Migration job
 
@@ -109,8 +161,15 @@ triggers it. The job runs `npm run deploy:db` = `migrate:up && db:seed-templates
 so every deploy applies pending migrations AND upserts the built-in "Starter"
 template (idempotent, scoped to the `starter` slug — it never recreates demo
 tenant sites or touches user-created templates). `cloudbuild.yaml`'s
-`migrate-image` step re-asserts `--command/--args` on every build, so even if
-the job is recreated with a different command it self-corrects to `deploy:db`.
+`migrate-image` step re-asserts `--command/--args` **and `--set-secrets`** on
+every build, so even if the job is recreated with a different command or a
+stale secret list it self-corrects on the next deploy.
+
+The job needs two secrets, not one: `DATABASE_URL` for the migration itself,
+and `PIXABAY_API_KEY` because `db:seed-templates` ingests real cover images
+for the template gallery (through the standard media pipeline, under the
+system-templates site) — without it, seeding still succeeds but falls back to
+Pixabay's stub behavior instead of real imagery.
 
 ```bash
 gcloud run jobs create anchor-sites-migrate \
@@ -119,16 +178,40 @@ gcloud run jobs create anchor-sites-migrate \
   --command="npm" \
   --args="run,deploy:db" \
   --add-cloudsql-instances="$(gcloud config get-value project):us-central1:anchor-postgres" \
-  --set-secrets=DATABASE_URL=DATABASE_URL:latest \
+  --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,PIXABAY_API_KEY=PIXABAY_API_KEY:latest \
   --max-retries=1 \
   --task-timeout=300s
 ```
 
 > The `:bootstrap` tag is a placeholder so the job exists before the first
-> build. CI updates the image tag + command on every run via the `migrate-image`
-> step (`gcloud run jobs update ... --image=...:$SHORT_SHA --command=npm
-> --args=run,deploy:db`), so the job always runs the freshly-built image with
-> the right command.
+> build. CI updates the image tag, command, and `--set-secrets` on every run
+> via the `migrate-image` step (`gcloud run jobs update ... --image=...:$SHORT_SHA
+> --command=npm --args=run,deploy:db --set-secrets=...`), so the job always
+> runs the freshly-built image with the right command and secrets — remember
+> the same replace-not-merge gotcha from §4 applies here too: if you ever add
+> a secret this job needs, add it to `cloudbuild.yaml`'s `migrate-image` step,
+> not just to the job directly with `gcloud`.
+
+## 5b — `--no-cpu-throttling` (background AI agent jobs need always-on CPU)
+
+The `deploy` step's `gcloud run deploy` call in `cloudbuild.yaml` passes
+`--no-cpu-throttling`. **This is required, not an optimization** — leaving it
+off breaks the AI site agent in production:
+
+Cloud Run's default CPU allocation is **request-scoped**: an instance's CPU
+gets throttled to near-zero the moment there's no in-flight HTTP request
+being served on it, even while the instance itself stays warm. The AI agent's
+turns (`docs/ai-agent.md`) do NOT run inside a request — every turn is an
+`ai.agent-turn` pg-boss job running in the background, polling Postgres and
+calling the Anthropic API for however long the build takes, with nobody
+necessarily watching an open HTTP connection to that instance the whole time.
+Under default (request-scoped) CPU, a job like that gets starved mid-run:
+observed failure mode was DB keepalives timing out and pg-boss connections
+dying with "Connection terminated" storms, plus a continuation round erroring
+outright when the CPU was throttled during an in-flight Anthropic call.
+`--no-cpu-throttling` allocates CPU to the instance continuously (as long as
+it's running), not just while serving a request, so a background turn keeps
+making real progress with no open tab watching it.
 
 ## 6 — Cloud Build trigger
 
@@ -330,7 +413,6 @@ a service update — no rebuild required.
 
 ## What's NOT in scope for Task 1.8
 
-- **Resend email wiring** — Task 1.9.
 - **Real analytics** — Phase 12 (Plausible CE per D-021).
 - **Custom-domain provisioning per client** — Phase 10.
 - **Bot / abuse protection** — Phase 12 hardening.

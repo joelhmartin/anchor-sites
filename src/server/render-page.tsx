@@ -12,6 +12,7 @@ import { EditModeProvider, MediaProvider, type MediaAssetData } from "@anchorcor
 import { hostnameForSlug } from "../config/domain.js";
 import { analyticsScriptTag } from "./analytics.js";
 import { OVERLAY_CSS } from "./preview-overlay.js";
+import { rewriteSiteRelativeHrefs } from "./preview-links.js";
 import {
   applyTitleTemplate,
   effectiveRobots,
@@ -266,6 +267,15 @@ export function renderPage(
      * script, and its boot payload. Absent in every non-preview render path.
      */
     editable?: { overlayJs: string; nonce: string; bootData: object };
+    /**
+     * FINAL whole-branch review, FIX-NOW item 6 — PREVIEW ONLY. When set,
+     * every site-relative `href` in the rendered BODY is passed through this
+     * resolver (`null` → inert `#`). Only the draft-preview route supplies
+     * it; published tenant rendering never does, so its output is unchanged.
+     * See `preview-links.ts` for why this exists and what it deliberately
+     * does not touch.
+     */
+    rewriteHref?: (href: string) => string | null;
   } = {},
 ): { html: string; status: number } {
   const pageSeo = parseSeoLoose(page.seo);
@@ -307,10 +317,16 @@ export function renderPage(
   // `@anchorcorps/components`) into always-rendered/data-field mode; the
   // plain render path never touches this, so byte-behavior is unchanged
   // when `opts.editable` is absent.
-  const bodyHtml = renderShellContent(
+  const renderedBody = renderShellContent(
     site,
     opts.editable ? <EditModeProvider>{blockTree}</EditModeProvider> : blockTree,
   );
+  // Item 6 — applied to the BODY only (never the head's canonical link or
+  // JSON-LD, never the overlay boot script), and only when the preview route
+  // asked for it.
+  const bodyHtml = opts.rewriteHref
+    ? rewriteSiteRelativeHrefs(renderedBody, opts.rewriteHref)
+    : renderedBody;
   const seoMeta = renderSeoMeta(site, seo, { canonical, ogImage, title: baseTitle });
   // Inline Editing Task 4 (exact, per brief) — the boot script carries the
   // overlay's boot payload. `\u003c` escapes any `<` a bootData string might

@@ -54,19 +54,37 @@ export interface CrmClient {
 // HttpCrmClient
 // ---------------------------------------------------------------------------
 
+/**
+ * Default per-request ceiling for every CRM call.
+ *
+ * FINAL whole-branch review, FIX-NOW item 4: `request()` had NO timeout at
+ * all. `createSiteWithDomains` calls `provisionSite` from inside the open
+ * site-creation transaction, so an unresponsive anchor-hub held a Postgres
+ * transaction (and a pooled connection, and the operator's HTTP request)
+ * open for as long as the platform's socket timeout allowed — well past
+ * Cloud Run's own 60s request budget. 10s is generous for a JSON control-
+ * plane call and still leaves room for the rest of site creation.
+ */
+export const CRM_REQUEST_TIMEOUT_MS = 10_000;
+
 export class HttpCrmClient implements CrmClient {
   private baseUrl: string;
   private apiKey: string;
   private fetch: typeof globalThis.fetch;
+  private timeoutMs: number;
 
   constructor(opts: {
     baseUrl: string;
     apiKey: string;
     fetch?: typeof globalThis.fetch;
+    /** Override the per-request timeout. Tests only — production uses the
+     *  `CRM_REQUEST_TIMEOUT_MS` default. */
+    timeoutMs?: number;
   }) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
     this.fetch = opts.fetch ?? globalThis.fetch;
+    this.timeoutMs = opts.timeoutMs ?? CRM_REQUEST_TIMEOUT_MS;
   }
 
   private headers(): Record<string, string> {
@@ -82,11 +100,29 @@ export class HttpCrmClient implements CrmClient {
     body?: unknown,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const res = await this.fetch(url, {
-      method,
-      headers: this.headers(),
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    // `AbortSignal.timeout` rejects the fetch with a DOMException named
+    // "TimeoutError" (Node ≥18); an explicitly aborted request surfaces as
+    // "AbortError". Both are re-thrown as a plain Error whose message names
+    // the CRM, the call, and the budget — the caller (create-site.ts,
+    // sync-job.ts) only ever logs it, so an opaque "The operation was
+    // aborted" would have been useless in a production log.
+    let res: Response;
+    try {
+      res = await this.fetch(url, {
+        method,
+        headers: this.headers(),
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      const name = (err as { name?: string } | null)?.name;
+      if (name === "TimeoutError" || name === "AbortError") {
+        throw new Error(
+          `CRM ${method} ${path} timed out after ${this.timeoutMs}ms (anchor-hub unreachable or slow)`,
+        );
+      }
+      throw err;
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => "(no body)");
       throw new Error(`CRM ${method} ${path} → ${res.status}: ${text}`);

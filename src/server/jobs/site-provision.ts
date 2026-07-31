@@ -34,6 +34,29 @@ import {
  * hostname find the literal record. Bursts >5 site creates/min can hit
  * Kinsta's create rate limit and self-heal via the job's 60s backoff.
  */
+/**
+ * How long ONE attempt polls Cloud Run for `Ready` + `CertificateProvisioned`
+ * before giving up and letting pg-boss retry.
+ *
+ * FINAL whole-branch review, FIX-NOW item 2a: this handler used to call the
+ * orchestrator with no `wait` at all, so `site_domains.verification_status` /
+ * `ssl_status` were written from the conditions on a *just-created* mapping —
+ * always `pending`/`pending`, forever. Nothing else ever revisited those
+ * columns, so the workspace's "live" URL was a permanent dead link and the
+ * Domains tab's status poll never moved.
+ *
+ * The manual route (`POST /api/sites/:siteId/provision`) passes `wait`
+ * straight through and lets the HTTP caller sit for the orchestrator's full
+ * 20-minute default. A job can't: pg-boss's default job expiration is 15
+ * minutes, and a handler that outlives it gets re-run underneath itself. So
+ * this is a BOUNDED wait — 4 minutes per attempt — plus pg-boss's own
+ * retry/backoff (`retryLimit: 5, retryDelay: 60, retryBackoff: true`, set at
+ * the enqueue site in sites/create-site.ts). That's poll-with-a-bounded-wait:
+ * ~50 minutes of total coverage across attempts, each attempt re-entering an
+ * idempotent orchestrator, with no attempt anywhere near the expiration.
+ */
+export const PROVISION_WAIT_TIMEOUT_MS = 4 * 60 * 1000;
+
 export type SiteProvisionInput = { siteId: string; domainId: string };
 export type SiteProvisionDeps = {
   pool?: Pool;
@@ -44,6 +67,8 @@ export type SiteProvisionDeps = {
    *  network client instead of stubbing this handler's own call. */
   dns?: ProvisionOptions["dns"];
   cloudRun?: ProvisionOptions["cloudRun"];
+  /** Override the per-attempt cert wait. Tests only. */
+  waitTimeoutMs?: number;
 };
 
 async function markFailed(pool: Pool, domainId: string): Promise<void> {
@@ -59,7 +84,16 @@ export async function handleSiteProvision(
 ): Promise<ProvisionResult> {
   const pool = deps.pool ?? defaultPool;
   const provision = deps.provision ?? provisionSiteHostname;
-  const options: ProvisionOptions = { pool, dns: deps.dns, cloudRun: deps.cloudRun };
+  const options: ProvisionOptions = {
+    pool,
+    dns: deps.dns,
+    cloudRun: deps.cloudRun,
+    // Item 2a — the whole point: the orchestrator only writes a TERMINAL
+    // verification/ssl status when it has waited for the mapping to report
+    // Ready + CertificateProvisioned.
+    wait: true,
+    waitTimeoutMs: deps.waitTimeoutMs ?? PROVISION_WAIT_TIMEOUT_MS,
+  };
 
   let result: ProvisionResult;
   try {
@@ -76,6 +110,23 @@ export async function handleSiteProvision(
 
   const failedStep = result.steps.find((s) => s.status === "error");
   if (failedStep) {
+    // Item 2a — `wait_ready` is NOT a failure. Every other step erroring
+    // means provisioning is genuinely broken (a Cloud Run permission
+    // problem, a DNS API rejection) and the operator needs to see 'failed'
+    // on the domain row. A wait timeout means only "the cert isn't issued
+    // yet": the mapping and the DNS record both exist, the row's honest
+    // state is still 'pending', and the right move is to let pg-boss retry
+    // (each retry re-enters the idempotent orchestrator and polls again).
+    // Marking it 'failed' here would have been an outright lie the retry
+    // couldn't even walk back — a successful later attempt writes
+    // verified/active, but an exhausted retry budget would leave 'failed'
+    // on a domain that was merely slow.
+    if (failedStep.step === "wait_ready") {
+      evictSiteCache(result.hostname);
+      throw new Error(
+        `site.provision: ${result.hostname} not ready yet (cert still provisioning) — ${failedStep.detail}`,
+      );
+    }
     await markFailed(pool, data.domainId);
     evictSiteCache(result.hostname);
     throw new Error(

@@ -13,7 +13,9 @@ import { DEFAULT_BRAND_TOKENS } from "../components/BrandTokenFields.js";
 
 /**
  * Lovable-style new-site screen (Task B4, 2026-07-30 lovable-workspace SDD):
- * replaces the old two-step `NewSiteWizard` with a single screen — a big
+ * replaces the old two-step `NewSiteWizard.tsx` (deleted, not just renamed —
+ * this file is a from-scratch rewrite, not an edit of it) with a single
+ * screen — a big
  * "What do you want to build?" prompt above a template gallery ("rip off
  * Lovable's feel": cover image, name, one-line description, category chip).
  *
@@ -194,7 +196,14 @@ export function NewSitePage() {
         if (trimmedPrompt) {
           await startConversationAndNavigate(res.site.id, trimmedPrompt);
         } else {
-          navigate(`/sites/${effectiveSlug}/manage`);
+          // FINAL whole-branch review, FIX-NOW item 5: a no-prompt create
+          // used to land on the tab-based management shell. The workspace
+          // (`/sites/:slug`) is the primary landing surface for a site — it
+          // is where the preview and the agent chat live, and it is where
+          // every prompt-carrying path already lands. Dropping the operator
+          // into /manage instead meant a template-only create showed a
+          // settings-shaped screen with no sign of the site they just made.
+          navigate(`/sites/${effectiveSlug}`);
         }
       } else {
         const body: Record<string, unknown> = { slug: effectiveSlug, display_name: effectiveName.trim() };
@@ -208,7 +217,14 @@ export function NewSitePage() {
         if (trimmedPrompt) {
           await startConversationAndNavigate(siteId, trimmedPrompt);
         } else {
-          navigate(`/sites/${effectiveSlug}/manage`);
+          // FINAL whole-branch review, FIX-NOW item 5: a no-prompt create
+          // used to land on the tab-based management shell. The workspace
+          // (`/sites/:slug`) is the primary landing surface for a site — it
+          // is where the preview and the agent chat live, and it is where
+          // every prompt-carrying path already lands. Dropping the operator
+          // into /manage instead meant a template-only create showed a
+          // settings-shaped screen with no sign of the site they just made.
+          navigate(`/sites/${effectiveSlug}`);
         }
       }
     } catch (err) {

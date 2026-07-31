@@ -20,25 +20,6 @@ export type AgentChangeEvent = {
   summary: string;
 };
 
-/**
- * Task A2 (2026-07-30 lovable-workspace SDD) deleted the inline turn's HTTP
- * path — no agent turn ever runs inside a request anymore, so the client
- * never receives a live `AgentTurnEvent` stream. `TurnDoneReason`/
- * `AgentTurnEvent` stay exported: `chatReducer.ts`'s pure turn-state
- * reducer (and its own tests) still reference the shape, even though
- * nothing in this file constructs these events over the wire any longer —
- * every turn's progress now arrives as persisted `AgentTailEvent`s (below)
- * via the `GET .../events` tail, which is all `streamAgentEvents` streams
- * these days.
- */
-export type TurnDoneReason = "end_turn" | "max_tools" | "budget" | "error" | "promoted";
-
-export type AgentTurnEvent =
-  | { type: "assistant_text"; text: string }
-  | { type: "tool_call"; name: string; input: unknown }
-  | { type: "tool_result"; name: string; ok: boolean; summary?: string; change?: AgentChangeEvent }
-  | { type: "turn_done"; reason: TurnDoneReason; message?: string };
-
 export type AiConversation = {
   id: string;
   site_id: string;

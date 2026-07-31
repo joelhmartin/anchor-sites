@@ -91,6 +91,10 @@ steps:
       - --region=${_REGION}
       - --command=npm
       - --args=run,deploy:db
+      # PIXABAY_API_KEY lets db:seed-templates ingest template gallery covers
+      # (media pipeline under the system-templates site). --set-secrets on
+      # jobs REPLACES the whole list too — DATABASE_URL must stay listed.
+      - --set-secrets=DATABASE_URL=ANCHOR_SITES_DATABASE_URL:latest,PIXABAY_API_KEY=PIXABAY_API_KEY:latest
 
   # 3b. Run DB migrations + seed built-in templates as a one-off job before
   #     swapping traffic. Reads DATABASE_URL from Secret Manager via the Cloud
@@ -123,9 +127,11 @@ steps:
       - --add-cloudsql-instances=${_SQL_INSTANCE}
       # GITHUB_CONTENT_REPO ("owner/repo"; empty = git sync disabled — see
       # resolveGitMode() in src/server/git/client.ts) joins --set-env-vars
-      # (not --set-secrets) since it's not sensitive, just config. Left empty
-      # here on purpose: the operator sets a real value only once the content
-      # repo + PAT + webhook secret from docs/github-sync.md's runbook exist.
+      # (not --set-secrets) since it's not sensitive, just config. Already
+      # set to the work-account content repo (git.export/git.import only
+      # actually run once the token/secret pair from docs/github-sync.md's
+      # runbook is also real, not the "disabled" placeholder — see that
+      # doc's Operator runbook step 4).
       # GCP_PROJECT_ID: required by the Phase-10 domain-provisioning client
       # (src/server/gcloud/run-domains.ts). --set-env-vars REPLACES the whole
       # env list per deploy (same gotcha as --set-secrets below), so it must
