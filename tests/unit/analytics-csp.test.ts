@@ -87,6 +87,21 @@ describe("buildCsp (12.5)", () => {
     expect(connectSrc).toContain("https://vitals.example.com");
   });
 
+  // D118/D906 (W2-SEC) — CSP entries mirror actually-injected scripts.
+  describe("script-src mirrors what shell() actually emits", () => {
+    it("unpkg.com appears ONLY when WEB_VITALS_ENDPOINT enables the vitals snippet", () => {
+      expect((buildCsp({}).scriptSrc as string[]).join(" ")).not.toContain("unpkg.com");
+      expect(
+        (buildCsp({ WEB_VITALS_ENDPOINT: "https://vitals.example.com/c" }).scriptSrc as string[]).join(" "),
+      ).toContain("unpkg.com");
+    });
+
+    it("cdn.calltracking.com is gone until the W3 CTM decision ships a real loader", () => {
+      const all = Object.values(buildCsp({})).flat().join(" ");
+      expect(all).not.toContain("calltracking.com");
+    });
+  });
+
   it("injects SENTRY_DSN origin into connectSrc", () => {
     const directives = buildCsp({ SENTRY_DSN: "https://abc123@o0.ingest.sentry.io/12345" });
     const connectSrc = (directives.connectSrc as string[]).join(" ");

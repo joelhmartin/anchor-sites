@@ -99,11 +99,24 @@ export function buildCsp(env: NodeJS.ProcessEnv): Record<string, string[]> {
     ? env.CSP_CRM_EXTRA_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
     : [];
 
+  // D118/D906 (W2-SEC) — script-src entries mirror what shell() actually
+  // emits (render-page.tsx):
+  //   - unpkg.com: only the web-vitals loader uses it, and that snippet is
+  //     only emitted when WEB_VITALS_ENDPOINT is set — so the entry is gated
+  //     on the same env var. (Self-hosting a pinned copy is the D1011
+  //     follow-up; until then the allowlist at least matches reality.)
+  //   - cdn.calltracking.com: REMOVED. No site injects CTM today and the CTM
+  //     decision is W3 scope — W3 must re-add the origin alongside whatever
+  //     loader it actually ships (note: render-page.tsx's ctmScriptTag still
+  //     exists and fires if a site sets ctm_account_id; until W3, such a
+  //     script is deliberately CSP-blocked rather than silently allowed).
+  //   - 'unsafe-inline' remains the documented tenant gap (header note
+  //     above): the analytics/vitals/carousel-island inline scripts still
+  //     depend on it; the studio host no longer does (buildStudioCsp).
   const scriptSrc = [
     "'self'",
     "'unsafe-inline'",
-    "cdn.calltracking.com",
-    "unpkg.com",
+    ...(env.WEB_VITALS_ENDPOINT ? ["unpkg.com"] : []),
     ...(analyticsOrigin ? [analyticsOrigin] : []),
   ];
 
