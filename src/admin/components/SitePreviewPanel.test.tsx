@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { SitePreviewPanel } from "./SitePreviewPanel.js";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
+import { clearSessionExpired } from "../lib/sessionExpiry.js";
 import type { ComponentProps } from "react";
 import type { ImagePickerDialog as ImagePickerDialogType } from "./ImagePickerDialog.js";
 
@@ -69,19 +70,20 @@ function previewTokenFor(siteId: string, seq = 1) {
 function mockPagesApi(
   siteId: string,
   pages: PageRow[] = [],
-  opts: { mintFails?: boolean; mintFailsAfter?: number } = {},
+  opts: { mintFails?: boolean; mintFailsAfter?: number; mintFailStatus?: number } = {},
 ) {
   let mintSeq = 0;
   const mintCalls: string[] = [];
+  const failStatus = opts.mintFailStatus ?? 503;
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === `/api/sites/${siteId}/pages`) return json({ pages });
     const mint = /^\/api\/sites\/([^/]+)\/preview-token$/.exec(url);
     if (mint) {
       mintCalls.push(mint[1]);
-      if (opts.mintFails) return json({ error: "preview tokens not configured" }, 503);
+      if (opts.mintFails) return json({ error: "preview tokens not configured" }, failStatus);
       if (opts.mintFailsAfter !== undefined && mintCalls.length > opts.mintFailsAfter)
-        return json({ error: "transient" }, 503);
+        return json({ error: "transient" }, failStatus);
       mintSeq += 1;
       return json({
         token: previewTokenFor(mint[1], mintSeq),
@@ -381,14 +383,79 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
       // The still-valid token stays in the src — no blanking, no credential drop.
       expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(token1);
 
-      // And a bounded retry is scheduled (another mint attempt within ~20s).
+      // And a bounded retry is scheduled. D815: the cadence backs off
+      // exponentially (20s → 40s → …) capped at 5 min, so after the burst of
+      // failures burned during the 15-min advance above, the next attempt is
+      // at most one backoff-cap away.
       const before = mintCalls.length;
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(21_000);
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1_000);
       });
       await waitFor(() => expect(mintCalls.length).toBeGreaterThan(before));
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  // D815 — a background retry loop must have a terminal state, and must not
+  // fire at a fixed 20s cadence forever while it lives.
+  it("[D815] stops minting entirely once a 401 says the session lapsed", async () => {
+    clearAdminToken();
+    clearSessionExpired();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { mintCalls } = mockPagesApi(
+        "s1",
+        [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }],
+        { mintFails: true, mintFailStatus: 401 },
+      );
+      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      await waitFor(() => expect(mintCalls.length).toBe(1));
+
+      // An hour of wall-clock time: not one further attempt — the shared
+      // session-expired dialog (D801) is the recovery path, not this loop.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+      });
+      expect(mintCalls.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      clearSessionExpired();
+    }
+  });
+
+  it("[D815] non-401 mint failures back off exponentially (20s, 40s, …)", async () => {
+    clearAdminToken();
+    clearSessionExpired();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { mintCalls } = mockPagesApi(
+        "s1",
+        [{ id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" }],
+        { mintFails: true }, // 503 — transient class, keeps retrying
+      );
+      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      await waitFor(() => expect(mintCalls.length).toBe(1));
+
+      // First retry ~20s out.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(21_000);
+      });
+      await waitFor(() => expect(mintCalls.length).toBe(2));
+
+      // Second retry backs off to ~40s: nothing at +21s…
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(21_000);
+      });
+      expect(mintCalls.length).toBe(2);
+      // …but fires by +42s.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(21_000);
+      });
+      await waitFor(() => expect(mintCalls.length).toBe(3));
+    } finally {
+      vi.useRealTimers();
+      clearSessionExpired();
     }
   });
 

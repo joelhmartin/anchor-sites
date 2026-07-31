@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useApi } from "../lib/useApi.js";
-import { apiFetch } from "../lib/apiFetch.js";
+import { ApiError, apiFetch } from "../lib/apiFetch.js";
 import { getAdminToken } from "../lib/adminToken.js";
+import { isSessionExpired } from "../lib/sessionExpiry.js";
 import { cn } from "../ui/cn.js";
 import { Spinner } from "../ui/spinner.js";
 import { createInlineEditor, type InlineEditorHandle } from "../lib/inline-editor.js";
@@ -20,9 +21,12 @@ const READONLY_BUSY_REASON = "The AI is working on this site…";
  */
 const TOKEN_REFRESH_FRACTION = 0.8;
 const MIN_TOKEN_REFRESH_MS = 5_000;
-// Retry cadence after a FAILED mint — short enough to recover within a token's
-// remaining validity (refresh fires at 80% of a 15-min TTL, leaving ~3 min).
-const TOKEN_RETRY_MS = 20_000;
+// D815 — retry cadence after a FAILED mint. Starts short enough to recover
+// within a token's remaining validity (refresh fires at 80% of a 15-min TTL,
+// leaving ~3 min), then backs off exponentially so a persistently-broken
+// endpoint isn't hammered every 20s for as long as the tab is open.
+const TOKEN_RETRY_BASE_MS = 20_000;
+const TOKEN_RETRY_MAX_MS = 5 * 60 * 1000;
 /** Used only if the server's `expires_at` is unparseable. Server default is 15 min. */
 const FALLBACK_TOKEN_TTL_MS = 10 * 60 * 1000;
 
@@ -141,6 +145,8 @@ export function SitePreviewPanel({
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // D815 — consecutive-failure count; resets on any successful mint.
+    let retryAttempt = 0;
 
     // A token is scoped to ONE site — the server 401s it anywhere else — so a
     // site switch must drop the old one rather than briefly reuse it.
@@ -154,6 +160,7 @@ export function SitePreviewPanel({
           { method: "POST" },
         );
         if (cancelled) return;
+        retryAttempt = 0;
         const parsed = Date.parse(res.expires_at);
         const expiresAt = Number.isNaN(parsed) ? Date.now() + FALLBACK_TOKEN_TTL_MS : parsed;
         setPreviewToken({ token: res.token, expiresAt });
@@ -162,14 +169,24 @@ export function SitePreviewPanel({
           Math.floor((expiresAt - Date.now()) * TOKEN_REFRESH_FRACTION),
         );
         timer = setTimeout(() => void mint(), delay);
-      } catch {
-        // Minting is unavailable (transient network blip, older deployment,
-        // no signing secret, or the session just lapsed — apiFetch already
-        // handles the 401 bounce). Keep any token we already hold: it stays
-        // valid until its own expiry, and discarding it here would blank a
-        // working preview over one failed refresh. Retry on a short timer;
-        // the legacy localStorage token remains the last-resort fallback.
-        if (!cancelled) timer = setTimeout(() => void mint(), TOKEN_RETRY_MS);
+      } catch (err) {
+        if (cancelled) return;
+        // D815 (coordinating with D801): a 401 means the SESSION lapsed —
+        // apiFetch just raised the shared session-expired signal and the
+        // re-auth dialog is showing. Every further mint would 401 identically
+        // until the operator re-authenticates (which remounts this panel),
+        // so this loop must reach a TERMINAL state instead of hammering the
+        // endpoint every 20s forever.
+        if ((err instanceof ApiError && err.status === 401) || isSessionExpired()) return;
+        // Anything else (transient network blip, older deployment, no
+        // signing secret): keep any token we already hold — it stays valid
+        // until its own expiry, and discarding it would blank a working
+        // preview over one failed refresh. Retry with exponential backoff
+        // (20s → 40s → … capped at 5 min); the legacy localStorage token
+        // remains the last-resort fallback.
+        const delay = Math.min(TOKEN_RETRY_BASE_MS * 2 ** retryAttempt, TOKEN_RETRY_MAX_MS);
+        retryAttempt += 1;
+        timer = setTimeout(() => void mint(), delay);
       }
     }
 
