@@ -28,7 +28,8 @@ import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
 import type { StudioAuth } from "./auth/studio-auth.js";
 import { captureException } from "./sentry/index.js";
-import { buildCsp } from "./csp.js";
+import { buildCsp, buildStudioCsp } from "./csp.js";
+import { isAdminHost } from "../config/admin-host.js";
 
 export type CreateAppOptions = {
   /**
@@ -48,7 +49,19 @@ export type CreateAppOptions = {
 export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
 
-  app.use(helmet({ contentSecurityPolicy: { directives: buildCsp(process.env) } }));
+  // D810 (W2-SEC) — per-host CSP. The studio host gets a strict policy
+  // (script-src 'self' in prod — the SPA build has no inline scripts, and
+  // unpkg/calltracking are tenant concerns); every other host keeps the
+  // tenant policy. Both helmet instances are built once at app creation;
+  // the branch per request is only the host check. Preview routes override
+  // whichever applied via res.setHeader (admin-pages.ts / templates.ts).
+  const tenantHelmet = helmet({ contentSecurityPolicy: { directives: buildCsp(process.env) } });
+  const studioHelmet = helmet({
+    contentSecurityPolicy: { directives: buildStudioCsp(process.env) },
+  });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    (isAdminHost(req.headers.host) ? studioHelmet : tenantHelmet)(req, res, next);
+  });
   app.use(cors());
 
   // Studio Google-OAuth handler (D-034/D-046). MUST precede express.json() —

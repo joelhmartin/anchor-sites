@@ -40,6 +40,57 @@ function originFromUrl(url: string | undefined): string | null {
   }
 }
 
+/**
+ * D810 (W2-SEC) — the STUDIO host's own policy, split from the tenant one.
+ *
+ * The admin SPA is a plain Vite build: dist/index.html carries ZERO inline
+ * scripts (one external module <script src>, one stylesheet), so the studio
+ * origin needs neither 'unsafe-inline' nor a nonce in script-src — `'self'`
+ * alone is both sufficient and stricter than the nonce migration the header
+ * comment above sketches (prod serves the static file via sendFile, so a
+ * per-request nonce could not be injected anyway). unpkg.com and
+ * cdn.calltracking.com are tenant-page concerns and never load on this host.
+ *
+ * Dev is the one exception: @vitejs/plugin-react injects a genuine inline
+ * react-refresh preamble into the transformed index.html, and HMR needs a
+ * websocket — both gated on NODE_ENV !== "production", exactly mirroring
+ * when src/server/index.ts mounts Vite middleware.
+ *
+ * The workspace/template preview iframes are unaffected: those routes set
+ * their own per-response CSP via res.setHeader AFTER helmet ran (see
+ * admin-pages.ts / templates.ts — incl. CAROUSEL_ISLAND_CSP_HASH), which
+ * replaces whatever host policy applied.
+ */
+export function buildStudioCsp(env: NodeJS.ProcessEnv): Record<string, string[]> {
+  const sentryOrigin = env.SENTRY_DSN ? originFromUrl(env.SENTRY_DSN) : null;
+  const dev = env.NODE_ENV !== "production";
+
+  return {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", ...(dev ? ["'unsafe-inline'"] : [])],
+    // fonts.googleapis.com serves the @font-face stylesheet linked in
+    // index.html; MUI/inline React styles need style-src 'unsafe-inline'.
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    fontSrc: ["'self'", "https://fonts.gstatic.com"],
+    // blob: for upload previews (URL.createObjectURL); GCS for media-library
+    // thumbnails; Pixabay for the stock-image search previews
+    // (image-sources.tsx renders hit.preview directly).
+    imgSrc: [
+      "'self'",
+      "data:",
+      "blob:",
+      "storage.googleapis.com",
+      "https://cdn.pixabay.com",
+      "https://pixabay.com",
+    ],
+    connectSrc: ["'self'", ...(sentryOrigin ? [sentryOrigin] : []), ...(dev ? ["ws:", "wss:"] : [])],
+    // SitePreviewPanel embeds the app's OWN same-origin preview routes.
+    frameSrc: ["'self'"],
+    objectSrc: ["'none'"],
+    baseUri: ["'self'"],
+  };
+}
+
 export function buildCsp(env: NodeJS.ProcessEnv): Record<string, string[]> {
   const analyticsOrigin = env.ANALYTICS_BASE_URL ? originFromUrl(env.ANALYTICS_BASE_URL) : null;
   const sentryOrigin = env.SENTRY_DSN ? originFromUrl(env.SENTRY_DSN) : null;
