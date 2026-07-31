@@ -7,15 +7,17 @@ export const crmFormEntry: BlockManifestEntry<typeof crmFormSchema> = {
   schema: crmFormSchema,
   component: CrmForm,
   label: "CRM form",
-  // W1.5 / D1114: the description + aiHints are written for the MODEL as
-  // consumer (the AI block catalog serializes both) — they must carry the
-  // block's render precondition, not internal architecture notes. Form
-  // submissions/PHI still never touch the builder (D-006); the embed is
-  // configured by the operator on the site's CRM tab.
+  // W1.5 / D1114 (refreshed post-W1.6/D700): the description + aiHints are
+  // written for the MODEL as consumer (the AI block catalog serializes
+  // both). Since W1.6, templates ship WORKING platform lead forms — plain
+  // HTML posts to the site's own /api/leads endpoint (stored as Leads) — so
+  // the old "renders nothing without a CRM embed" precondition is false and
+  // steered agents away from a block that works out of the box. PHI/form
+  // submissions still never touch the builder (D-006).
   description:
-    "Embedded lead-capture form provided by the site's CRM integration. Renders nothing unless the operator has configured a CRM embed for this site.",
+    "Lead-capture form. Renders the embed_code HTML verbatim; templates ship a working platform lead form that posts to the site's own /api/leads endpoint and stores submissions as Leads.",
   aiHints:
-    "PRECONDITION: only place this when the site's CRM embed is configured (operator-managed; you cannot configure it). On a site without a configured CRM, this renders as an empty gap — use a cta block (linking to a contact method) or a rich-text contact section instead.",
+    "embed_code must be a complete HTML form. Reuse or adapt an existing crm_form embed already on this site, or the platform lead-form pattern: <form action=\"/api/leads\" method=\"post\"> with name/email/message inputs, a hidden _page input carrying the page path, and a visually-hidden text input named \"website\" (honeypot — leave it empty). Never invent third-party form embeds, iframes, or external form URLs; an externally-hosted CRM embed is only valid when the operator supplied it.",
   category: "content",
   requiresEditorWrapper: true,
 };

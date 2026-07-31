@@ -29,6 +29,19 @@ describe("blockManifest contract", () => {
     expect(types).toContain("crm_form");
   });
 
+  // W1.6 follow-up — since D700, templates ship WORKING platform lead forms
+  // posting to /api/leads; the model-facing hints must not still claim the
+  // block renders nothing without an operator-configured CRM embed, or the
+  // agent will route around a block that works out of the box.
+  it("crm_form hints describe the platform lead form, not a render-nothing precondition", () => {
+    const entry = blockManifest.find((e) => e.type === "crm_form")!;
+    expect(entry.aiHints).toMatch(/\/api\/leads/);
+    expect(entry.aiHints).not.toMatch(/renders as an empty gap/i);
+    expect(entry.description).not.toMatch(/renders nothing/i);
+    // Steer away from inventing third-party embeds.
+    expect(entry.aiHints).toMatch(/never invent|don't invent|do not invent/i);
+  });
+
   it("contains all six Task C2 batch-1 blocks", () => {
     const types = blockManifest.map((e) => e.type);
     expect(types).toContain("split-hero");
