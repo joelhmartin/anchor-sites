@@ -426,7 +426,7 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const { siteId, canonical, enqueueProvision } = await createSiteWithDomains(client, {
+        const { siteId, canonical, enqueueProvision, provisionCrm } = await createSiteWithDomains(client, {
           slug,
           displayName: display_name,
           brandTokens: brand_tokens,
@@ -436,6 +436,8 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
         // enqueue below (and as POST /api/sites) — the provision worker must
         // never see the job before the site row it names.
         await enqueueProvision();
+        // D1013: CRM network call post-COMMIT too — same rule as above.
+        await provisionCrm();
 
         // Enqueue after commit so the job sees the committed site. Best-effort:
         // the site exists regardless; a failed enqueue is reported so the

@@ -122,7 +122,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const { siteId, canonical, canonicalDomainId, enqueueProvision } =
+        const { siteId, canonical, canonicalDomainId, enqueueProvision, provisionCrm } =
           await createSiteWithDomains(client, {
             slug,
             displayName: display_name,
@@ -134,6 +134,9 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         // worker can never pick the job up before the site row is visible
         // to it (and a rolled-back create leaves no orphan job behind).
         await enqueueProvision();
+        // D1013: the CRM network call also runs post-COMMIT — never inside
+        // the transaction (it held a pooled connection for up to 10s).
+        await provisionCrm();
         // P10-10.8: canonical domain row is created in site_domains (pending).
         // Trigger provisioning via POST /api/sites/:id/domains/:domainId/provision
         // (available in the Studio Domains tab) to map it on Cloud Run.

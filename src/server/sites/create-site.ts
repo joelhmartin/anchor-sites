@@ -27,6 +27,13 @@ import type { SiteProvisionInput } from "../jobs/site-provision.js";
  * as an `enqueueProvision()` thunk the caller fires AFTER `COMMIT`, the same
  * shape `POST /api/sites/from-template` already uses for `enqueueMaterialize`
  * (routes/templates.ts).
+ *
+ * W2-CONC / D1013: the CRM `provisionSite` call got the same treatment — it
+ * is a NETWORK call (up to 10s) that ran inside the caller-owned open
+ * transaction, holding a pooled connection (and every row lock the
+ * transaction had taken) hostage to a third-party API's latency. It now
+ * returns as the `provisionCrm()` post-COMMIT thunk, exactly like
+ * `enqueueProvision`. No network calls remain inside the transaction.
  */
 
 export class SiteSlugConflictError extends Error {
@@ -60,6 +67,13 @@ export async function createSiteWithDomains(
    *  anything that inspects `pgboss.job` right after the response — it's a
    *  single INSERT on pg-boss's own pool, not a network round trip. */
   enqueueProvision: () => Promise<void>;
+  /** D1013: the CRM provision network call + its crm_site_id write, moved
+   *  out of the open transaction. Fire AFTER the caller's COMMIT, while the
+   *  `client` is still checked out (both callers await it before their
+   *  `finally { client.release() }`). Never rejects — best-effort exactly
+   *  as the in-transaction version was (logs + enqueues the crm.sync retry
+   *  job on failure). */
+  provisionCrm: () => Promise<void>;
 }> {
   const dup = await client.query(`SELECT 1 FROM sites WHERE slug = $1`, [opts.slug]);
   if (dup.rowCount && dup.rowCount > 0) {
@@ -139,29 +153,35 @@ export async function createSiteWithDomains(
     }
   };
 
-  // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site creation.
+  // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site
+  // creation. D1013: built here (ids in scope) but NOT called — a network
+  // call (up to 10s) must not run inside the caller's open transaction. The
+  // caller fires it after COMMIT; the crm_site_id write then runs on the
+  // same (still-checked-out) client as a plain post-transaction statement.
   const crmClient = opts.crmClient ?? resolveCrmClient(opts.crmEnv);
-  try {
-    const { crmSiteId } = await crmClient.provisionSite(siteId, opts.displayName, canonical);
-    if (crmSiteId) {
-      await client.query(`UPDATE sites SET crm_site_id = $1 WHERE id = $2`, [crmSiteId, siteId]);
-    }
-  } catch (err) {
-    // Best-effort: log and continue. Enqueue crm.sync retry job so pg-boss retries
-    // up to 3× with back-off (T11.7 / D-053). Boss may not be started in test env —
-    // that failure is also swallowed so site creation is never blocked.
-    // eslint-disable-next-line no-console
-    console.error("[crm] provisionSite failed — site creation continues:", err);
+  const provisionCrm = async (): Promise<void> => {
     try {
-      void getBoss().send(
-        CRM_SYNC_JOB,
-        { action: "provision", siteId } satisfies CrmSyncInput,
-        { retryLimit: 3 },
-      );
-    } catch {
-      // Boss not started (JOBS_ENABLED=false or not yet booted) — skip retry enqueue.
+      const { crmSiteId } = await crmClient.provisionSite(siteId, opts.displayName, canonical);
+      if (crmSiteId) {
+        await client.query(`UPDATE sites SET crm_site_id = $1 WHERE id = $2`, [crmSiteId, siteId]);
+      }
+    } catch (err) {
+      // Best-effort: log and continue. Enqueue crm.sync retry job so pg-boss retries
+      // up to 3× with back-off (T11.7 / D-053). Boss may not be started in test env —
+      // that failure is also swallowed so site creation is never blocked.
+      // eslint-disable-next-line no-console
+      console.error("[crm] provisionSite failed — site creation continues:", err);
+      try {
+        void getBoss().send(
+          CRM_SYNC_JOB,
+          { action: "provision", siteId } satisfies CrmSyncInput,
+          { retryLimit: 3 },
+        );
+      } catch {
+        // Boss not started (JOBS_ENABLED=false or not yet booted) — skip retry enqueue.
+      }
     }
-  }
+  };
 
-  return { siteId, canonical, canonicalDomainId, enqueueProvision };
+  return { siteId, canonical, canonicalDomainId, enqueueProvision, provisionCrm };
 }

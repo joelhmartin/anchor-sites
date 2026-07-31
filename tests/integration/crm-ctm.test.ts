@@ -217,12 +217,16 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const { siteId } = await createSiteWithDomains(client, {
+      const { siteId, provisionCrm } = await createSiteWithDomains(client, {
         slug,
         displayName: "CRM Test Site",
         crmClient,
       });
+      // D1013: the CRM call is a post-COMMIT thunk — nothing network-bound
+      // may run while the transaction is open.
+      expect(crmClient.provisionSite).not.toHaveBeenCalled();
       await client.query("COMMIT");
+      await provisionCrm();
 
       expect(crmClient.provisionSite).toHaveBeenCalledWith(siteId, "CRM Test Site", expect.stringContaining(slug));
 
@@ -250,12 +254,14 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const { siteId } = await createSiteWithDomains(client, {
+      const { siteId, provisionCrm } = await createSiteWithDomains(client, {
         slug,
         displayName: "CRM Fail Site",
         crmClient,
       });
       await client.query("COMMIT");
+      // D1013: the failing network call runs post-COMMIT and never rejects.
+      await provisionCrm();
       // Site was created despite CRM failure
       const row = await pool.query<{ id: string; crm_site_id: string | null }>(
         `SELECT id, crm_site_id FROM sites WHERE id = $1`,
@@ -290,6 +296,46 @@ d("P11 — CRM provision in createSiteWithDomains", () => {
 
     expect(r.status).toBe(201);
     expect(crmClient.provisionSite).toHaveBeenCalledTimes(1);
+
+    await pool.query(`DELETE FROM sites WHERE slug = $1`, [slug]).catch(() => {});
+  });
+
+  it("D1013: through POST /api/sites, provisionSite runs POST-COMMIT — the site row is already visible to other connections, and crm_site_id still lands", async () => {
+    let visibleDuringCrmCall: boolean | null = null;
+    const crmClient: CrmClient = {
+      provisionSite: vi.fn(async (siteId: string) => {
+        // `pool` is a DIFFERENT connection than the route's transaction
+        // client — the row is only visible here if COMMIT already ran.
+        const seen = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        visibleDuringCrmCall = (seen.rowCount ?? 0) > 0;
+        return { crmSiteId: "crm-post-commit" };
+      }),
+      updateSite: vi.fn().mockResolvedValue(undefined),
+      deprovisionSite: vi.fn().mockResolvedValue(undefined),
+      listPhoneNumbers: vi.fn().mockResolvedValue([]),
+      listCampaigns: vi.fn().mockResolvedValue([]),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", adminSitesRouter({ pool, createRateLimit: { max: 1000, windowMs: 60_000 }, crmClient }));
+
+    const slug = `crm-postcommit-${Date.now()}`;
+    const r = await request(app)
+      .post("/api/sites")
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ slug, display_name: "Post-commit CRM Test" });
+
+    expect(r.status).toBe(201);
+    expect(crmClient.provisionSite).toHaveBeenCalledTimes(1);
+    expect(visibleDuringCrmCall).toBe(true);
+
+    // The post-commit thunk's crm_site_id write still landed.
+    const row = await pool.query<{ crm_site_id: string | null }>(
+      `SELECT crm_site_id FROM sites WHERE id = $1`,
+      [r.body.site.id],
+    );
+    expect(row.rows[0].crm_site_id).toBe("crm-post-commit");
 
     await pool.query(`DELETE FROM sites WHERE slug = $1`, [slug]).catch(() => {});
   });
