@@ -1,5 +1,6 @@
 import { ApiError } from "./apiFetch.js";
 import { getAdminToken, clearAdminToken } from "./adminToken.js";
+import { notifySessionExpired } from "./sessionExpiry.js";
 
 /**
  * Studio chat drawer types (P-T11). These mirror the shapes documented by
@@ -82,11 +83,14 @@ export async function streamAgentEvents(
     } catch {
       // non-JSON error body — leave as null
     }
-    // Item 7 (CodeRabbit — mirrors apiFetch.ts:47-50): clear the stored
-    // token on 401 here too, so an expired/revoked admin token bounces the
-    // Studio drawer's guard to /login the same way a plain apiFetch call
-    // already does — this SSE path was the one caller that didn't.
-    if (res.status === 401) clearAdminToken();
+    // Item 7 (CodeRabbit — mirrors apiFetch's 401 handling): clear the
+    // stored token AND raise the shared session-expired signal (D801) here
+    // too — this SSE path is the one caller outside apiFetch, and a lapsed
+    // session mid-stream should flip the same re-auth dialog.
+    if (res.status === 401) {
+      clearAdminToken();
+      notifySessionExpired();
+    }
     throw new ApiError(`agent stream request failed (${res.status})`, res.status, body);
   }
 

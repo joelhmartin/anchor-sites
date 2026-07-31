@@ -6,6 +6,7 @@ import {
   setAdminToken,
 } from "./adminToken.js";
 import { ApiError, apiFetch } from "./apiFetch.js";
+import { clearSessionExpired, isSessionExpired } from "./sessionExpiry.js";
 
 describe("adminToken storage (P4-T4.8)", () => {
   beforeEach(() => clearAdminToken());
@@ -69,6 +70,20 @@ describe("apiFetch (P4-T4.8)", () => {
     mockFetch(401, { error: "unauthorized" });
     await expect(apiFetch("/api/sites")).rejects.toBeInstanceOf(ApiError);
     expect(getAdminToken()).toBeNull();
+  });
+
+  // D801 — the shared 401 signal: one 401 anywhere flips the session-expired
+  // flag every re-auth surface + retry loop consults.
+  it("[D801] a 401 raises the shared session-expired signal; 2xx does not", async () => {
+    clearSessionExpired();
+    mockFetch(200, { ok: true });
+    await apiFetch("/api/sites");
+    expect(isSessionExpired()).toBe(false);
+
+    mockFetch(401, { error: "unauthorized" });
+    await expect(apiFetch("/api/sites")).rejects.toBeInstanceOf(ApiError);
+    expect(isSessionExpired()).toBe(true);
+    clearSessionExpired();
   });
 
   it("maps other non-2xx to ApiError with the server error message + status", async () => {

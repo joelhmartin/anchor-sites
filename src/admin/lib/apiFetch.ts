@@ -1,4 +1,5 @@
 import { clearAdminToken, getAdminToken } from "./adminToken.js";
+import { notifySessionExpired } from "./sessionExpiry.js";
 
 /** Typed API error so callers can branch on status. */
 export class ApiError extends Error {
@@ -20,8 +21,16 @@ export type ApiFetchOptions = Omit<RequestInit, "body"> & {
  * Fetch wrapper for the admin API (P4-T4.8; P8-T8.5). Sends the Studio session
  * cookie (`credentials: "include"`) AND attaches the `X-Admin-Token` header
  * when present (break-glass / service path) — `requireAdmin` accepts either.
- * JSON-encodes the body, parses the response, maps non-2xx to a typed
- * `ApiError`, and clears any stored token on 401 so the guard bounces to /login.
+ * JSON-encodes the body, parses the response, and maps non-2xx to a typed
+ * `ApiError`.
+ *
+ * On 401 (D801/D802): clears any stored break-glass token (it was just
+ * rejected) and raises the SHARED session-expired signal
+ * (`notifySessionExpired`) — which flips the "Session expired" re-auth
+ * surface `RequireAdmin` keeps mounted over the live SPA, and tells
+ * background retry loops to stop. Note this fetch wrapper does NOT navigate
+ * and the guard does NOT re-probe on its own — the dialog is the re-auth
+ * path, deliberately, so unsaved SPA state stays alive under it.
  */
 export async function apiFetch<T = unknown>(
   path: string,
@@ -44,6 +53,7 @@ export async function apiFetch<T = unknown>(
 
   if (res.status === 401) {
     clearAdminToken();
+    notifySessionExpired();
     throw new ApiError("unauthorized", 401, await safeJson(res));
   }
 

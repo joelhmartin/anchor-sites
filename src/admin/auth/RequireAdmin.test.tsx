@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 const fetchMe = vi.fn();
-vi.mock("../lib/session.js", () => ({ fetchMe: (...args: unknown[]) => fetchMe(...args) }));
+vi.mock("../lib/session.js", () => ({
+  fetchMe: (...args: unknown[]) => fetchMe(...args),
+  signInWithGoogle: vi.fn(),
+}));
 
 import { RequireAdmin } from "./RequireAdmin.js";
+import { clearSessionExpired, notifySessionExpired } from "../lib/sessionExpiry.js";
 
 /** Echo target so tests can assert exactly what reached /login. */
 function LoginEcho() {
@@ -33,6 +37,7 @@ describe("RequireAdmin (P8-T8.5) — async session probe", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    clearSessionExpired();
   });
 
   it("renders the outlet when /api/me resolves to a user", async () => {
@@ -51,6 +56,19 @@ describe("RequireAdmin (P8-T8.5) — async session probe", () => {
     fetchMe.mockRejectedValue(new Error("unauthorized"));
     renderGuard();
     expect(await screen.findByText("LOGIN")).toBeTruthy();
+  });
+
+  // D801 — the expired-session dialog rides alongside the outlet: a shared
+  // 401 signal mid-use overlays the LIVE app instead of stranding it.
+  it("[D801] overlays the session-expired dialog when the shared signal fires", async () => {
+    fetchMe.mockResolvedValue({ id: "u1", email: "a@b" });
+    renderGuard();
+    expect(await screen.findByText("PROTECTED")).toBeTruthy();
+    expect(screen.queryByTestId("session-expired-dialog")).toBeNull();
+    act(() => notifySessionExpired());
+    expect(await screen.findByTestId("session-expired-dialog")).toBeTruthy();
+    // The protected content is still mounted underneath.
+    expect(screen.getByText("PROTECTED")).toBeTruthy();
   });
 
   // D214 — the bounce must preserve the FULL attempted location, query

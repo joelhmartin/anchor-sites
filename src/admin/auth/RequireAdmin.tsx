@@ -1,5 +1,8 @@
+import { useEffect } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { Spinner } from "../ui/spinner.js";
+import { clearSessionExpired } from "../lib/sessionExpiry.js";
+import { SessionExpiredDialog } from "./SessionExpiredDialog.js";
 import { useStudioSession } from "./useStudioSession.js";
 
 /**
@@ -18,6 +21,13 @@ import { useStudioSession } from "./useStudioSession.js";
 export function RequireAdmin() {
   const { status } = useStudioSession();
   const location = useLocation();
+
+  // D801 — a fresh successful probe means whatever raised the shared
+  // session-expired flag has been resolved (re-auth round-trip, token
+  // re-paste); reset it so the dialog doesn't linger over a valid session.
+  useEffect(() => {
+    if (status === "authed") clearSessionExpired();
+  }, [status]);
 
   if (status === "loading") {
     return (
@@ -44,5 +54,13 @@ export function RequireAdmin() {
       />
     );
   }
-  return <Outlet />;
+  // D801: the expired-session dialog rides ALONGSIDE the outlet — when the
+  // shared 401 signal fires mid-use it overlays the live SPA instead of
+  // tearing it down, preserving unsaved editor state under it.
+  return (
+    <>
+      <Outlet />
+      <SessionExpiredDialog />
+    </>
+  );
 }
