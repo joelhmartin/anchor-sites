@@ -47,6 +47,15 @@ export function pageRouter(opts: { pool?: Pool } = {}): Router {
       return;
     }
 
+    // D902 — normalizeSlug maps /home → the home page but never redirected,
+    // so /home served a byte-identical duplicate of / with its own canonical:
+    // one page, two indexable URLs. Permanent-redirect to the canonical /.
+    if (req.path === "/home" || req.path === "/home/") {
+      const query = req.originalUrl.split("?")[1];
+      res.redirect(301, query ? `/?${query}` : "/");
+      return;
+    }
+
     const slug = normalizeSlug(req.path);
 
     try {

@@ -351,6 +351,37 @@ d("page renderer catch-all (integration)", () => {
     }
   });
 
+  // D902 — normalizeSlug maps /home → the home page but never redirected, so
+  // /home served a byte-identical duplicate of / with its own canonical
+  // (verified live): one page, two indexable URLs, split canonicals.
+  describe("D902 — /home permanently redirects to /", () => {
+    it("301s /home (and /home/) to /", async () => {
+      for (const path of ["/home", "/home/"]) {
+        const res = await request(app)
+          .get(path)
+          .set("Host", "muldoon-dental.sites.anchorcorps.com")
+          .redirects(0);
+        expect(res.status).toBe(301);
+        expect(res.headers.location).toBe("/");
+      }
+    });
+
+    it("preserves the query string across the redirect", async () => {
+      const res = await request(app)
+        .get("/home?utm_source=x")
+        .set("Host", "muldoon-dental.sites.anchorcorps.com")
+        .redirects(0);
+      expect(res.status).toBe(301);
+      expect(res.headers.location).toBe("/?utm_source=x");
+    });
+
+    it("does not redirect on admin/unknown hosts", async () => {
+      const res = await request(app).get("/home").set("Host", "studio.localhost").redirects(0);
+      expect(res.status).toBe(200);
+      expect(res.text).toBe("DOWNSTREAM");
+    });
+  });
+
   // D914 — every tenant tab used to open icon-less AND fire a /favicon.ico
   // request that the catch-all answered with the full ~20 KB HTML 404 page.
   describe("D914 — tenant favicon", () => {
