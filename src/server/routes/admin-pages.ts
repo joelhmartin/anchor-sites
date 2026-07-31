@@ -686,13 +686,40 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           }
         }
 
-        const domainRes = await pool.query<{ hostname: string }>(
-          `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+        // FINAL whole-branch review, FIX-NOW item 2b: this used to return a
+        // bare `live_url` with no provisioning state, and the workspace
+        // rendered it as a success-styled external link the moment publish
+        // resolved. But the canonical hostname's Cloud Run mapping and cert
+        // are provisioned ASYNCHRONOUSLY (the `site.provision` job), so for
+        // the first minutes of a brand-new site that link goes nowhere —
+        // the single most confidence-destroying thing this flow could do.
+        // The two status columns ride along so the client can say "still
+        // provisioning" instead of lying.
+        const domainRes = await pool.query<{
+          hostname: string;
+          verification_status: string;
+          ssl_status: string;
+        }>(
+          `SELECT hostname, verification_status, ssl_status
+             FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
           [siteId],
         );
-        const live_url = domainRes.rows[0]?.hostname ? `https://${domainRes.rows[0].hostname}` : null;
+        const domain = domainRes.rows[0];
+        const live_url = domain?.hostname ? `https://${domain.hostname}` : null;
+        const live_url_ready =
+          domain?.verification_status === "verified" && domain?.ssl_status === "active";
 
-        res.status(200).json({ published, live_url });
+        res.status(200).json({
+          published,
+          live_url,
+          live_url_ready,
+          live_url_status: domain
+            ? {
+                verification_status: domain.verification_status,
+                ssl_status: domain.ssl_status,
+              }
+            : null,
+        });
       } catch (err) {
         await client.query("ROLLBACK").catch(() => undefined);
         next(err);

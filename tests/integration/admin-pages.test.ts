@@ -554,6 +554,14 @@ d("admin pages — bulk publish (Task B3)", () => {
       [draftAId, draftBId, homePageId],
     ]);
     await pool.query(`DELETE FROM pages WHERE id = ANY($1::uuid[])`, [[draftAId, draftBId]]);
+    // Item 2b's tests drive the primary domain's provisioning columns; put
+    // them back to what db/seed.ts writes so nothing downstream inherits a
+    // half-provisioned domain.
+    await pool.query(
+      `UPDATE site_domains SET verification_status = 'verified', ssl_status = 'active'
+        WHERE site_id = $1 AND is_primary = true`,
+      [siteId],
+    );
   });
 
   it("publishes every draft page, appends a 'manual' revision per page, and returns the live_url", async () => {
@@ -576,6 +584,49 @@ d("admin pages — bulk publish (Task B3)", () => {
     );
     expect(revs.rows).toHaveLength(2);
     for (const row of revs.rows) expect(row.source).toBe("manual");
+  });
+
+  // FINAL whole-branch review, FIX-NOW item 2b — the publish response's
+  // live_url used to carry no provisioning state at all, so the workspace
+  // rendered a success-styled link to a hostname whose Cloud Run mapping /
+  // cert might not exist yet: a dead link presented as a finished site.
+  it("reports live_url_ready:false (with the raw statuses) while the primary domain is still provisioning", async () => {
+    await pool.query(
+      `UPDATE site_domains SET verification_status = 'pending', ssl_status = 'pending'
+        WHERE site_id = $1 AND is_primary = true`,
+      [siteId],
+    );
+
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/publish`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.live_url).toMatch(/^https:\/\//);
+    expect(res.body.live_url_ready).toBe(false);
+    expect(res.body.live_url_status).toEqual({
+      verification_status: "pending",
+      ssl_status: "pending",
+    });
+  });
+
+  it("reports live_url_ready:true once the primary domain is verified with an active cert", async () => {
+    await pool.query(
+      `UPDATE site_domains SET verification_status = 'verified', ssl_status = 'active'
+        WHERE site_id = $1 AND is_primary = true`,
+      [siteId],
+    );
+
+    const res = await request(app)
+      .post(`/api/sites/${siteId}/publish`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.live_url_ready).toBe(true);
+    expect(res.body.live_url_status).toEqual({
+      verification_status: "verified",
+      ssl_status: "active",
+    });
   });
 
   it("preserves each page's blocks/seo untouched — only status flips", async () => {

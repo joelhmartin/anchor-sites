@@ -64,7 +64,14 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
   const pages = overrides.pages ?? [HOME_PAGE, ABOUT_PAGE];
   const git = overrides.git ?? { configured: false, repo: null, state: null };
   const conversations = overrides.conversations ?? [];
-  const publish = overrides.publish ?? { status: 200, body: { published: 1, live_url: "https://acme.example.com" } };
+  const publish =
+    overrides.publish ?? {
+      status: 200,
+      // Final review item 2b: the real route now reports whether the primary
+      // domain has actually finished provisioning. The default fixture is the
+      // finished case; the not-ready case has its own test below.
+      body: { published: 1, live_url: "https://acme.example.com", live_url_ready: true },
+    };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -242,6 +249,30 @@ describe("WorkspacePage (Task B2)", () => {
     expect(link.getAttribute("href")).toBe("https://acme.example.com");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(screen.getByText("Published 1 page.")).toBeTruthy();
+  });
+
+  // FINAL whole-branch review, FIX-NOW items 2c + 3 — a live_url whose
+  // domain is still provisioning must NOT read as a finished, clickable
+  // site.
+  it("renders the live URL as plain text plus a provisioning note when live_url_ready is false", async () => {
+    mockWorkspaceFetch({
+      publish: {
+        status: 200,
+        body: { published: 1, live_url: "https://acme.example.com", live_url_ready: false },
+      },
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText("Published 1 page.");
+    // The URL is shown (the operator still wants to know it) but is inert.
+    expect(screen.queryByRole("link", { name: /acme\.example\.com/ })).toBeNull();
+    expect(screen.getByText("https://acme.example.com")).toBeTruthy();
+    expect(screen.getByText(/domain still provisioning/i)).toBeTruthy();
   });
 
   it("Fix round 1 (Critical finding 1) — disables Publish (and shows an explanatory title) when every page is already published", async () => {

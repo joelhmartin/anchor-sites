@@ -29,9 +29,8 @@ const CNAME_RECORD = {
   rrdata: "ghs.googlehosted.com.",
 };
 
-function makeCloudRunMock(opts: { ready?: boolean; fail?: boolean } = {}): CloudRunDomainsClient {
-  const ready = opts.ready ?? true;
-  const mapping = {
+function makeMapping(ready: boolean) {
+  return {
     apiVersion: "domains.cloudrun.com/v1",
     kind: "DomainMapping",
     metadata: { name: "x", namespace: "p" },
@@ -49,6 +48,24 @@ function makeCloudRunMock(opts: { ready?: boolean; fail?: boolean } = {}): Cloud
       resourceRecords: [CNAME_RECORD],
     },
   };
+}
+
+function makeCloudRunMock(
+  opts: {
+    ready?: boolean;
+    fail?: boolean;
+    /** Mapping state the initial `createIfMissing` reports, when it differs
+     *  from what `waitForReady` eventually reports (the realistic case: a
+     *  brand-new mapping is never Ready on creation). Defaults to `ready`. */
+    readyOnCreate?: boolean;
+    /** `waitForReady` rejects — a cert that hasn't been issued inside the
+     *  job's bounded wait. */
+    waitTimesOut?: boolean;
+  } = {},
+): CloudRunDomainsClient {
+  const ready = opts.ready ?? true;
+  const created = makeMapping(opts.readyOnCreate ?? ready);
+  const waited = makeMapping(ready);
   return {
     createIfMissing: opts.fail
       ? vi.fn(async () => {
@@ -56,10 +73,16 @@ function makeCloudRunMock(opts: { ready?: boolean; fail?: boolean } = {}): Cloud
             "Cloud Run 403 : PermissionDenied — service account not a verified owner",
           );
         })
-      : vi.fn(async () => mapping),
-    waitForReady: vi.fn(async () => mapping),
+      : vi.fn(async () => created),
+    waitForReady: opts.waitTimesOut
+      ? vi.fn(async () => {
+          throw new Error(
+            "Cloud Run domain mapping not ready after 240000ms (last: Ready=Unknown, CertificateProvisioned=Unknown)",
+          );
+        })
+      : vi.fn(async () => waited),
     getRequiredDnsRecords: vi.fn(async () => [CNAME_RECORD]),
-    get: vi.fn(async () => mapping),
+    get: vi.fn(async () => created),
   } as unknown as CloudRunDomainsClient;
 }
 
@@ -106,7 +129,13 @@ describe("handleSiteProvision — deps.provision override (pure unit)", () => {
       { pool: fakePool, provision },
     );
 
-    expect(provision).toHaveBeenCalledWith("s1", expect.objectContaining({ pool: fakePool }));
+    // FINAL whole-branch review, FIX-NOW item 2a: the handler must ask for
+    // the wait step (bounded) — without it `verification_status`/`ssl_status`
+    // never leave 'pending' and the workspace's live_url is a dead link.
+    expect(provision).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ pool: fakePool, wait: true, waitTimeoutMs: expect.any(Number) }),
+    );
     expect(result).toBe(okResult);
     expect(fakePool.query).not.toHaveBeenCalled(); // no failure → no status write
   });
@@ -178,10 +207,52 @@ d("handleSiteProvision — real orchestration, fake DNS/Cloud Run (integration)"
     expect(result.steps.every((s) => s.status !== "error")).toBe(true);
     expect(cloudRun.createIfMissing).toHaveBeenCalledOnce();
     expect(dns.ensureRecord).toHaveBeenCalledOnce();
-    // No wait step requested → status update block still ran off the initial
-    // mapping conditions (Ready=True in this fake), so the row IS verified.
     const status = await domainStatus(db.getPool(), domainId);
     expect(status.verification_status).toBe("verified");
+  });
+
+  // FINAL whole-branch review, FIX-NOW item 2a.
+  it("waits for the mapping and flips the domain row to verified/active — the columns reach a terminal state on success", async () => {
+    const seed = await db.seedSite("site-provision-waits");
+    const { domainId } = await seedSiteWithCanonicalDomain(db.getPool(), seed);
+    const dns = makeDnsMock("created");
+    // Realistic: a freshly-created mapping is NOT ready; only the wait step
+    // ever sees Ready=True/CertificateProvisioned=True. Before the fix the
+    // job never waited, so the row stayed pending/pending forever and the
+    // workspace's "live" URL was a dead link.
+    const cloudRun = makeCloudRunMock({ readyOnCreate: false, ready: true });
+
+    const result = await handleSiteProvision(
+      { siteId: seed.id, domainId },
+      { pool: db.getPool(), dns, cloudRun },
+    );
+
+    expect(cloudRun.waitForReady).toHaveBeenCalledOnce();
+    expect(result.ready).toBe(true);
+    expect(await domainStatus(db.getPool(), domainId)).toEqual({
+      verification_status: "verified",
+      ssl_status: "active",
+    });
+  });
+
+  it("a wait_ready timeout leaves the row 'pending' (NOT 'failed') and rethrows so pg-boss retries the poll", async () => {
+    const seed = await db.seedSite("site-provision-wait-timeout");
+    const { domainId } = await seedSiteWithCanonicalDomain(db.getPool(), seed);
+    const dns = makeDnsMock("created");
+    const cloudRun = makeCloudRunMock({ readyOnCreate: false, waitTimesOut: true });
+
+    await expect(
+      handleSiteProvision({ siteId: seed.id, domainId }, { pool: db.getPool(), dns, cloudRun }),
+    ).rejects.toThrow(/not ready yet/i);
+
+    // "Cert not issued yet" is not a failure — marking the row 'failed'
+    // would tell the operator provisioning broke when it's simply still in
+    // flight, and the retry that follows would have nothing to correct it
+    // from. The Cloud Run mapping and the DNS record both exist by now.
+    expect(await domainStatus(db.getPool(), domainId)).toEqual({
+      verification_status: "pending",
+      ssl_status: "pending",
+    });
   });
 
   it("records the documented Webmaster-Central limitation cleanly: cloud_run PermissionDenied -> domain row 'failed', job rethrows", async () => {
