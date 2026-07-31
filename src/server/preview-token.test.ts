@@ -224,3 +224,96 @@ describe("previewQueryAuth middleware", () => {
     expect(res.body.header).toBe("static-admin-token");
   });
 });
+
+// -----------------------------------------------------------------------------
+// Template-scoped preview tokens (W1.1, 2026-07-30 product-audit remediation).
+// Same HMAC family, distinct `ptv1` prefix — a template token must never
+// authorize a site preview and vice versa (the prefix is inside the MAC'd
+// payload, so cross-scope replay fails the signature/prefix checks).
+// -----------------------------------------------------------------------------
+
+import {
+  mintTemplatePreviewToken,
+  templatePreviewQueryAuth,
+  verifyTemplatePreviewToken,
+} from "./preview-token.js";
+
+const TPL_A = "33333333-3333-4333-8333-333333333333";
+const TPL_B = "44444444-4444-4444-8444-444444444444";
+
+function mintTpl(templateId: string, over: { ttlMs?: number; now?: number } = {}) {
+  const minted = mintTemplatePreviewToken(templateId, { env: SECRET_ENV, ...over });
+  if (!minted) throw new Error("mint returned null");
+  return minted;
+}
+
+describe("template preview tokens", () => {
+  it("mints a ptv1-prefixed token verifiable only for that template", () => {
+    const now = Date.now();
+    const { token } = mintTpl(TPL_A, { now });
+    expect(token.startsWith("ptv1.")).toBe(true);
+    expect(verifyTemplatePreviewToken(token, TPL_A, { env: SECRET_ENV, now })).toBe(true);
+    expect(verifyTemplatePreviewToken(token, TPL_B, { env: SECRET_ENV, now })).toBe(false);
+  });
+
+  it("never cross-authorizes between site and template scopes", () => {
+    const now = Date.now();
+    const site = mint(TPL_A, { now }); // a site token whose id happens to equal the template id
+    const tpl = mintTpl(TPL_A, { now });
+    expect(verifyTemplatePreviewToken(site.token, TPL_A, { env: SECRET_ENV, now })).toBe(false);
+    expect(verifyPreviewToken(tpl.token, TPL_A, { env: SECRET_ENV, now })).toBe(false);
+  });
+
+  it("rejects expiry extension, wrong secret, garbage, and expired tokens", () => {
+    const now = Date.now();
+    const { token, expiresAt } = mintTpl(TPL_A, { now, ttlMs: 60_000 });
+    const [prefix, id, exp, sig] = token.split(".");
+    const forged = [prefix, id, String(Number(exp) + 86_400), sig].join(".");
+    expect(verifyTemplatePreviewToken(forged, TPL_A, { env: SECRET_ENV, now })).toBe(false);
+    expect(verifyTemplatePreviewToken(token, TPL_A, { env: SECRET_ENV, now: expiresAt })).toBe(false);
+    expect(
+      verifyTemplatePreviewToken(
+        mintTemplatePreviewToken(TPL_A, { env: { BETTER_AUTH_SECRET: "other" } })!.token,
+        TPL_A,
+        { env: SECRET_ENV },
+      ),
+    ).toBe(false);
+    for (const bad of ["", "ptv1.", "ptv1.a.b", undefined, null, 42]) {
+      expect(verifyTemplatePreviewToken(bad, TPL_A, { env: SECRET_ENV })).toBe(false);
+    }
+  });
+
+  it("fails closed with no secret", () => {
+    expect(mintTemplatePreviewToken(TPL_A, { env: {} })).toBeNull();
+    const { token } = mintTpl(TPL_A);
+    expect(verifyTemplatePreviewToken(token, TPL_A, { env: {} })).toBe(false);
+  });
+});
+
+describe("templatePreviewQueryAuth middleware", () => {
+  function app() {
+    const a = express();
+    const admin = (_req: Request, res: Response) => {
+      res.status(401).json({ error: "unauthorized" });
+    };
+    a.get(
+      "/api/templates/:id/preview",
+      templatePreviewQueryAuth(admin, { env: SECRET_ENV }),
+      (req: Request, res: Response) => res.json({ ok: true, user: req.studioUser?.id }),
+    );
+    return a;
+  }
+
+  it("authorizes with a valid template token for :id", async () => {
+    const { token } = mintTpl(TPL_A);
+    const res = await request(app()).get(`/api/templates/${TPL_A}/preview?token=${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.user).toBe("preview-token");
+  });
+
+  it("falls through to the admin gate for another template's token or no token", async () => {
+    const { token } = mintTpl(TPL_A);
+    expect((await request(app()).get(`/api/templates/${TPL_B}/preview?token=${token}`)).status).toBe(401);
+    expect((await request(app()).get(`/api/templates/${TPL_A}/preview`)).status).toBe(401);
+  });
+});

@@ -98,3 +98,30 @@ describe("rewriteSiteRelativeHrefs", () => {
     expect(out).toContain(`href="/api/sites/${SITE}/pages/pg-about/preview?token=tok-123"`);
   });
 });
+
+// W1.1 — template preview flavor: same rewrite rules, addressed by slug.
+import { buildTemplatePreviewHrefResolver } from "./preview-links.js";
+
+describe("buildTemplatePreviewHrefResolver", () => {
+  const TPL = "tpl-1";
+  const resolve = (query?: Record<string, unknown>) =>
+    buildTemplatePreviewHrefResolver({
+      templateId: TPL,
+      pages: [{ slug: "home" }, { slug: "about" }],
+      query,
+    });
+
+  it("maps /<slug> to that template page's preview URL, / to home", () => {
+    expect(resolve()("/about")).toBe(`/api/templates/${TPL}/preview/about`);
+    expect(resolve()("/")).toBe(`/api/templates/${TPL}/preview/home`);
+  });
+
+  it("returns null for an unknown slug (caller makes it inert)", () => {
+    expect(resolve()("/services")).toBeNull();
+  });
+
+  it("propagates token/v but never edit/bridge, and keeps fragments", () => {
+    const r = resolve({ token: "tok", v: "3", edit: "1", bridge: "b" });
+    expect(r("/about#team")).toBe(`/api/templates/${TPL}/preview/about?token=tok&v=3#team`);
+  });
+});

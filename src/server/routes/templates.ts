@@ -17,6 +17,11 @@ import { brandTokensSchema } from "../../blocks/brand-tokens.js";
 import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-site.js";
 import { getBoss, TEMPLATE_MATERIALIZE } from "../jobs/index.js";
 import type { Block } from "../../blocks/types.js";
+import { renderPage } from "../render-page.js";
+import { loadAssetsForBlocks } from "../render-hydration.js";
+import { mintTemplatePreviewToken, templatePreviewQueryAuth } from "../preview-token.js";
+import { buildTemplatePreviewHrefResolver } from "../preview-links.js";
+import type { ResolvedSite } from "../../middleware/resolveSite.js";
 
 /** Enqueue a template-materialization job. Injectable so tests stub pg-boss. */
 export type MaterializeEnqueue = (input: {
@@ -484,6 +489,187 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
           status: statusParse.success ? statusParse.data : "active",
         });
         res.json({ templates });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/templates/:id/preview-token — mint the short-lived,
+  // TEMPLATE-scoped credential the template-preview <iframe> carries in its
+  // query string (W1.1). Same design as the site preview-token route
+  // (admin-pages.ts): THIS request is a normal SPA fetch (cookies/headers
+  // reach it); the iframe it mints for can use neither.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/templates/:id/preview-token",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const found = await getTemplate(req.params.id, { pool });
+        if (!found) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        const minted = mintTemplatePreviewToken(req.params.id);
+        if (!minted) {
+          res.status(503).json({ error: "preview tokens not configured" });
+          return;
+        }
+        res.json({ token: minted.token, expires_at: new Date(minted.expiresAt).toISOString() });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // GET /api/templates/:id/preview/:pageSlug? — render one of a template's
+  // pages as full HTML through the SAME pipeline the site preview uses
+  // (renderPage + shell + block CSS), so what the operator previews is what
+  // materialize will produce (W1.1 / D701, D205).
+  //
+  // Why this route exists at all: built-in templates seed with NO
+  // `source_site_id` (db/seed-templates.ts INSERTs without the column), so
+  // there is no real site to point an iframe at — the template's own
+  // `template_pages` blocks are the only source of truth. Rendering them
+  // through `renderPage` against a synthetic ResolvedSite (template name as
+  // display name, template brand_tokens as the site tokens, analytics/CTM
+  // hard-off exactly like the draft preview) reuses the whole existing
+  // renderer instead of growing a parallel one.
+  //
+  // Auth mirrors the site preview route: the sandboxed iframe can send no
+  // cookies and set no headers, so `?token=` (template-scoped, 15-min,
+  // minted above) or the legacy query-token shim is the whole story.
+  // -------------------------------------------------------------------------
+  router.get(
+    "/templates/:id/preview/:pageSlug?",
+    templatePreviewQueryAuth(admin),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const found = await getTemplate(req.params.id, { pool });
+        if (!found) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        const { template, pages } = found;
+        if (pages.length === 0) {
+          res.status(404).json({ error: "template has no pages" });
+          return;
+        }
+        const pageSlug = req.params.pageSlug;
+        const tplPage = pageSlug ? pages.find((p) => p.slug === pageSlug) : pages[0];
+        if (!tplPage) {
+          res.status(404).json({ error: "template page not found" });
+          return;
+        }
+
+        const site: ResolvedSite = {
+          id: template.id,
+          slug: template.slug,
+          display_name: template.name,
+          default_brand_tokens: template.brand_tokens ?? {},
+          seo_defaults: {},
+          // Never inject tracking into a sandboxed preview (same rule as the
+          // site draft preview — see admin-pages.ts).
+          ctm_account_id: null,
+          analytics_disabled: true,
+          matched_via: "domain",
+          plugins: [],
+        };
+
+        // Captured templates keep their source site's asset_ids; hydrate from
+        // that site when it exists. Built-ins have no source site (and no
+        // in-page asset_ids), so an empty asset set renders their blocks'
+        // designed placeholders.
+        const assets = template.source_site_id
+          ? await loadAssetsForBlocks(pool, template.source_site_id, tplPage.blocks)
+          : [];
+
+        // Same CSP/cache/referrer story as the site draft preview route
+        // (admin-pages.ts documents each header at length): sandboxed,
+        // script-free, style/img over https+data, never cached, and never
+        // leaking the tokened URL via Referer.
+        res.setHeader(
+          "Content-Security-Policy",
+          "sandbox allow-scripts; default-src 'self' https: data:; " +
+            "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
+            "script-src 'none'; frame-ancestors 'self'",
+        );
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Referrer-Policy", "no-referrer");
+
+        const rewriteHref = buildTemplatePreviewHrefResolver({
+          templateId: template.id,
+          pages,
+          query: req.query as Record<string, unknown>,
+        });
+        const { html } = renderPage(
+          site,
+          {
+            title: tplPage.title,
+            blocks: tplPage.blocks ?? [],
+            seo: tplPage.seo ?? {},
+            brand_tokens_override: null,
+          },
+          {
+            assets,
+            path: tplPage.slug === "home" ? "/" : `/${tplPage.slug}`,
+            rewriteHref,
+          },
+        );
+        res.status(200).type("html").send(html);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/sites/:siteId/materialize-template — re-enqueue materialization
+  // for an existing site (W1.1 / D703). The from-template response reports
+  // `job:{queued:false,error}` when the enqueue fails after the site was
+  // created; this is the retry affordance that failure previously lacked —
+  // without it the operator was stranded on a 0-page site with no recourse
+  // but recreating it under a new slug.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/materialize-template",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = z.object({ template_id: z.string().uuid() }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid payload" });
+        return;
+      }
+      const { siteId } = req.params;
+      const { template_id } = parsed.data;
+      try {
+        const siteOk = await pool.query(`SELECT 1 FROM sites WHERE id = $1`, [siteId]);
+        if (siteOk.rowCount === 0) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const found = await getTemplate(template_id, { pool });
+        if (!found) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        if (found.template.kind !== "site") {
+          res.status(400).json({ error: "template is not a site template" });
+          return;
+        }
+
+        let job: { queued: boolean; id?: string | null; error?: string };
+        try {
+          const r = await enqueueMaterialize({ siteId, templateId: template_id });
+          job = { queued: true, id: r.id };
+        } catch (e) {
+          job = { queued: false, error: e instanceof Error ? e.message : String(e) };
+        }
+        res.status(job.queued ? 202 : 503).json({ job });
       } catch (err) {
         next(err);
       }

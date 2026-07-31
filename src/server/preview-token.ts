@@ -43,6 +43,15 @@ import { tokenFromQuery } from "./routes/admin-ai-agent.js";
  */
 
 const PREFIX = "pv1";
+/**
+ * Template-scoped variant (W1.1, 2026-07-30 product-audit remediation): the
+ * template-preview iframe has the exact same constraints as the site-preview
+ * one (sandboxed, opaque origin, query-string-only credential channel), so it
+ * gets the same token family under a DISTINCT prefix. The prefix is part of
+ * the MAC'd payload, so a template token can never authorize a site preview
+ * or vice versa — even for an id collision.
+ */
+const TEMPLATE_PREFIX = "ptv1";
 const KEY_LABEL = "anchor-sites/preview-token/v1";
 
 /** 15 minutes. Long enough for an editing session's page loads, short enough that a leaked URL rots fast. */
@@ -101,14 +110,30 @@ export function mintPreviewToken(
   siteId: string,
   opts: PreviewTokenOptions = {},
 ): MintedPreviewToken | null {
+  return mintScoped(PREFIX, siteId, opts);
+}
+
+/** Template-scoped mint — identical shape under the `ptv1` prefix. */
+export function mintTemplatePreviewToken(
+  templateId: string,
+  opts: PreviewTokenOptions = {},
+): MintedPreviewToken | null {
+  return mintScoped(TEMPLATE_PREFIX, templateId, opts);
+}
+
+function mintScoped(
+  prefix: string,
+  id: string,
+  opts: PreviewTokenOptions = {},
+): MintedPreviewToken | null {
   const secret = previewTokenSecret(opts.env);
   if (!secret) return null;
-  if (typeof siteId !== "string" || siteId.length === 0 || siteId.includes(".")) return null;
+  if (typeof id !== "string" || id.length === 0 || id.includes(".")) return null;
 
   const now = opts.now ?? Date.now();
   const ttlMs = opts.ttlMs ?? PREVIEW_TOKEN_TTL_MS;
   const expSeconds = Math.floor((now + ttlMs) / 1000);
-  const payload = `${PREFIX}.${siteId}.${expSeconds}`;
+  const payload = `${prefix}.${id}.${expSeconds}`;
   const token = `${payload}.${sign(secret, payload).toString("base64url")}`;
   return { token, expiresAt: expSeconds * 1000 };
 }
@@ -126,18 +151,36 @@ export function verifyPreviewToken(
   siteId: string,
   opts: { env?: NodeJS.ProcessEnv; now?: number } = {},
 ): boolean {
-  if (typeof token !== "string" || !token.startsWith(`${PREFIX}.`)) return false;
+  return verifyScoped(PREFIX, token, siteId, opts);
+}
+
+/** Template-scoped verify — only accepts `ptv1` tokens for THIS template id. */
+export function verifyTemplatePreviewToken(
+  token: unknown,
+  templateId: string,
+  opts: { env?: NodeJS.ProcessEnv; now?: number } = {},
+): boolean {
+  return verifyScoped(TEMPLATE_PREFIX, token, templateId, opts);
+}
+
+function verifyScoped(
+  prefix: string,
+  token: unknown,
+  id: string,
+  opts: { env?: NodeJS.ProcessEnv; now?: number } = {},
+): boolean {
+  if (typeof token !== "string" || !token.startsWith(`${prefix}.`)) return false;
   const secret = previewTokenSecret(opts.env);
   if (!secret) return false;
 
   const parts = token.split(".");
   if (parts.length !== 4) return false;
-  const [, tokenSiteId, expRaw, sigRaw] = parts;
-  if (!tokenSiteId || !sigRaw) return false;
+  const [, tokenId, expRaw, sigRaw] = parts;
+  if (!tokenId || !sigRaw) return false;
   if (!/^\d+$/.test(expRaw)) return false;
 
   const provided = Buffer.from(sigRaw, "base64url");
-  const expected = sign(secret, `${PREFIX}.${tokenSiteId}.${expRaw}`);
+  const expected = sign(secret, `${prefix}.${tokenId}.${expRaw}`);
   // timingSafeEqual THROWS on a length mismatch — guard first (buffers of
   // different lengths can never be a match anyway). Same shape as
   // `verifyGithubSignature` (routes/git-webhook.ts).
@@ -148,9 +191,9 @@ export function verifyPreviewToken(
   if (Number(expRaw) * 1000 <= now) return false;
 
   // Scope. Only reached once the payload is authenticated, so this is a
-  // comparison of a value we signed against the route's own `:siteId` — not
+  // comparison of a value we signed against the route's own scope id — not
   // secret material, so a plain compare is correct here.
-  return tokenSiteId === siteId;
+  return tokenId === id;
 }
 
 /**
@@ -171,6 +214,31 @@ export function previewQueryAuth(
   return (req: Request, res: Response, next: NextFunction) => {
     const token = req.query.token;
     if (typeof token === "string" && verifyPreviewToken(token, req.params.siteId, { env: opts.env })) {
+      req.studioUser = PREVIEW_TOKEN_USER;
+      next();
+      return;
+    }
+    tokenFromQuery(req, res, () => {
+      void admin(req, res, next);
+    });
+  };
+}
+
+/**
+ * Auth gate for the TEMPLATE preview route: a valid template preview token
+ * for this route's `:id`, or the normal admin gate (same composition as
+ * `previewQueryAuth` above — see its comment for why it's composed).
+ */
+export function templatePreviewQueryAuth(
+  admin: RequestHandler,
+  opts: { env?: NodeJS.ProcessEnv } = {},
+): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const token = req.query.token;
+    if (
+      typeof token === "string" &&
+      verifyTemplatePreviewToken(token, req.params.id, { env: opts.env })
+    ) {
       req.studioUser = PREVIEW_TOKEN_USER;
       next();
       return;

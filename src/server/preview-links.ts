@@ -101,6 +101,44 @@ export function buildPreviewHrefResolver(opts: {
 }
 
 /**
+ * Template-preview flavor of the resolver above (W1.1 template preview):
+ * `/​<slug>` → that TEMPLATE page's own preview URL, so navigation inside the
+ * template preview stays inside it. Template pages are addressed by slug (no
+ * per-site page ids exist), and the same query-propagation rules apply —
+ * `token` rides along (the iframe's only credential channel), `edit`/`bridge`
+ * never do (template preview has no edit mode at all).
+ */
+export function buildTemplatePreviewHrefResolver(opts: {
+  templateId: string;
+  pages: { slug: string }[];
+  /** `req.query` of the preview request whose HTML is being rewritten. */
+  query?: Record<string, unknown>;
+}): (href: string) => string | null {
+  const slugs = new Set(opts.pages.map((p) => p.slug));
+
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(opts.query ?? {})) {
+    if (NON_PROPAGATED_PARAMS.has(key)) continue;
+    if (typeof value === "string") params.append(key, value);
+    else if (Array.isArray(value)) for (const v of value) if (typeof v === "string") params.append(key, v);
+  }
+  const qs = params.toString() ? `?${params.toString()}` : "";
+
+  return (href: string): string | null => {
+    const hashIndex = href.indexOf("#");
+    const hash = hashIndex >= 0 ? href.slice(hashIndex) : "";
+    let path = hashIndex >= 0 ? href.slice(0, hashIndex) : href;
+    const queryIndex = path.indexOf("?");
+    if (queryIndex >= 0) path = path.slice(0, queryIndex);
+
+    const trimmed = path.replace(/^\/+/, "").replace(/\/+$/, "");
+    const slug = trimmed === "" ? "home" : trimmed;
+    if (!slugs.has(slug)) return null;
+    return `/api/templates/${opts.templateId}/preview/${slug}${qs}${hash}`;
+  };
+}
+
+/**
  * `href="/x"` → `href="<resolved>"` across a rendered HTML fragment.
  *
  * Deliberately a string pass over the BODY fragment (renderPage applies it to
