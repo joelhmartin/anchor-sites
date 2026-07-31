@@ -238,6 +238,27 @@ describe("useAgentConversation — inter-round settle debounce (final review, it
     expect(result.current.sending).toBe(false);
   });
 
+  it("D310: busy is true from the moment of send — before the job pickup ever reports 'running'", async () => {
+    mockFetch();
+    const { result, onStatusChange } = renderConversation();
+    await flush();
+
+    expect(result.current.busy).toBe(false);
+    await act(async () => {
+      void result.current.send("build me a site");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // No 'running' status has been emitted yet (the 2-4s pg-boss pickup
+    // window) — the pulse/gates must key off `sending` already.
+    expect(result.current.sending).toBe(true);
+    expect(result.current.busy).toBe(true);
+    const lastReport = onStatusChange.mock.calls[onStatusChange.mock.calls.length - 1];
+    expect(lastReport[1]).toBe(true); // busy reported to the host too
+  });
+
   it("applies an 'error' status immediately — a labeled error is never delayed", async () => {
     mockFetch();
     const { result } = renderConversation();

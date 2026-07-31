@@ -46,6 +46,10 @@ export type UseAgentConversationResult = {
   draft: string;
   setDraft: (v: string) => void;
   sending: boolean;
+  /** True while a turn is in flight from the operator's point of view:
+   * `sending` (D310 — feedback starts at Send, not at the 2-4s-later
+   * pg-boss pickup) OR a server-reported running build (including one this
+   * hook merely reconnected to). */
   busy: boolean;
   error: string | null;
   conversation: AiConversation | null;
@@ -525,7 +529,9 @@ export function useAgentConversation({
     draft,
     setDraft,
     sending,
-    busy: conversation?.status === "running",
+    // D310 — include `sending`, matching what `onStatusChange` already
+    // reports: the typing pulse and busy gates start at Send, not at pickup.
+    busy: sending || conversation?.status === "running",
     error,
     conversation,
     usageText,

@@ -30,6 +30,7 @@ export function Composer({
   onSend,
   onStop,
   sending,
+  busy,
   resumeVisible,
   onResume,
   usageText,
@@ -39,11 +40,18 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   sending: boolean;
+  /** W1.4 / D319 — a turn is in flight (local send OR a server-reported
+   * running build, e.g. one reconnected to after a reload). The composer
+   * visibly disables itself and offers Stop: previously Enter silently
+   * no-op'd while running, and a reconnected build showed a Send button
+   * whose click could only 409. */
+  busy?: boolean;
   resumeVisible: boolean;
   onResume: () => void;
   usageText: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inFlight = busy || sending;
 
   // Auto-grow 1→5 rows, then scroll internally past that.
   useEffect(() => {
@@ -76,12 +84,17 @@ export function Composer({
           onChange={(e) => onDraftChange(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={1}
-          placeholder="Ask Anchor to change anything…"
-          className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-5 text-zinc-900 placeholder:text-zinc-400 focus-visible:outline-none"
+          disabled={inFlight}
+          placeholder={
+            inFlight
+              ? "A build is running — press Stop, or wait for it to finish…"
+              : "Ask Anchor to change anything…"
+          }
+          className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-5 text-zinc-900 placeholder:text-zinc-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
         />
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <span className="text-xs text-zinc-400">{usageText}</span>
-          {sending ? (
+          {inFlight ? (
             <button
               type="button"
               aria-label="Stop"
