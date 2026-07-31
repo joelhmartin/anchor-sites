@@ -59,6 +59,23 @@ describe("buildBlockCatalog (P6-T6.2)", () => {
     expect(catalog.find((c) => c.type === "rich-text")!.aiHints).toMatch(/html/i);
   });
 
+  it("W1.5/D1114: gated blocks carry model-facing precondition hints", () => {
+    const catalog = buildBlockCatalog();
+
+    const crmForm = catalog.find((c) => c.type === "crm_form")!;
+    // The model must learn the block is dead without a configured CRM embed,
+    // and what to reach for instead.
+    expect(crmForm.aiHints).toMatch(/CRM embed is configured/i);
+    expect(crmForm.aiHints).toMatch(/instead/i);
+    // No internal-architecture leakage in the model-facing description.
+    expect(crmForm.description).not.toMatch(/D-006|anchor-hub/);
+
+    const phone = catalog.find((c) => c.type === "phone_number")!;
+    expect(phone.aiHints).toMatch(/real phone number/i);
+    expect(phone.aiHints).toMatch(/never invent/i);
+    expect(phone.aiHints).toMatch(/CTM/);
+  });
+
   it("each jsonSchema is a valid object schema that round-trips default props", () => {
     const catalog = buildBlockCatalog();
     for (const { type, jsonSchema } of catalog) {

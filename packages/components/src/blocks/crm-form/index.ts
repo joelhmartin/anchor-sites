@@ -7,7 +7,15 @@ export const crmFormEntry: BlockManifestEntry<typeof crmFormSchema> = {
   schema: crmFormSchema,
   component: CrmForm,
   label: "CRM form",
-  description: "Renders a CRM embed from anchor-hub. PHI never touches the builder (D-006). Use embed_code from the CRM site detail.",
+  // W1.5 / D1114: the description + aiHints are written for the MODEL as
+  // consumer (the AI block catalog serializes both) — they must carry the
+  // block's render precondition, not internal architecture notes. Form
+  // submissions/PHI still never touch the builder (D-006); the embed is
+  // configured by the operator on the site's CRM tab.
+  description:
+    "Embedded lead-capture form provided by the site's CRM integration. Renders nothing unless the operator has configured a CRM embed for this site.",
+  aiHints:
+    "PRECONDITION: only place this when the site's CRM embed is configured (operator-managed; you cannot configure it). On a site without a configured CRM, this renders as an empty gap — use a cta block (linking to a contact method) or a rich-text contact section instead.",
   category: "content",
   requiresEditorWrapper: true,
 };
