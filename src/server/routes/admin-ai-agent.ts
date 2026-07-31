@@ -16,7 +16,7 @@ import {
   requestConversationStop,
 } from "../ai/agent/repo.js";
 import { getBoss, AGENT_TURN } from "../jobs/index.js";
-import type { AgentTurnInput } from "../jobs/agent-turn.js";
+import { AGENT_TURN_EXPIRE_SECONDS, type AgentTurnInput } from "../jobs/agent-turn.js";
 
 /**
  * Agent HTTP API (Task 10 — see docs/superpowers/specs/2026-07-27-ai-site-agent-design.md
@@ -132,9 +132,14 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         // turn's tool calls commit real side effects (page writes, image
         // imports) as they go — an automatic pg-boss retry would replay
         // already-committed work, which is unsafe, not idempotent.
+        // `expireInSeconds` (W1.4 / D614): pg-boss's 15-min default expiry
+        // is BELOW a worst-case build round; an expired-but-still-running
+        // job gets marked failed, making pgboss.job (and the dedupe check
+        // below) lie. See AGENT_TURN_EXPIRE_SECONDS's doc in agent-turn.ts.
         return await getBoss().send(AGENT_TURN, input, {
           singletonKey: input.conversationId,
           retryLimit: 0,
+          expireInSeconds: AGENT_TURN_EXPIRE_SECONDS,
         });
       } catch (err) {
         // Fix round 1 (reviewer Important #1): getBoss() throws whenever

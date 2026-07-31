@@ -16,6 +16,7 @@ import {
 } from "../crm/sync-job.js";
 import {
   handleAgentTurn,
+  AGENT_TURN_EXPIRE_SECONDS,
   type AgentTurnInput,
 } from "./agent-turn.js";
 import {
@@ -201,7 +202,14 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   // "is a job with this singletonKey already queued/active?" query) and
   // `admin-git.ts`'s `hasLiveExportJob`, the same precedent applied to
   // GIT_EXPORT.
-  await boss.createQueue(AGENT_TURN, { policy: "stately" });
+  // `expireInSeconds` (W1.4 / D614): a build round can legitimately outlive
+  // pg-boss's 15-min default expiry (30 tool calls × model round-trips).
+  // NOTE createQueue is ON CONFLICT DO NOTHING — this option only lands on
+  // FRESH databases; existing deployments are covered by the per-send
+  // `expireInSeconds` on both AGENT_TURN send sites (admin-ai-agent.ts and
+  // agent-turn.ts's defaultEnqueueContinuation), which overrides the queue
+  // default per job unconditionally.
+  await boss.createQueue(AGENT_TURN, { policy: "stately", expireInSeconds: AGENT_TURN_EXPIRE_SECONDS });
   await boss.work<AgentTurnInput>(AGENT_TURN, async ([job]) => {
     await handleAgentTurn(job.data, { pool: defaultPool });
   });

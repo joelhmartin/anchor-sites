@@ -4,7 +4,9 @@ import {
   createConversation, getConversation, listMessages, setConversationStatus,
   requestConversationStop,
 } from "../ai/agent/repo.js";
-import { buildContinuationSingletonKey, handleAgentTurn } from "./agent-turn.js";
+import {
+  buildContinuationSingletonKey, handleAgentTurn, AGENT_TURN_EXPIRE_SECONDS,
+} from "./agent-turn.js";
 
 const d = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 const db = setupAgentDb();
@@ -220,6 +222,80 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     // Still 'running' — untouched, still owned by the fresh turn.
     expect(convAfter!.status).toBe("running");
+  });
+
+  // ── W1.4 / D613: continuation-boundary failures explain themselves ──
+
+  it("D613: a throwing continuation enqueue persists a transcript note + 'error' instead of a bare status flip", async () => {
+    const site = await db.seedSite(`agent-turn-cont-throw-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "tool_limit", toolCalls: 30 });
+    const enqueueContinuation = vi.fn().mockRejectedValue(new Error("pg-boss not started"));
+
+    // Resolves (no rethrow): the round's own work succeeded and the failure
+    // is surfaced in the transcript, where the operator actually looks.
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation },
+    );
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("error");
+    const messages = await listMessages(db.getPool(), conv.id);
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe("system");
+    expect(JSON.stringify(last.content)).toMatch(/couldn't queue the next build round/i);
+    expect(JSON.stringify(last.content)).toMatch(/resume/i);
+  });
+
+  it("D613: a null enqueue result that is NOT a dedupe (no live job) is surfaced the same way", async () => {
+    const site = await db.seedSite(`agent-turn-cont-null-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "tool_limit", toolCalls: 30 });
+    const enqueueContinuation = vi.fn().mockResolvedValue(null);
+    const hasLiveContinuationJob = vi.fn().mockResolvedValue(false);
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation, hasLiveContinuationJob },
+    );
+
+    expect(hasLiveContinuationJob).toHaveBeenCalledWith({
+      conversationId: conv.id, siteId: site.id, continuation: 1,
+    });
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("error");
+    const messages = await listMessages(db.getPool(), conv.id);
+    expect(JSON.stringify(messages[messages.length - 1].content)).toMatch(/couldn't queue/i);
+  });
+
+  it("D613: a null enqueue result that IS a dedupe (live job exists) is fine — no note, conversation stays 'active'", async () => {
+    const site = await db.seedSite(`agent-turn-cont-dedupe-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "tool_limit", toolCalls: 30 });
+    const enqueueContinuation = vi.fn().mockResolvedValue(null);
+    const hasLiveContinuationJob = vi.fn().mockResolvedValue(true);
+
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 0 },
+      { pool: db.getPool(), runTurn, enqueueContinuation, hasLiveContinuationJob },
+    );
+
+    const convAfter = await getConversation(db.getPool(), conv.id, site.id);
+    expect(convAfter!.status).toBe("active");
+    expect(await listMessages(db.getPool(), conv.id)).toHaveLength(0);
+  });
+
+  // ── W1.4 / D614: AGENT_TURN expiration must exceed worst-case runtime ──
+
+  it("D614: the explicit AGENT_TURN expiration comfortably exceeds a worst-case batch (30 tool calls x model round-trips)", () => {
+    // pg-boss's default expire_seconds is 15 min; a long round can exceed it,
+    // after which pg-boss marks the job failed while the handler keeps
+    // running — pgboss.job lies and hasLiveAgentTurnJob dedupe breaks.
+    expect(AGENT_TURN_EXPIRE_SECONDS).toBeGreaterThanOrEqual(3600);
   });
 
   // ── W1.4 / D300+D1105+D612: Stop is honored by the job handler too ──

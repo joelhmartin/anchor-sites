@@ -28,10 +28,35 @@ export type AgentTurnInput = { conversationId: string; siteId: string; continuat
  */
 export type EnqueueContinuation = (input: AgentTurnInput) => Promise<string | null>;
 
+/**
+ * W1.4 / D614 — explicit AGENT_TURN job expiration. pg-boss's default
+ * `expire_seconds` is 15 minutes; a long build round (30 tool calls, each a
+ * model round-trip, plus D1101's in-loop retries) can legitimately exceed
+ * that, after which pg-boss marks the job `failed` (retryLimit 0) while the
+ * handler keeps running to completion — `pgboss.job` then lies, and
+ * `hasLiveAgentTurnJob`'s dedupe check reports no live job for a turn that
+ * is very much mid-flight. 60 minutes is comfortably above worst case while
+ * still bounding a genuinely-hung handler. Applied per-send (admin-ai-agent
+ * round-0 sends + `defaultEnqueueContinuation` below) because per-job
+ * `expireInSeconds` overrides the queue default unconditionally — and ALSO
+ * at `createQueue` (jobs/index.ts) for fresh installs; note createQueue is
+ * ON CONFLICT DO NOTHING, so queue-level options never update an existing
+ * deployment's queue row, which is exactly why the sends carry it too.
+ */
+export const AGENT_TURN_EXPIRE_SECONDS = 3600;
+
 export type AgentTurnDeps = {
   pool: Pool;
   runTurn?: typeof runAgentTurn;
   enqueueContinuation?: EnqueueContinuation;
+  /**
+   * W1.4 / D613 — disambiguates a `null` continuation-enqueue result:
+   * `stately` dedupe (a job for this round's singletonKey is already
+   * queued/active — fine) vs. a genuinely lost enqueue (surface it).
+   * Injectable for tests; default reads pg-boss's own job table, same
+   * precedent as admin-ai-agent.ts's `hasLiveAgentTurnJob`.
+   */
+  hasLiveContinuationJob?: (input: AgentTurnInput) => Promise<boolean>;
 };
 
 /** Env-tunable cap on auto-continue rounds per user message (Task A3). */
@@ -153,7 +178,36 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
           continuation: continuation + 1,
         };
         const enqueueContinuation = deps.enqueueContinuation ?? defaultEnqueueContinuation;
-        await enqueueContinuation(next);
+
+        // W1.4 / D613 — a round-boundary failure must explain itself in the
+        // transcript like every other turn-ending failure. Previously a
+        // getBoss() throw here landed in the outer catch as a bare
+        // status='error' with no text, and a lost `null` send was never even
+        // checked — the build just silently never continued.
+        let nextJobId: string | null = null;
+        let enqueueError: unknown = null;
+        try {
+          nextJobId = await enqueueContinuation(next);
+        } catch (err) {
+          enqueueError = err;
+        }
+        if (enqueueError === null && nextJobId == null) {
+          const hasLive =
+            deps.hasLiveContinuationJob ??
+            ((input: AgentTurnInput) => defaultHasLiveContinuationJob(deps.pool, input));
+          if (await hasLive(next)) return; // stately dedupe — next round already queued
+          enqueueError = new Error("continuation enqueue returned no job id and no live job exists");
+        }
+        if (enqueueError !== null) {
+          // eslint-disable-next-line no-console
+          console.error("[agent] continuation enqueue failed", enqueueError);
+          await appendMessage(deps.pool, data.conversationId, "system", [
+            { type: "text", text: "Couldn't queue the next build round — press Resume to continue." },
+          ]).catch(() => undefined);
+          await releaseConversationTurn(deps.pool, data.conversationId, "error").catch(() => undefined);
+          // No rethrow: this round's own work succeeded and the failure is
+          // surfaced where the operator looks (the transcript + Resume).
+        }
         return;
       }
 
@@ -195,5 +249,22 @@ async function defaultEnqueueContinuation(input: AgentTurnInput): Promise<string
   return getBoss().send(AGENT_TURN, input, {
     singletonKey: buildContinuationSingletonKey(input),
     retryLimit: 0,
+    expireInSeconds: AGENT_TURN_EXPIRE_SECONDS, // D614 — see the constant's doc
   });
+}
+
+/** D613 default for `hasLiveContinuationJob` — mirrors admin-ai-agent.ts's
+ * `hasLiveAgentTurnJob`, scoped to this round's continuation singletonKey. */
+async function defaultHasLiveContinuationJob(pool: Pool, input: AgentTurnInput): Promise<boolean> {
+  try {
+    const { AGENT_TURN } = await import("./index.js");
+    const r = await pool.query(
+      `SELECT 1 FROM pgboss.job WHERE name = $1 AND singleton_key = $2 AND state IN ('created','active','retry') LIMIT 1`,
+      [AGENT_TURN, buildContinuationSingletonKey(input)],
+    );
+    return (r.rowCount ?? 0) > 0;
+  } catch {
+    // pgboss schema missing (jobs never booted) — nothing live to find.
+    return false;
+  }
 }
