@@ -744,6 +744,23 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           return;
         }
 
+        // D610: the publish-during-build guard used to be client-side only
+        // (a disabled button) — anything hitting the API mid-turn flipped
+        // half-written pages live and immortalized them as 'manual'
+        // revisions. One indexed SELECT (ai_conversations_site_idx prefix)
+        // enforces the mutual exclusion server-side; the workspace surfaces
+        // this 409's message through its existing publishError slot.
+        const running = await client.query(
+          `SELECT 1 FROM ai_conversations WHERE site_id = $1 AND status = 'running' LIMIT 1`,
+          [siteId],
+        );
+        if ((running.rowCount ?? 0) > 0) {
+          res.status(409).json({
+            error: "Agent is running — publish is disabled until the build finishes.",
+          });
+          return;
+        }
+
         await client.query("BEGIN");
         // D301: publish = freeze the working copy as the live payload. The
         // WHERE picks up drafts AND published pages whose working copy
@@ -775,22 +792,37 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
 
         const published = publishedRes.rowCount ?? 0;
 
-        // Publish trigger (T4, GitHub sync): mirrors the single-page save's
-        // trigger below, but ONE enqueue for the whole batch rather than one
-        // per page — git.export's handler (handleGitExport) exports the
-        // entire site's current state from a single siteId, so N identical
-        // enqueues would just be N redundant full-site exports collapsed by
-        // pg-boss's own dedup at best, wasted work at worst. Only fires when
-        // this call actually changed something (`published > 0`) — an
-        // idempotent no-op publish call has nothing new to export.
-        if (published > 0 && resolveGitMode() === "api") {
+        // Publish trigger (T4, GitHub sync): ONE enqueue for the whole
+        // batch — git.export's handler exports the entire site's current
+        // state from a single siteId. D611: this used to be
+        // `.catch(() => undefined)` gated on `published > 0` — a one-shot
+        // with no second chance (a failed enqueue was invisible, and the
+        // idempotent second publish never re-fired it, so the workspace had
+        // no export-retry path at all). Now EVERY publish on a sync-enabled
+        // site fires the export — the export job itself no-ops via blob-sha
+        // comparison when the repo already matches, so a redundant enqueue
+        // costs one skipped job — and the outcome is reported in the
+        // response (`git_export`), so the workspace can say "sync didn't
+        // queue, retry from Manage" instead of narrating success. Enqueue
+        // failure still never fails the publish: the pages ARE live.
+        let gitExport: { queued: boolean; error?: string } | null = null;
+        if (resolveGitMode() === "api") {
           try {
             const gitState = await getGitState(pool, siteId);
             if (gitState?.enabled) {
-              enqueueGitExport({ siteId, trigger: "publish" }).catch(() => undefined);
+              try {
+                await enqueueGitExport({ siteId, trigger: "publish" });
+                gitExport = { queued: true };
+              } catch (e) {
+                gitExport = {
+                  queued: false,
+                  error: e instanceof Error ? e.message : String(e),
+                };
+              }
             }
           } catch {
-            // best-effort — never affects the response
+            // getGitState failed — treat as sync-not-enabled (best-effort;
+            // never affects the publish response's success).
           }
         }
 
@@ -819,6 +851,10 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
 
         res.status(200).json({
           published,
+          // D611: null = sync not configured/enabled; {queued:true} = export
+          // job accepted; {queued:false, error} = enqueue failed (publish
+          // still succeeded — the workspace surfaces the retry path).
+          git_export: gitExport,
           live_url,
           live_url_ready,
           live_url_status: domain

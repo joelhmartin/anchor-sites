@@ -835,7 +835,14 @@ d("admin pages — bulk publish (Task B3)", () => {
     }
   });
 
-  it("does not enqueue git.export when nothing was published (idempotent no-op call)", async () => {
+  // D611: the old behavior — `enqueueGitExport(...).catch(() => undefined)`
+  // gated on `published > 0` — was a one-shot with no second chance: a
+  // failed enqueue was invisible in the response, and because a second
+  // publish publishes 0 pages the trigger never re-fired. Now every publish
+  // on a sync-enabled site fires the export (the export job itself no-ops
+  // via blob-sha comparison when the repo already matches), and the enqueue
+  // outcome is reported honestly in the response.
+  it("D611: a no-op publish on a sync-enabled site STILL enqueues git.export (the retry path for a previously failed enqueue)", async () => {
     await pool.query(
       `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, true, now())
        ON CONFLICT (site_id) DO UPDATE SET enabled = true, updated_at = now()`,
@@ -852,11 +859,81 @@ d("admin pages — bulk publish (Task B3)", () => {
       spy.mockClear();
       const res = await request(spyApp).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
       expect(res.body).toMatchObject({ published: 0 });
-      expect(spy).not.toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(res.body.git_export).toEqual({ queued: true });
     } finally {
       delete process.env.GITHUB_CONTENT_TOKEN;
       delete process.env.GITHUB_CONTENT_REPO;
       await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]);
+    }
+  });
+
+  it("D611: a failed export enqueue is reported in the publish response (publish itself still succeeds)", async () => {
+    await pool.query(
+      `INSERT INTO site_git_state (site_id, enabled, updated_at) VALUES ($1, true, now())
+       ON CONFLICT (site_id) DO UPDATE SET enabled = true, updated_at = now()`,
+      [siteId],
+    );
+    const spy = vi.fn(async () => {
+      throw new Error("boss not started");
+    });
+    const spyApp = buildAppWithEnqueueSpy(spy);
+    process.env.GITHUB_CONTENT_TOKEN = "tok123";
+    process.env.GITHUB_CONTENT_REPO = "acme/content";
+
+    try {
+      const res = await request(spyApp).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+      expect(res.status).toBe(200); // pages ARE published — export is best-effort…
+      expect(res.body.published).toBe(2);
+      // …but no longer silently: the failure is visible to the caller.
+      expect(res.body.git_export).toEqual({ queued: false, error: "boss not started" });
+    } finally {
+      delete process.env.GITHUB_CONTENT_TOKEN;
+      delete process.env.GITHUB_CONTENT_REPO;
+      await pool.query(`DELETE FROM site_git_state WHERE site_id = $1`, [siteId]);
+    }
+  });
+
+  it("D611: git_export is null when sync is not enabled for the site", async () => {
+    const res = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body.git_export).toBeNull();
+  });
+
+  // D610: the publish-during-build guard was client-side only (a disabled
+  // button) — the server happily flipped every draft mid-turn, immortalizing
+  // half-written pages as live content + a 'manual' revision.
+  it("D610: publish 409s while the site has a running agent conversation", async () => {
+    const conv = await pool.query<{ id: string }>(
+      `INSERT INTO ai_conversations (site_id, status) VALUES ($1, 'running') RETURNING id`,
+      [siteId],
+    );
+    try {
+      const res = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/agent is running/i);
+      // Nothing was published.
+      const still = await pool.query<{ status: string }>(
+        `SELECT status FROM pages WHERE id = ANY($1::uuid[])`,
+        [[draftAId, draftBId]],
+      );
+      for (const row of still.rows) expect(row.status).toBe("draft");
+    } finally {
+      await pool.query(`DELETE FROM ai_conversations WHERE id = $1`, [conv.rows[0].id]);
+    }
+  });
+
+  it("D610: publish proceeds when the site's conversations are all settled (active/error/archived)", async () => {
+    const conv = await pool.query<{ id: string }>(
+      `INSERT INTO ai_conversations (site_id, status) VALUES ($1, 'active') RETURNING id`,
+      [siteId],
+    );
+    try {
+      const res = await request(app).post(`/api/sites/${siteId}/publish`).set("X-Admin-Token", ADMIN_TOKEN);
+      expect(res.status).toBe(200);
+      expect(res.body.published).toBe(2);
+    } finally {
+      await pool.query(`DELETE FROM ai_conversations WHERE id = $1`, [conv.rows[0].id]);
     }
   });
 });
