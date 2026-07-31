@@ -13,7 +13,9 @@ import { DEFAULT_BRAND_TOKENS } from "../components/BrandTokenFields.js";
 
 /**
  * Lovable-style new-site screen (Task B4, 2026-07-30 lovable-workspace SDD):
- * replaces the old two-step `NewSiteWizard` with a single screen — a big
+ * replaces the old two-step `NewSiteWizard.tsx` (deleted, not just renamed —
+ * this file is a from-scratch rewrite, not an edit of it) with a single
+ * screen — a big
  * "What do you want to build?" prompt above a template gallery ("rip off
  * Lovable's feel": cover image, name, one-line description, category chip).
  *

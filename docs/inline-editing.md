@@ -1,8 +1,9 @@
 # Inline editing (click-to-edit preview)
 
 Lets an operator edit text, rich text, links, and images directly inside the
-draft preview iframe on `SiteDetailPage`, instead of only through the block
-JSON editor or the AI agent. Saves land as ordinary `page_revisions` rows
+draft preview iframe on the Studio workspace (`src/admin/pages/WorkspacePage.tsx`,
+via `src/admin/components/SitePreviewPanel.tsx`), instead of only through the
+block JSON editor or the AI agent. Saves land as ordinary `page_revisions` rows
 (`source: 'inline'`) through the same save/restore endpoints the AI agent and
 manual editor already use — inline editing adds a UI surface, not a new data
 model.
@@ -166,7 +167,7 @@ copy of `page.blocks` (hydrated on `attach()` via `GET
   reject), the dirty fields are put back into the pending set rather than
   dropped, so the next edit — or `flush()` on edit-mode exit — resends them.
   Save state exposed to the UI: `idle | dirty | saving | saved | error`.
-- **`flush()`** forces a save of anything pending; `DraftPreview` calls it
+- **`flush()`** forces a save of anything pending; `SitePreviewPanel` calls it
   when edit mode turns off or the panel unmounts, so a debounce window can't
   eat an edit made right before closing.
 
@@ -208,9 +209,10 @@ future work, not yet built.
 
 The AI site agent (`docs/ai-agent.md`) and inline editing can both write to
 the same draft page's `blocks`, so they're mutually exclusive by UI, not by a
-server-side lock: `AgentChatDrawer`'s `onStatusChange(status, busy)`
-(`busy = sending || liveTurn !== null || status === "running"`) lifts up to
-`SiteDetailPage`, which — while `busy` — calls
+server-side lock: `useAgentConversation`'s `onStatusChange(status, busy)`
+(`src/admin/components/agent-chat/useAgentConversation.ts`) lifts up to
+`WorkspacePage`, which passes the resulting `agentBusy` flag down to
+`SitePreviewPanel` — which, while `busy`, calls
 `handle.setReadonly(true, "The AI is working on this site…")` on the inline
 editor handle. That posts `set-readonly` to the overlay (disables the
 `contenteditable`/pointer affordances and shows an amber banner in the
@@ -260,9 +262,12 @@ section for the AI-agent side of the same mechanism.
 
 ## Operator notes
 
-- **`@anchorcorps/components` must be at `0.5.0` (or later) before deploying
+- **`@anchorcorps/components` must be at `0.6.0` (or later) before deploying
   this feature to production.** Task 2 added `Editable`/`EditModeContext`/
-  `EditModeProvider` and bumped the package to `0.5.0` — the renderer's
+  `EditModeProvider` and bumped the package to `0.5.0` (subsequent work has
+  since bumped it further, to `0.6.0` as of this SDD round — check
+  `packages/components/package.json` for the current version rather than
+  trusting this number to stay current) — the renderer's
   `EditModeProvider` import (`src/server/render-page.tsx`) resolves against
   whatever version is published to Artifact Registry, not what's checked out
   locally. Before a prod deploy that includes this feature:

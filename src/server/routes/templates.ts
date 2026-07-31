@@ -370,9 +370,14 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
   // -------------------------------------------------------------------------
   // POST /api/sites/from-template — create a new site from a site template
   // (P7-T7.6). Creates the site + canonical domains (reusing the shared
-  // primitive), then enqueues materialization of the template's pages (D-042).
-  // Does NOT provision the public hostname — that stays the explicit
-  // /provision step. The UI polls site detail (pages_count) for completion.
+  // `createSiteWithDomains` primitive), then enqueues materialization of the
+  // template's pages (D-042). `createSiteWithDomains` ALSO enqueues a
+  // `site.provision` job for the canonical hostname (Task D1 auto-
+  // provisioning — see docs/deploy.md's "Kinsta DNS provider" section), so
+  // the public hostname is no longer a separate explicit /provision step for
+  // sites created this way. The UI polls site detail (pages_count) for
+  // page-materialization completion; hostname readiness is tracked
+  // separately on the domain row's own status fields.
   // -------------------------------------------------------------------------
   router.post(
     "/sites/from-template",
