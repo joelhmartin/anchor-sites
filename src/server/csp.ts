@@ -43,7 +43,17 @@ export function buildCsp(env: NodeJS.ProcessEnv): Record<string, string[]> {
     ...crmExtraOrigins,
   ];
 
-  const frameSrc = crmExtraOrigins.length > 0 ? [...crmExtraOrigins] : ["'none'"];
+  // `'self'` is NOT optional (Studio preview regression, 2026-07-30 — operator
+  // reported the workspace preview column permanently blank in prod, console:
+  // "Framing '…/preview?v=0' violates frame-src 'none'"). `SitePreviewPanel`
+  // embeds the app's OWN same-origin draft-preview route
+  // (`/api/sites/:siteId/pages/:pageId/preview`) in an <iframe>; with the old
+  // `crmExtraOrigins.length > 0 ? crmExtraOrigins : ["'none'"]`, any deployment
+  // without CSP_CRM_EXTRA_ORIGINS set got `frame-src 'none'` and the browser
+  // refused the frame before a single byte was requested. `'self'` permits
+  // exactly that — this app framing its own routes — and grants nothing to any
+  // third-party origin (CRM embeds still have to be listed explicitly).
+  const frameSrc = ["'self'", ...crmExtraOrigins];
 
   return {
     defaultSrc: ["'self'"],
