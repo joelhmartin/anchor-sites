@@ -128,6 +128,8 @@ d("inline editing end-to-end gate (Inline Editing Task 12)", () => {
 
     const editCsp = editRes.headers["content-security-policy"];
     expect(editCsp).toContain("script-src 'nonce-");
+    // D1200 — carousel island hash rides alongside the nonce.
+    expect(editCsp).toContain("'sha256-");
     expect(editCsp).not.toContain("'none'");
 
     // -----------------------------------------------------------------
@@ -232,14 +234,16 @@ d("inline editing end-to-end gate (Inline Editing Task 12)", () => {
     });
 
     // -----------------------------------------------------------------
-    // Step 4: plain preview (no ?edit=1) stays byte-behavior unchanged —
-    // script-src 'none', no block/boot markers (T4/T12 guard).
+    // Step 4: plain preview (no ?edit=1) carries no edit surface — no
+    // block/boot markers (T4/T12 guard); script-src allows only the D1200
+    // carousel island hash.
     // -----------------------------------------------------------------
     const plainRes = await auth(
       request(pagesApp).get(`/api/sites/${site.id}/pages/${page.id}/preview`),
     );
     expect(plainRes.status).toBe(200);
-    expect(plainRes.headers["content-security-policy"]).toContain("script-src 'none'");
+    expect(plainRes.headers["content-security-policy"]).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+';/);
+    expect(plainRes.headers["content-security-policy"]).not.toContain("'nonce-");
     expect(plainRes.text).not.toContain("data-block-id");
     expect(plainRes.text).not.toContain("window.__AC_EDIT_BOOT__");
     expect(plainRes.text).not.toContain("__AC_EDIT_OVERLAY__");

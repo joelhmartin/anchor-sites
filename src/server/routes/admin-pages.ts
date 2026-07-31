@@ -19,6 +19,7 @@ import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { mintPreviewToken, previewQueryAuth } from "../preview-token.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
+import { CAROUSEL_ISLAND_CSP_HASH } from "../csp.js";
 // Item 6 (final review) — preview-only site-relative link rewriting.
 import { buildPreviewHrefResolver } from "../preview-links.js";
 import { buildEditableFieldMap, buildUrlValues } from "../../blocks/editable-fields.js";
@@ -493,19 +494,25 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         // 'none'` for a nonce allowlist scoped to that one script tag —
         // everything else about the policy (sandbox, style-src, img-src,
         // frame-ancestors) is identical to the plain-preview policy above.
+        // D1200 — both variants additionally allow the carousel enhancement
+        // island (the ONE inline script @anchorcorps/components blocks embed
+        // in their own SSR output) by sha256 hash, so sliders behave in the
+        // preview iframe exactly as on live pages (which permit it via the
+        // global CSP's 'unsafe-inline'). A hash allows exactly those bytes —
+        // this is NOT 'unsafe-inline'; every other script stays blocked.
         if (editable) {
           res.setHeader(
             "Content-Security-Policy",
             "sandbox allow-scripts; default-src 'self' https: data:; " +
               "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
-              `script-src 'nonce-${editable.nonce}'; frame-ancestors 'self'`,
+              `script-src 'nonce-${editable.nonce}' ${CAROUSEL_ISLAND_CSP_HASH}; frame-ancestors 'self'`,
           );
         } else {
           res.setHeader(
             "Content-Security-Policy",
             "sandbox allow-scripts; default-src 'self' https: data:; " +
               "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
-              "script-src 'none'; frame-ancestors 'self'",
+              `script-src ${CAROUSEL_ISLAND_CSP_HASH}; frame-ancestors 'self'`,
           );
         }
         // Item 9 (CodeRabbit — preview refresh): the client now busts the

@@ -18,6 +18,7 @@ import { createSiteWithDomains, SiteSlugConflictError } from "../sites/create-si
 import { getBoss, TEMPLATE_MATERIALIZE } from "../jobs/index.js";
 import type { Block } from "../../blocks/types.js";
 import { renderPage } from "../render-page.js";
+import { CAROUSEL_ISLAND_CSP_HASH } from "../csp.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { mintTemplatePreviewToken, templatePreviewQueryAuth } from "../preview-token.js";
 import { buildTemplatePreviewHrefResolver } from "../preview-links.js";
@@ -593,11 +594,14 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
         // (admin-pages.ts documents each header at length): sandboxed,
         // script-free, style/img over https+data, never cached, and never
         // leaking the tokened URL via Referer.
+        // D1200 — like the site draft preview, script-src allows exactly one
+        // script by hash: the carousel enhancement island the components
+        // package inlines in its SSR output. Everything else stays blocked.
         res.setHeader(
           "Content-Security-Policy",
           "sandbox allow-scripts; default-src 'self' https: data:; " +
             "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
-            "script-src 'none'; frame-ancestors 'self'",
+            `script-src ${CAROUSEL_ISLAND_CSP_HASH}; frame-ancestors 'self'`,
         );
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("Referrer-Policy", "no-referrer");

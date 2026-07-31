@@ -31,3 +31,10 @@ export {
 
 // Inline-editing surface (P?-inline-editing Task 2).
 export { Editable, EditModeContext, EditModeProvider, type EditableProps } from "./editable.js";
+
+// D1200 — the carousel enhancement island source. Exported so consumers
+// embedding SSR output under a restrictive CSP can allow exactly this
+// script by hash (the renderer's preview routes do:
+// `'sha256-' + base64(sha256(CAROUSEL_ISLAND_JS))`). Exact-string stable;
+// see src/primitives/carousel-island.ts for the contract.
+export { CAROUSEL_ISLAND_JS } from "./primitives/carousel-island.js";

@@ -9,6 +9,27 @@
  * inline blocks with external scripts and inject a nonce via res.locals).
  */
 
+import { createHash } from "node:crypto";
+import { CAROUSEL_ISLAND_JS } from "@anchorcorps/components";
+
+/**
+ * D1200 (spec: docs/superpowers/specs/2026-07-31-published-page-interactivity.md)
+ * — CSP hash-source for the carousel enhancement island the
+ * `@anchorcorps/components` Carousel primitive inlines into its own SSR
+ * output. Preview routes (draft preview, template preview) interpolate this
+ * into their per-response `script-src` so the island runs there exactly as
+ * it does on live pages (which already allow it via 'unsafe-inline').
+ * Computed from the package's exported constant at module load so the hash
+ * can never drift from the script bytes.
+ *
+ * Deliberately NOT added to `buildCsp` below: a hash/nonce in script-src
+ * makes browsers ignore 'unsafe-inline', which would silently break the
+ * shell's other inline scripts (analytics, web-vitals, edit boot).
+ */
+export const CAROUSEL_ISLAND_CSP_HASH = `'sha256-${createHash("sha256")
+  .update(CAROUSEL_ISLAND_JS, "utf8")
+  .digest("base64")}'`;
+
 function originFromUrl(url: string | undefined): string | null {
   if (!url) return null;
   try {

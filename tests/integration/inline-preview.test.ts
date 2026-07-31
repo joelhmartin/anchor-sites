@@ -78,17 +78,28 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
 
     const csp = res.headers["content-security-policy"];
     expect(csp).toContain("script-src 'nonce-");
+    // D1200 — the carousel island's hash rides alongside the nonce so
+    // enhanced carousels behave in the edit iframe exactly as they do live.
+    expect(csp).toContain("'sha256-");
     expect(csp).not.toContain("'none'");
   });
 
-  it("plain preview (no ?edit=1) stays byte-behavior unchanged: script-src 'none', no markers, no boot script", async () => {
+  it("plain preview (no ?edit=1): script-src allows ONLY the carousel island hash, no markers, no boot script", async () => {
     const site = await db.seedSite("inline-preview-plain");
     const page = await db.seedPage(site.id, "home", heroAndRichText);
 
     const res = await auth(request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview`));
 
     expect(res.status).toBe(200);
-    expect(res.headers["content-security-policy"]).toContain("script-src 'none'");
+    // D1200 — was `script-src 'none'`; now the single hash-source for the
+    // carousel enhancement island (and nothing else — no 'unsafe-inline',
+    // no nonce, no hosts).
+    const csp = res.headers["content-security-policy"];
+    expect(csp).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+';/);
+    expect(csp).not.toContain("script-src 'none'");
+    // script-src is hash-only (style-src legitimately keeps 'unsafe-inline').
+    expect(csp).toMatch(/script-src 'sha256-[^;]*;/);
+    expect(csp.match(/script-src ([^;]*)/)?.[1]).not.toContain("'unsafe-inline'");
     expect(res.text).not.toContain("data-block-id");
     expect(res.text).not.toContain("window.__AC_EDIT_BOOT__");
   });

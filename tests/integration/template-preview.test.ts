@@ -133,7 +133,8 @@ d("template preview + materialize-retry API (integration, W1.1)", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
       expect(res.headers["content-security-policy"]).toContain("sandbox allow-scripts");
-      expect(res.headers["content-security-policy"]).toContain("script-src 'none'");
+      // D1200 — script-src allows only the carousel enhancement island hash.
+      expect(res.headers["content-security-policy"]).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+';/);
       expect(res.headers["cache-control"]).toBe("no-store");
       expect(res.headers["referrer-policy"]).toBe("no-referrer");
       expect(res.text).toContain("Hero home");
