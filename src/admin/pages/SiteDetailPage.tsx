@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
 import type { SiteDetail, SiteListRow, SiteStatus } from "../lib/siteTypes.js";
@@ -85,7 +85,16 @@ export function SiteDetailPage() {
 }
 
 function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
-  const [tab, setTab] = useState<TabKey>("pages");
+  // D321 — `?tab=domains` (etc.) deep-links straight to a tab, so success
+  // states elsewhere (e.g. the workspace publish popover's "Connect a
+  // domain") can hand the operator the exact surface they need. Unknown
+  // values fall back to the default.
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialTab = TABS.some((t) => t.key === requestedTab)
+    ? (requestedTab as TabKey)
+    : "pages";
+  const [tab, setTab] = useState<TabKey>(initialTab);
   const { data, loading, error } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = data?.site;
 

@@ -314,6 +314,94 @@ describe("WorkspacePage (Task B2)", () => {
     expect(publish.title).toBe("Nothing to publish");
   });
 
+  // ── W1.3 — publish means something ──
+
+  it("D301: a PUBLISHED page with unpublished changes counts toward the pill — no more 'Nothing to publish' over unshipped edits", async () => {
+    mockWorkspaceFetch({
+      pages: [
+        // Published, but edited since its last publish (server-computed flag).
+        { ...HOME_PAGE, has_unpublished_changes: true },
+        { ...ABOUT_PAGE, has_unpublished_changes: true },
+      ],
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+    const dialog = await screen.findByRole("dialog", { name: "Publish site" });
+    expect(dialog.textContent).toContain("Publish 2 pages?");
+  });
+
+  it("D301: a clean published page (has_unpublished_changes:false) disables Publish", async () => {
+    mockWorkspaceFetch({ pages: [{ ...HOME_PAGE, has_unpublished_changes: false }] });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
+    expect(publish.disabled).toBe(true);
+    expect(publish.title).toBe("Nothing to publish");
+  });
+
+  it("D610: a 409 (build running) surfaces the server's message in the confirmation popover", async () => {
+    mockWorkspaceFetch({
+      publish: {
+        status: 409,
+        body: { error: "Agent is running — publish is disabled until the build finishes." },
+      },
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText(/Agent is running — publish is disabled/);
+  });
+
+  it("D321: with no domain connected (live_url null) the success state links to Manage → Domains instead of rendering nothing", async () => {
+    mockWorkspaceFetch({
+      publish: { status: 200, body: { published: 1, live_url: null } },
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText("Published 1 page.");
+    const link = screen.getByRole("link", { name: /connect a domain/i });
+    expect(link.getAttribute("href")).toBe("/sites/acme/manage?tab=domains");
+    expect(screen.getByText(/no domain is connected yet/i)).toBeTruthy();
+  });
+
+  it("D611: a failed git-export enqueue is reported in the success popover (publish itself succeeded)", async () => {
+    mockWorkspaceFetch({
+      publish: {
+        status: 200,
+        body: {
+          published: 1,
+          live_url: "https://acme.example.com",
+          live_url_ready: true,
+          git_export: { queued: false, error: "boss not started" },
+        },
+      },
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    await screen.findByRole("dialog", { name: "Publish site" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await screen.findByText("Published 1 page.");
+    expect(screen.getByText(/GitHub sync couldn’t be queued/)).toBeTruthy();
+    expect(screen.getByText(/boss not started/)).toBeTruthy();
+  });
+
   it("Cancel closes the confirmation without posting", async () => {
     const fetchMock = mockWorkspaceFetch();
     renderAt("/sites/acme");

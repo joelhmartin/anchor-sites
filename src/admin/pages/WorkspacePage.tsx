@@ -23,7 +23,18 @@ import { Card, CardContent } from "../ui/card.js";
 import { Spinner } from "../ui/spinner.js";
 import { cn } from "../ui/cn.js";
 
-type PageOption = { id: string; slug: string; title: string; status: string };
+type PageOption = {
+  id: string;
+  slug: string;
+  title: string;
+  status: string;
+  /**
+   * D301 — server-computed: drafts OR published pages whose working copy
+   * diverged from the published snapshot. Optional so an older/mocked
+   * response degrades to the status-only count.
+   */
+  has_unpublished_changes?: boolean;
+};
 
 /** Mirrors `src/server/git/state-repo.ts`'s `SiteGitState`, the same shape
  * `GitCard` reads (`site-tabs/GitCard.tsx`). */
@@ -225,6 +236,8 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     live_url: string | null;
     live_url_ready?: boolean;
     live_url_status?: { verification_status?: string; ssl_status?: string };
+    /** D611 — null: sync off; queued:false carries the enqueue error. */
+    git_export?: { queued: boolean; error?: string } | null;
   } | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   // Fix round 1 (Critical finding 1): outside-click/Escape close + initial
@@ -244,11 +257,15 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     reload: reloadPages,
   } = useApi<{ pages: PageOption[] }>(`/api/sites/${siteId}/pages`);
   const pages = pagesData?.pages ?? [];
-  // Fix round 1 (Critical finding 1): the server only publishes pages whose
-  // status isn't already 'published' (POST /publish) — the confirmation
-  // must count the SAME set, not every page on the site, or an already-
-  // partially-published site shows a wrong "Publish N pages?" count.
-  const draftPageCount = pages.filter((p) => p.status !== "published").length;
+  // Fix round 1 (Critical finding 1) + D301: the server publishes pages
+  // with UNPUBLISHED CHANGES (drafts + published pages edited since their
+  // last publish — POST /publish's WHERE uses the same predicate) — the
+  // confirmation must count the SAME set, or the pill says "Nothing to
+  // publish" while edits sit unshipped (the exact D301 lie). Falls back to
+  // the status-only count for an older/mocked payload.
+  const draftPageCount = pages.filter(
+    (p) => p.has_unpublished_changes ?? p.status !== "published",
+  ).length;
 
   // Default the page switcher to "home" (by slug) or the first page, once
   // the pages list has loaded and nothing else (an explicit `?page=` or an
@@ -319,6 +336,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
         published: number;
         live_url: string | null;
         live_url_ready?: boolean;
+        git_export?: { queued: boolean; error?: string } | null;
       }>(`/api/sites/${siteId}/publish`, { method: "POST" });
       setPublishResult(result);
       reloadPages();
@@ -596,6 +614,36 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                           the server says the domain is actually ready;
                           otherwise show the same URL as plain text with a
                           note that says what's happening. */}
+                      {/* D321 — no primary domain means live_url is null and
+                          this success state used to render NOTHING: published
+                          pages, no way to reach them, no next step. Hand the
+                          operator the forward path instead. */}
+                      {!publishResult.live_url && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs text-zinc-500">
+                            No domain is connected yet, so your published pages aren’t
+                            reachable.
+                          </span>
+                          <Link
+                            to={`/sites/${slug}/manage?tab=domains`}
+                            className="text-xs font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600"
+                          >
+                            Connect a domain →
+                          </Link>
+                        </div>
+                      )}
+                      {/* D611 — the export enqueue can fail without failing
+                          the publish; say so instead of narrating success. */}
+                      {publishResult.git_export && !publishResult.git_export.queued && (
+                        <span className="text-xs text-amber-600">
+                          GitHub sync couldn’t be queued
+                          {publishResult.git_export.error
+                            ? ` (${publishResult.git_export.error})`
+                            : ""}
+                          . Publishing again re-tries, or use Manage → Settings → Export
+                          now.
+                        </span>
+                      )}
                       {publishResult.live_url &&
                         (publishResult.live_url_ready ? (
                           <a

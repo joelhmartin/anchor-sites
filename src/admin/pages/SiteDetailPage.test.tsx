@@ -86,6 +86,21 @@ describe("SiteDetailPage (P4-T4.12) — management shell (served at /manage sinc
     expect(screen.getByRole("button", { name: "Save changes" })).toBeTruthy();
   });
 
+  it("D321: ?tab=domains deep-links straight to the Domains tab (unknown values fall back to Pages)", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme", "?tab=domains");
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Domains" })).toBeTruthy());
+    expect(screen.getByRole("tab", { name: "Domains" }).getAttribute("aria-selected")).toBe("true");
+    // Pages tab content is NOT mounted.
+    expect(screen.queryByRole("button", { name: "+ New page" })).toBeNull();
+
+    cleanup();
+    mockApi([SITE], SITE);
+    renderAt("acme", "?tab=nonsense");
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Pages" })).toBeTruthy());
+    expect(screen.getByRole("tab", { name: "Pages" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("links 'View live site' to the canonical tenant hostname", async () => {
     mockApi([SITE], SITE);
     renderAt("acme");
