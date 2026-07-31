@@ -83,8 +83,12 @@ d("createSiteWithDomains — site.provision enqueue failure logging (fix round 1
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const { siteId } = await createSiteWithDomains(client, { slug, displayName: "Log Sync Co" });
+      const { siteId, enqueueProvision } = await createSiteWithDomains(client, {
+        slug,
+        displayName: "Log Sync Co",
+      });
       await client.query("COMMIT");
+      await enqueueProvision();
 
       expect(siteId).toBeDefined();
       expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -106,8 +110,12 @@ d("createSiteWithDomains — site.provision enqueue failure logging (fix round 1
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const { siteId } = await createSiteWithDomains(client, { slug, displayName: "Log Async Co" });
+      const { siteId, enqueueProvision } = await createSiteWithDomains(client, {
+        slug,
+        displayName: "Log Async Co",
+      });
       await client.query("COMMIT");
+      await enqueueProvision();
 
       expect(siteId).toBeDefined();
       // The .catch() handler runs on a later microtask than the enqueue
@@ -116,6 +124,40 @@ d("createSiteWithDomains — site.provision enqueue failure logging (fix round 1
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(`[provision] enqueue failed for site ${siteId}`),
         expect.any(Error),
+      );
+    } finally {
+      client.release();
+    }
+  });
+
+  // FINAL whole-branch review, FIX-NOW item 4 — enqueue must not happen
+  // inside the caller's still-open transaction.
+  it("does NOT enqueue inside the transaction — the returned enqueueProvision() does it after COMMIT (final review, item 4)", async () => {
+    const send = vi.fn().mockResolvedValue("job-1");
+    getBossMock.mockReturnValue({ send });
+
+    const slug = `provision-after-commit-${Date.now()}`;
+    createdSlugs.push(slug);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { siteId, canonicalDomainId, enqueueProvision } = await createSiteWithDomains(client, {
+        slug,
+        displayName: "After Commit Co",
+      });
+
+      // Still mid-transaction: nothing has been queued, so a worker cannot
+      // possibly race the (not yet visible) site row.
+      expect(getBossMock).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+
+      await client.query("COMMIT");
+      await enqueueProvision();
+
+      expect(send).toHaveBeenCalledWith(
+        "site.provision",
+        { siteId, domainId: canonicalDomainId },
+        expect.objectContaining({ singletonKey: canonicalDomainId }),
       );
     } finally {
       client.release();
@@ -132,10 +174,10 @@ d("createSiteWithDomains — site.provision enqueue failure logging (fix round 1
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await expect(
-        createSiteWithDomains(client, { slug, displayName: "No Fail Co" }),
-      ).resolves.toMatchObject({ canonical: `${slug}.sites.anchorcorps.com` });
+      const created = await createSiteWithDomains(client, { slug, displayName: "No Fail Co" });
+      expect(created).toMatchObject({ canonical: `${slug}.sites.anchorcorps.com` });
       await client.query("COMMIT");
+      await expect(created.enqueueProvision()).resolves.toBeUndefined();
     } finally {
       client.release();
     }

@@ -104,6 +104,30 @@ describe("HttpCrmClient", () => {
     await expect(client.listCampaigns("crm-site-abc")).rejects.toThrow("500");
   });
 
+  // FINAL whole-branch review, FIX-NOW item 4 — unbounded CRM call.
+  it("aborts a hung request and reports a clear timeout error (final review, item 4)", async () => {
+    // A fetch that only ever settles when its signal aborts — i.e. exactly
+    // what an unresponsive anchor-hub looks like from here.
+    const fetch = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject((init.signal as AbortSignal).reason));
+      });
+    }) as unknown as typeof globalThis.fetch;
+
+    const client = new HttpCrmClient({ baseUrl: BASE, apiKey: KEY, fetch, timeoutMs: 20 });
+    await expect(client.provisionSite("s", "n", "d")).rejects.toThrow(
+      /CRM POST \/sites timed out after 20ms/,
+    );
+  });
+
+  it("passes an AbortSignal on every request (default 10s budget)", async () => {
+    const fetch = makeFetch(200, []);
+    const client = new HttpCrmClient({ baseUrl: BASE, apiKey: KEY, fetch });
+    await client.listCampaigns("x");
+    const [, opts] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((opts as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("strips trailing slash from baseUrl so paths have no double slash", async () => {
     const fetch = makeFetch(200, []);
     const client = new HttpCrmClient({ baseUrl: BASE + "/", apiKey: KEY, fetch });

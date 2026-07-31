@@ -413,12 +413,16 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const { siteId, canonical } = await createSiteWithDomains(client, {
+        const { siteId, canonical, enqueueProvision } = await createSiteWithDomains(client, {
           slug,
           displayName: display_name,
           brandTokens: brand_tokens,
         });
         await client.query("COMMIT");
+        // Final review item 4: same after-commit rule as the materialize
+        // enqueue below (and as POST /api/sites) — the provision worker must
+        // never see the job before the site row it names.
+        await enqueueProvision();
 
         // Enqueue after commit so the job sees the committed site. Best-effort:
         // the site exists regardless; a failed enqueue is reported so the

@@ -17,6 +17,16 @@ import type { SiteProvisionInput } from "../jobs/site-provision.js";
  * Runs inside a transaction the CALLER owns (BEGIN/COMMIT/ROLLBACK) so a site
  * can be created atomically alongside other work. Throws
  * `SiteSlugConflictError` if the slug is taken — the caller maps it to 409.
+ *
+ * FINAL whole-branch review, FIX-NOW item 4: the `site.provision` enqueue used
+ * to happen HERE, inside that still-open transaction. Two problems, both real:
+ * the worker (a separate connection, polling every ~2s) could pick the job up
+ * before the site row was visible to it — the "site not found" race the job
+ * handler's retry exists to paper over — and a rolled-back transaction still
+ * left a queued job for a site that never existed. The enqueue is now returned
+ * as an `enqueueProvision()` thunk the caller fires AFTER `COMMIT`, the same
+ * shape `POST /api/sites/from-template` already uses for `enqueueMaterialize`
+ * (routes/templates.ts).
  */
 
 export class SiteSlugConflictError extends Error {
@@ -39,7 +49,18 @@ export async function createSiteWithDomains(
     /** Injectable env for CRM client resolution. Defaults to process.env. */
     crmEnv?: CrmEnv;
   },
-): Promise<{ siteId: string; canonical: string; canonicalDomainId: string }> {
+): Promise<{
+  siteId: string;
+  canonical: string;
+  canonicalDomainId: string;
+  /** Fire AFTER the caller's COMMIT — see this function's doc comment.
+   *  Never rejects: every failure mode is logged and swallowed, exactly as
+   *  the in-transaction version was. Awaiting it (both callers do) keeps
+   *  "the site was created" and "its provision job is queued" ordered for
+   *  anything that inspects `pgboss.job` right after the response — it's a
+   *  single INSERT on pg-boss's own pool, not a network round trip. */
+  enqueueProvision: () => Promise<void>;
+}> {
   const dup = await client.query(`SELECT 1 FROM sites WHERE slug = $1`, [opts.slug]);
   if (dup.rowCount && dup.rowCount > 0) {
     throw new SiteSlugConflictError(opts.slug);
@@ -85,33 +106,38 @@ export async function createSiteWithDomains(
   // either API indefinitely; failures land on the domain row's own status
   // fields via the job handler (src/server/jobs/site-provision.ts), visible
   // through the existing GET .../domains/:domainId/status poll.
-  try {
-    getBoss()
-      .send(
-        SITE_PROVISION,
-        { siteId, domainId: canonicalDomainId } satisfies SiteProvisionInput,
-        { singletonKey: canonicalDomainId, retryLimit: 5, retryDelay: 60, retryBackoff: true },
-      )
-      .catch((err) => {
-        // Fix round 1, item 1: this used to swallow the failure with zero
-        // trace — a domain row stuck at verification_status='pending'
-        // forever with nothing in the logs to explain why. Mirrors the CRM
-        // enqueue's console.error below.
-        // eslint-disable-next-line no-console
-        console.error(
-          `[provision] enqueue failed for site ${siteId} (domain ${canonicalDomainId}):`,
-          err,
-        );
-      });
-  } catch (err) {
-    // Boss not started (JOBS_ENABLED=false or not yet booted) — skip; the
-    // operator can trigger provisioning manually from the Domains tab.
-    // eslint-disable-next-line no-console
-    console.error(
-      `[provision] enqueue failed for site ${siteId} (domain ${canonicalDomainId}):`,
-      err,
-    );
-  }
+  //
+  // Final review item 4: built here (the ids are in scope) but NOT called —
+  // the caller fires it after COMMIT.
+  const enqueueProvision = async (): Promise<void> => {
+    try {
+      await getBoss()
+        .send(
+          SITE_PROVISION,
+          { siteId, domainId: canonicalDomainId } satisfies SiteProvisionInput,
+          { singletonKey: canonicalDomainId, retryLimit: 5, retryDelay: 60, retryBackoff: true },
+        )
+        .catch((err) => {
+          // Fix round 1, item 1: this used to swallow the failure with zero
+          // trace — a domain row stuck at verification_status='pending'
+          // forever with nothing in the logs to explain why. Mirrors the CRM
+          // enqueue's console.error below.
+          // eslint-disable-next-line no-console
+          console.error(
+            `[provision] enqueue failed for site ${siteId} (domain ${canonicalDomainId}):`,
+            err,
+          );
+        });
+    } catch (err) {
+      // Boss not started (JOBS_ENABLED=false or not yet booted) — skip; the
+      // operator can trigger provisioning manually from the Domains tab.
+      // eslint-disable-next-line no-console
+      console.error(
+        `[provision] enqueue failed for site ${siteId} (domain ${canonicalDomainId}):`,
+        err,
+      );
+    }
+  };
 
   // P11-T11.7 (D-053): best-effort CRM provisioning. Never blocks site creation.
   const crmClient = opts.crmClient ?? resolveCrmClient(opts.crmEnv);
@@ -137,5 +163,5 @@ export async function createSiteWithDomains(
     }
   }
 
-  return { siteId, canonical, canonicalDomainId };
+  return { siteId, canonical, canonicalDomainId, enqueueProvision };
 }
