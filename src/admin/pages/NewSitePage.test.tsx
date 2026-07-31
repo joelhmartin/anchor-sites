@@ -301,7 +301,7 @@ describe("NewSitePage (W1.1, 2026-07-30 product-audit remediation)", () => {
     expect(screen.getByText(/search=\?materializing=2&template=Starter/)).toBeTruthy();
   });
 
-  it("ai-only: typing a prompt with no selection creates a blank site (no brand tokens), starts a job-run conversation, and navigates to ?ai=1", async () => {
+  it("ai-only: typing a prompt with no selection creates a blank site WITH the default brand-token baseline (D1100), starts a job-run conversation, and navigates to ?ai=1", async () => {
     const fetchMock = routeFetch();
     global.fetch = fetchMock as unknown as typeof fetch;
     renderPage();
@@ -316,7 +316,10 @@ describe("NewSitePage (W1.1, 2026-07-30 product-audit remediation)", () => {
     const siteCalls = postCalls(fetchMock, "/api/sites");
     expect(siteCalls.length).toBe(1);
     const siteBody = JSON.parse(siteCalls[0][1]!.body as string);
-    expect(siteBody.default_brand_tokens).toBeUndefined();
+    // W1.5 / D1100: a prompt-only build used to withhold the tokens entirely
+    // (leaving the site unthemed unless the model volunteered a palette) —
+    // now the default baseline always ships and the agent adapts it.
+    expect(siteBody.default_brand_tokens["--theme-main"]).toMatch(/^#[0-9a-f]{6}$/i);
 
     const convCalls = postCalls(fetchMock, "/api/sites/s1/agent/conversations");
     expect(convCalls.length).toBe(1);

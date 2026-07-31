@@ -313,10 +313,14 @@ export function NewSitePage() {
         });
       } else {
         // Blank (explicit or implicit) / AI-only path — `selection` is the
-        // consumed source of truth (D204): blank-with-no-prompt gets the
-        // default brand tokens, a prompt runs the agent afterwards.
+        // consumed source of truth (D204). W1.5 / D1100: the default brand
+        // tokens are sent EVEN when a prompt will run the agent afterwards —
+        // previously a prompt-only build shipped with no theme at all unless
+        // the model volunteered set_brand_tokens, so a from-scratch site
+        // rendered unthemed. The tokens are a baseline the agent's own
+        // set_brand_tokens call (step 4 of its system prompt) replaces.
         const body: Record<string, unknown> = { slug: effectiveSlug, display_name: effectiveName.trim() };
-        if (!trimmedPrompt) body.default_brand_tokens = DEFAULT_BRAND_TOKENS;
+        body.default_brand_tokens = DEFAULT_BRAND_TOKENS;
         const site = await apiFetch<{ site?: { id: string }; id?: string }>("/api/sites", {
           method: "POST",
           body,

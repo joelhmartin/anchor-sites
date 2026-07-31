@@ -6,7 +6,7 @@ import {
   requestConversationStop,
 } from "./repo.js";
 import {
-  runAgentTurn, parsePositiveIntEnv, describeAnthropicError,
+  runAgentTurn, parsePositiveIntEnv, describeAnthropicError, AGENT_SYSTEM_INTRO,
   type AgentTurnEvent, type AgentTurnResult,
 } from "./loop.js";
 
@@ -55,6 +55,52 @@ function makeFakeClient(messages: Anthropic.Message[]) {
   for (const m of messages) create.mockResolvedValueOnce(m);
   return { client: { messages: { create } } as unknown as Anthropic, create };
 }
+
+// W1.5 / D1100 — structural invariants of the design-playbook system prompt.
+// Deliberately NOT full-string matching: the prompt is prose that will be
+// tuned; these assert only the load-bearing directives survive a rewording.
+// Ungated (no DB needed).
+describe("AGENT_SYSTEM_INTRO design playbook (D1100)", () => {
+  it("orders brand tokens BEFORE page creation in the from-scratch flow", () => {
+    const tokensIdx = AGENT_SYSTEM_INTRO.indexOf("set_brand_tokens BEFORE creating any page");
+    expect(tokensIdx).toBeGreaterThan(-1);
+  });
+
+  it("names the token pairs the palette must cover", () => {
+    for (const token of ["--theme-main", "--theme-accent", "--theme-surface", "--theme-muted"]) {
+      expect(AGENT_SYSTEM_INTRO).toContain(token);
+    }
+  });
+
+  it("mandates per-page nav-bar + rich-footer chrome", () => {
+    expect(AGENT_SYSTEM_INTRO).toMatch(/nav-bar/);
+    expect(AGENT_SYSTEM_INTRO).toMatch(/rich-footer/);
+    expect(AGENT_SYSTEM_INTRO).toMatch(/identical across all pages/i);
+  });
+
+  it("mandates the image strategy: search + import for every image slot, never empty", () => {
+    expect(AGENT_SYSTEM_INTRO).toContain("search_stock_images");
+    expect(AGENT_SYSTEM_INTRO).toContain("import_image");
+    expect(AGENT_SYSTEM_INTRO).toMatch(/never leave an image slot empty/i);
+  });
+
+  it("sets a copy-depth bar (no lorem, no generic filler) and section-count guidance", () => {
+    expect(AGENT_SYSTEM_INTRO).toMatch(/no lorem ipsum/i);
+    expect(AGENT_SYSTEM_INTRO).toMatch(/filler/i);
+    expect(AGENT_SYSTEM_INTRO).toMatch(/4-7/);
+  });
+
+  it("requires a first-turn site-spec enrichment step and an SEO pass at the end", () => {
+    expect(AGENT_SYSTEM_INTRO).toMatch(/site spec/i);
+    expect(AGENT_SYSTEM_INTRO).toContain("set_seo_defaults");
+    expect(AGENT_SYSTEM_INTRO).toContain("set_page_seo");
+  });
+
+  it("keeps adapt-don't-rebuild for pre-applied templates", () => {
+    expect(AGENT_SYSTEM_INTRO).toMatch(/adapt/i);
+    expect(AGENT_SYSTEM_INTRO).toMatch(/never delete-and-rebuild/i);
+  });
+});
 
 // Bot-review fix wave, item 4 (CodeRabbit ×2 — env parsing). Ungated (no DB
 // needed) — pure-function coverage, mirrors ai-agent-routes.test.ts's
