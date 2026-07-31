@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { Block } from "../blocks/types.js";
 import type { MediaAssetData } from "@anchorcorps/components";
+import { collectAssetIdsDeep } from "../blocks/asset-scan.js";
 
 /**
  * Page-block media hydration (P3-T3.14).
@@ -12,30 +13,19 @@ import type { MediaAssetData } from "@anchorcorps/components";
  * `useMediaContext`.
  */
 
-/** Walk every block + descendant, pull asset ids. Order isn't important. */
+/**
+ * D901 (W2-CONC): this used to be a private per-block allowlist
+ * (`props.asset_id` + `props.slides[].image_asset_id`) that silently missed
+ * `nav-bar`'s `logo_asset_id` and `split-hero`'s top-level `image_asset_id`
+ * — those assets were never queried, so nav logos and split-hero images
+ * rendered as missing-asset placeholders on published pages, previews, and
+ * materialized templates. Now it delegates to the ONE shared generic
+ * `/asset_id$/i` scanner git-import already validated against
+ * (src/blocks/asset-scan.ts), so the renderer and the import gate can never
+ * again disagree about what a block references.
+ */
 export function collectAssetIds(blocks: Block[] | undefined | null): string[] {
-  const out: string[] = [];
-  if (!blocks) return out;
-  const visit = (block: Block) => {
-    const props = (block.props ?? {}) as Record<string, unknown>;
-    if (typeof props.asset_id === "string" && props.asset_id) {
-      out.push(props.asset_id);
-    }
-    // Hero-slider style: props.slides = [{ image_asset_id: ... }, ...]
-    if (Array.isArray(props.slides)) {
-      for (const slide of props.slides) {
-        if (slide && typeof slide === "object") {
-          const sid = (slide as Record<string, unknown>).image_asset_id;
-          if (typeof sid === "string" && sid) out.push(sid);
-        }
-      }
-    }
-    if (Array.isArray(block.children)) {
-      for (const c of block.children) visit(c);
-    }
-  };
-  for (const b of blocks) visit(b);
-  return Array.from(new Set(out));
+  return [...collectAssetIdsDeep(blocks ?? [])];
 }
 
 /**

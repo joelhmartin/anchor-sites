@@ -12,8 +12,14 @@ export type Block = {
   type: string;
   /** validated against the registry schema at render time */
   props: Record<string, unknown>;
-  /** optional nested blocks (containers / sections later) */
-  children?: Block[];
+  // D1203 (W2-CONC): `children?: Block[]` was DELETED. It was a persisted
+  // field that was real nowhere: walked by the asset scan, ignored by
+  // validateBlocks (nested blocks could be arbitrary garbage), ignored by
+  // buildUrlValues, and NEVER rendered by BlockRenderer — three consumers,
+  // three different answers, zero pixels. No writer ever authored it. When
+  // container blocks actually land, re-add it TOGETHER WITH: registry-level
+  // child validation, BlockRenderer recursion, and editable-fields walking —
+  // one shared recursive walker, or it doesn't ship.
 };
 
 /**

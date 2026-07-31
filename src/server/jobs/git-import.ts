@@ -3,6 +3,7 @@ import { GithubApiError, makeGithubClient, resolveGitMode, type GithubClient } f
 import { getGitState, recordGitError, recordImport } from "../git/state-repo.js";
 import { parsePageFile, parseSiteFile, type FileParseError } from "../git/serialize.js";
 import { validateBlocks, type BlockShape } from "../../blocks/validate.js";
+import { collectAssetIdsDeep } from "../../blocks/asset-scan.js";
 import { evictSiteCacheForSite } from "../../middleware/resolveSite.js";
 import type { GitImportInput } from "../routes/git-webhook.js";
 // Side-effect: register the static + package blocks before validateBlocks
@@ -90,7 +91,6 @@ const REMOVED_PREFIX = "REMOVED:";
 const SITE_PREFIX_RE = /^sites\/[a-z0-9-]+\/(.+)$/;
 const PAGE_PATH_RE = /^pages\/([a-z0-9-]+)\.json$/;
 const IGNORED_BASENAMES = new Set(["media.json", "README.md", "BLOCKS.md"]);
-const ASSET_ID_KEY_RE = /asset_id$/i;
 /** Cap on bulleted items per section in the commit comment (fix round 1, Important 2). */
 const MAX_ITEMS_PER_SECTION = 20;
 
@@ -131,28 +131,6 @@ async function fetchFile(
     }
     throw err;
   }
-}
-
-/**
- * Generic recursive scan for asset references: ANY string value under a key
- * matching `/asset_id$/i`, at any depth (covers the flat `image` block's
- * `asset_id` prop and the nested `hero-slider` shape's
- * `slides[].image_asset_id`, plus any future block's `*_asset_id` field,
- * without needing a per-block-type allowlist).
- */
-function collectAssetIdsGeneric(value: unknown, out: Set<string> = new Set()): Set<string> {
-  if (Array.isArray(value)) {
-    for (const item of value) collectAssetIdsGeneric(item, out);
-  } else if (value !== null && typeof value === "object") {
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (ASSET_ID_KEY_RE.test(key) && typeof child === "string" && child) {
-        out.add(child);
-      } else {
-        collectAssetIdsGeneric(child, out);
-      }
-    }
-  }
-  return out;
 }
 
 function summarizeFailures(failures: FileFailure[]): string {
@@ -267,7 +245,10 @@ async function applyPageFile(
   // non-uuid string in an `*_asset_id` field, and that must surface as a
   // normal "unknown asset" validation failure, not an uncaught
   // invalid-uuid-literal exception that would abort the whole job.
-  const assetIds = [...collectAssetIdsGeneric(page.blocks)];
+  // D901: the shared generic scanner (src/blocks/asset-scan.ts) — the same
+  // walk render-hydration resolves with, so this gate and the renderer can
+  // never disagree about what a block references.
+  const assetIds = [...collectAssetIdsDeep(page.blocks)];
   if (assetIds.length > 0) {
     const existing = await pool.query<{ id: string }>(
       `SELECT id FROM media_assets WHERE site_id = $1 AND id::text = ANY($2::text[])`,

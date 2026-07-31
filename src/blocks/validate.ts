@@ -14,11 +14,15 @@ import { sanitizeBlockProps } from "./sanitize.js";
  * The caller is responsible for having registered the blocks (e.g. via
  * `import "../../blocks/index.js"`); this module is a pure validator.
  */
+// D1203 (W2-CONC): `children` was removed from the shape (see
+// src/blocks/types.ts for the full story). z.object strips unknown keys, so
+// a legacy payload still carrying `children` parses fine and the field is
+// dropped at the validation gate — honest, since nothing ever validated or
+// rendered it.
 export const blockShape = z.object({
   id: z.string().min(1),
   type: z.string().min(1),
   props: z.record(z.unknown()).default({}),
-  children: z.array(z.unknown()).optional(),
 });
 
 export type BlockShape = z.infer<typeof blockShape>;

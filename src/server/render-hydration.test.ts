@@ -37,16 +37,33 @@ describe("collectAssetIds (P3-T3.14)", () => {
     expect(collectAssetIds(blocks).sort()).toEqual(["dup", "other"]);
   });
 
-  it("recurses into block.children", () => {
+  // ── D901: the generic scan catches every /asset_id$/i field — the old
+  // per-block allowlist missed both of these, so nav logos and split-hero
+  // images rendered as missing-asset placeholders everywhere. ──
+
+  it("D901: pulls nav-bar's logo_asset_id", () => {
+    const blocks: Block[] = [
+      { id: "n", type: "nav-bar", props: { logo_asset_id: "logo-1", links: [] } },
+    ];
+    expect(collectAssetIds(blocks)).toEqual(["logo-1"]);
+  });
+
+  it("D901: pulls split-hero's top-level image_asset_id", () => {
+    const blocks: Block[] = [
+      { id: "s", type: "split-hero", props: { title: "T", image_asset_id: "img-1" } },
+    ];
+    expect(collectAssetIds(blocks)).toEqual(["img-1"]);
+  });
+
+  it("D901: pulls any future *_asset_id field at any depth (generic rule, no allowlist)", () => {
     const blocks: Block[] = [
       {
-        id: "wrap",
-        type: "section",
-        props: {},
-        children: [{ id: "1", type: "image", props: { asset_id: "nested" } }],
+        id: "x",
+        type: "future-gallery",
+        props: { groups: [{ items: [{ background_asset_id: "deep-1" }] }] },
       },
     ];
-    expect(collectAssetIds(blocks)).toEqual(["nested"]);
+    expect(collectAssetIds(blocks)).toEqual(["deep-1"]);
   });
 
   it("ignores empty/null/non-string asset ids", () => {

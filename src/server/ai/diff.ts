@@ -7,7 +7,7 @@ import type { Block } from "../../blocks/types.js";
  * panel (6.6) just renders it. Compares by block `id`:
  *  - added   — id present only in `after`
  *  - removed — id present only in `before`
- *  - updated — same id, props (or children) changed
+ *  - updated — same id, props changed
  *  - moved   — same id, relative order among the COMMON blocks changed
  *              (inserting/removing elsewhere does NOT flag survivors as moved)
  */
@@ -47,7 +47,7 @@ export function diffBlocks(before: Block[], after: Block[]): BlockDiff {
       continue;
     }
     const changed =
-      !isDeepStrictEqual(prev.b.props, b.props) || !isDeepStrictEqual(prev.b.children, b.children);
+      !isDeepStrictEqual(prev.b.props, b.props);
     const relMoved = posBefore.get(id) !== posAfter.get(id);
     if (changed) updated.push({ id, type: b.type });
     if (relMoved) moved.push({ id, type: b.type, from: prev.i, to: i });
