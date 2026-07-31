@@ -29,6 +29,7 @@ import {
   handleSiteProvision,
   type SiteProvisionInput,
 } from "./site-provision.js";
+import { pruneExpiredAuthRows } from "./auth-prune.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
@@ -36,6 +37,7 @@ export const AGENT_TURN = "ai.agent-turn";
 export const GIT_EXPORT = "git.export";
 export const GIT_IMPORT = "git.import";
 export const SITE_PROVISION = "site.provision";
+export const AUTH_PRUNE = "auth.prune-expired";
 export { CRM_SYNC_JOB };
 
 /**
@@ -266,6 +268,25 @@ async function registerHandlers(boss: PgBoss): Promise<void> {
   await boss.work<SiteProvisionInput>(SITE_PROVISION, async ([job]) => {
     await handleSiteProvision(job.data, { pool: defaultPool });
   });
+
+  // D805 (W2-AUTH): daily sweep of expired auth_session / auth_verification
+  // rows (studio + tenant tables) — see auth-prune.ts for why they otherwise
+  // accrete forever. A pg-boss cron schedule is the least machinery that
+  // actually runs, GIVEN the W1.4 `--min-instances=1` change (the always-on
+  // instance is the worker; before W1.4 a scale-to-zero service could sleep
+  // through every tick). `schedule()` upserts, so re-running on every boot is
+  // idempotent. 04:40 UTC = overnight for the US-based team, off the busy
+  // hours of the odd-hours cloud routines.
+  await boss.createQueue(AUTH_PRUNE);
+  await boss.work(AUTH_PRUNE, async () => {
+    const counts = await pruneExpiredAuthRows(defaultPool);
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      // eslint-disable-next-line no-console
+      console.log("[auth-prune] removed expired auth rows", counts);
+    }
+  });
+  await boss.schedule(AUTH_PRUNE, "40 4 * * *", undefined, { tz: "UTC" });
 }
 
 /**
