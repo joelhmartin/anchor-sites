@@ -92,8 +92,13 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   const enqueueGitExport =
     opts.enqueueGitExport ??
     (async (input: GitExportInput) => {
-      const { getBoss } = await import("../jobs/index.js");
-      return getBoss().send(GIT_EXPORT, input, { singletonKey: input.siteId });
+      const { getBoss, GIT_EXPORT_RETRY_OPTIONS } = await import("../jobs/index.js");
+      // D618: per-send retry-with-backoff for branch-ref contention (queue-
+      // level options never reach an existing deployment's queue row).
+      return getBoss().send(GIT_EXPORT, input, {
+        singletonKey: input.siteId,
+        ...GIT_EXPORT_RETRY_OPTIONS,
+      });
     });
 
   const saveLimiter = rateLimit(

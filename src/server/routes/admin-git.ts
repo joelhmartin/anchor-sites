@@ -74,8 +74,13 @@ export function adminGitRouter(opts: AdminGitOptions = {}): Router {
     opts.enqueueExport ??
     (async (input) => {
       try {
-        const { getBoss } = await import("../jobs/index.js");
-        return await getBoss().send(GIT_EXPORT, input, { singletonKey: input.siteId });
+        const { getBoss, GIT_EXPORT_RETRY_OPTIONS } = await import("../jobs/index.js");
+        // D618: per-send retry-with-backoff for branch-ref contention
+        // (queue-level options never reach an existing deployment).
+        return await getBoss().send(GIT_EXPORT, input, {
+          singletonKey: input.siteId,
+          ...GIT_EXPORT_RETRY_OPTIONS,
+        });
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error("[git] pg-boss enqueue failed", err);
