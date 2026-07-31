@@ -339,6 +339,22 @@ export function useAgentConversation({
             if (cancelled) return;
             setConversation(detail.conversation);
             hydrateFromMessages(detail.messages);
+            // D303 — an errored conversation must explain its Resume button
+            // on reload. Newer failure paths persist a system row already;
+            // for histories that trail off without one (older failures,
+            // partial writes), derive the line client-side. Skipped when the
+            // last persisted row IS a system explanation — no doubling up.
+            const lastMessage = detail.messages[detail.messages.length - 1];
+            if (detail.conversation.status === "error" && lastMessage?.role !== "system") {
+              setItems((prev) => [
+                ...prev,
+                {
+                  id: nextId(),
+                  kind: "system",
+                  text: "The last build ended with an error — press Resume to continue.",
+                },
+              ]);
+            }
           } catch {
             // history hydration is best-effort — sends still work regardless
           }

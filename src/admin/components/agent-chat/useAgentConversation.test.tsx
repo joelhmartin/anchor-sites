@@ -113,6 +113,67 @@ function renderConversation() {
   return { ...view, onStatusChange };
 }
 
+describe("useAgentConversation — D303 errored-conversation hydration explains itself", () => {
+  const realFetch = global.fetch;
+
+  beforeEach(() => {
+    setAdminToken("tok");
+    emitters = {};
+    streamAgentEvents.mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearAdminToken();
+    global.fetch = realFetch;
+  });
+
+  function mockErroredBootstrap(messages: unknown[]) {
+    const conversation = { id: "c1", site_id: "s1", title: "T", status: "error", token_usage: {} };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({ conversations: [conversation] });
+      }
+      if (url === DETAIL_PATH && method === "GET") return json({ conversation, messages });
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  it("appends a derived system line when an errored conversation's history trails off without one", async () => {
+    mockErroredBootstrap([
+      { id: "m1", conversation_id: "c1", role: "user", content: [{ type: "text", text: "build it" }], created_at: "t" },
+      { id: "m2", conversation_id: "c1", role: "assistant", content: [{ type: "text", text: "Working on it" }], created_at: "t" },
+    ]);
+    const { result } = renderConversation();
+    await flush();
+
+    const last = result.current.items[result.current.items.length - 1];
+    expect(last.kind).toBe("system");
+    expect((last as { text: string }).text).toMatch(/error/i);
+    expect((last as { text: string }).text).toMatch(/resume/i);
+  });
+
+  it("does NOT double up when the history already ends with a persisted system explanation", async () => {
+    mockErroredBootstrap([
+      { id: "m1", conversation_id: "c1", role: "user", content: [{ type: "text", text: "build it" }], created_at: "t" },
+      {
+        id: "m2", conversation_id: "c1", role: "system",
+        content: [{ type: "text", text: "Build was interrupted — press Resume to continue." }], created_at: "t",
+      },
+    ]);
+    const { result } = renderConversation();
+    await flush();
+
+    const systemItems = result.current.items.filter((i) => i.kind === "system");
+    expect(systemItems).toHaveLength(1);
+    expect((systemItems[0] as { text: string }).text).toMatch(/interrupted/i);
+  });
+});
+
 describe("useAgentConversation — inter-round settle debounce (final review, item 1)", () => {
   const realFetch = global.fetch;
 

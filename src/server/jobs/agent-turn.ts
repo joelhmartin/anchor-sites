@@ -173,6 +173,15 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
 
     await releaseConversationTurn(deps.pool, data.conversationId, "active");
   } catch (err) {
+    // D303 — every OTHER turn-ending failure persists explanatory text (the
+    // loop's describeAnthropicError / failure-streak / budget branches);
+    // this outer catch (non-Anthropic throws: DB failures, tool crashes)
+    // used to set a bare status='error' with NO transcript row, so a reload
+    // showed a transcript trailing off with an unexplained Resume button.
+    // Best-effort (the throw below must still reach pg-boss either way).
+    await appendMessage(deps.pool, data.conversationId, "system", [
+      { type: "text", text: "The build failed unexpectedly — press Resume to continue." },
+    ]).catch(() => undefined);
     // releaseConversationTurn (not bare setConversationStatus): also clears
     // a pending cancel flag so a Stop that raced this failure can't cancel
     // the NEXT, unrelated turn (W1.4).

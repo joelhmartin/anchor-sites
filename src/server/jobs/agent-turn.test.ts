@@ -38,7 +38,7 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
     expect(convAfter!.status).toBe("active");
   });
 
-  it("on runTurn failure: marks the conversation errored and rethrows", async () => {
+  it("on runTurn failure: marks the conversation errored, persists a terminal system note (D303), and rethrows", async () => {
     const site = await db.seedSite(`agent-turn-error-${runId}`);
     const conv = await createConversation(db.getPool(), site.id, "t");
 
@@ -57,6 +57,14 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
 
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     expect(convAfter!.status).toBe("error");
+
+    // D303 — a reload must not show a transcript that trails off with a
+    // bare Resume button: the failure leaves an explanatory system row.
+    const messages = await listMessages(db.getPool(), conv.id);
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe("system");
+    expect(JSON.stringify(last.content)).toMatch(/failed/i);
+    expect(JSON.stringify(last.content)).toMatch(/resume/i);
   });
 
   // ── Bot-review fix wave, items 1+2 (turn serialization / job dedup) ──
