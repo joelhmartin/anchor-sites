@@ -177,9 +177,13 @@ export async function seed(
 
       for (const page of site.pages) {
         await client.query(
-          `INSERT INTO pages (site_id, slug, title, blocks, seo, status, published_at)
+          `INSERT INTO pages (site_id, slug, title, blocks, seo, status, published_at, published_snapshot)
            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6,
-                   CASE WHEN $6 = 'published' THEN now() ELSE NULL END)
+                   CASE WHEN $6 = 'published' THEN now() ELSE NULL END,
+                   CASE WHEN $6 = 'published' THEN jsonb_build_object(
+                     'title', $3::text, 'blocks', $4::jsonb, 'seo', $5::jsonb,
+                     'brand_tokens_override', NULL
+                   ) ELSE NULL END)
            ON CONFLICT (site_id, slug) DO UPDATE SET
              title = EXCLUDED.title,
              blocks = EXCLUDED.blocks,
@@ -189,6 +193,13 @@ export async function seed(
                WHEN EXCLUDED.status = 'published' AND pages.published_at IS NULL THEN now()
                WHEN EXCLUDED.status = 'published' THEN pages.published_at
                ELSE NULL
+             END,
+             -- D301: seeding a published page IS a publish — freeze the
+             -- render payload the tenant route serves (see
+             -- src/server/publish-snapshot.ts).
+             published_snapshot = CASE
+               WHEN EXCLUDED.status = 'published' THEN EXCLUDED.published_snapshot
+               ELSE pages.published_snapshot
              END`,
           [
             siteId,
