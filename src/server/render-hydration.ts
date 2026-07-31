@@ -32,6 +32,21 @@ export function collectAssetIds(blocks: Block[] | undefined | null): string[] {
  * Load `media_assets` rows + project to the public `MediaAssetData`
  * shape. Filters out rows whose variants haven't completed processing —
  * the Image block's missing-asset placeholder handles those.
+ *
+ * SCOPING (D1214, W2-CONC): a site may resolve (a) its OWN assets and (b)
+ * assets owned by any template SOURCE site. (b) exists because
+ * materialize-template copies template pages with their source asset ids
+ * intact ("no media copy" — D-043), but this query used to be strictly
+ * `site_id = $1`, so every image a template actually captured rendered as a
+ * missing-asset placeholder forever on materialized sites (latent only
+ * while templates authored empty image slots — D712). Widening beats
+ * copying rows at materialize: gcs_key is globally UNIQUE (a row copy needs
+ * a fake key pointing at no GCS object) and shared-object row copies would
+ * poison the future media-delete/GC path (D513) with double-owned objects.
+ * The exposure is deliberate and narrow: only sites an operator explicitly
+ * published as a template's source (platform showroom sites), only by exact
+ * uuid reference, and template-source images are exactly the content
+ * templates promise to every site made from them.
  */
 export async function loadAssetsForBlocks(
   pool: Pool,
@@ -50,7 +65,8 @@ export async function loadAssetsForBlocks(
   }>(
     `SELECT id, alt, width, height, focal_point, variants
        FROM media_assets
-      WHERE site_id = $1
+      WHERE (site_id = $1
+             OR site_id IN (SELECT source_site_id FROM templates WHERE source_site_id IS NOT NULL))
         AND id = ANY($2::uuid[])
         AND variants_status = 'ready'`,
     [siteId, ids],

@@ -18,6 +18,12 @@ import { evictSiteCache } from "../../middleware/resolveSite.js";
  *
  * Media: captured blocks keep their source `asset_id`s; referenced images
  * render from the immutable public GCS variant URLs (D-043). No media copy.
+ * D1214 (W2-CONC): that promise is only real because `loadAssetsForBlocks`
+ * (src/server/render-hydration.ts) resolves template-SOURCE-site assets in
+ * addition to the rendering site's own — its query used to be strictly
+ * site-scoped, which made every captured image a permanent missing-asset
+ * placeholder on materialized sites. If the hydration scoping ever changes,
+ * this flow needs an asset-copy step instead.
  */
 
 export type MaterializeTemplateInput = {
