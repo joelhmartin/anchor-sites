@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
-import pinoHttp from "pino-http";
+import { httpLogger } from "./http-logger.js";
 import { ping } from "./db.js";
 import { blocksPreviewRouter } from "./routes/blocks-preview.js";
 import { pageRouter } from "./routes/page.js";
@@ -82,7 +82,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       },
     }),
   );
-  app.use(pinoHttp({ autoLogging: { ignore: (req) => req.url === "/healthz" } }));
+  // D523/D811 — request logging with credential redaction (token query
+  // params, x-admin-token/cookie/authorization headers). See http-logger.ts.
+  app.use(httpLogger());
 
   app.get("/healthz", async (_req: Request, res: Response) => {
     const db = await ping();
