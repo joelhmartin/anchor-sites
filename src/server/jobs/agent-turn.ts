@@ -134,6 +134,13 @@ export function buildContinuationSingletonKey(input: AgentTurnInput): string {
 export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps): Promise<void> {
   const runTurn = deps.runTurn ?? runAgentTurn;
   const continuation = data.continuation ?? 0;
+  // W1.5 / D1111 — resolved up front (not just in the tool_limit branch)
+  // because the loop needs the round counters BEFORE the turn runs, to
+  // persist an honest "Continuing — round N of M…" note instead of
+  // "…stopping here." on rounds that auto-continue.
+  const maxContinuations = parsePositiveIntEnv(
+    process.env.AI_AGENT_MAX_CONTINUATIONS, DEFAULT_MAX_CONTINUATIONS,
+  );
   const claimed = await claimConversationTurn(deps.pool, data.conversationId);
   if (!claimed) return; // duplicate/re-delivery — another turn already owns this conversation
   try {
@@ -145,7 +152,14 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
       return;
     }
 
-    const result = await runTurn({ pool: deps.pool, conversationId: data.conversationId, siteId: data.siteId });
+    const result = await runTurn({
+      pool: deps.pool,
+      conversationId: data.conversationId,
+      siteId: data.siteId,
+      // D1111 — 1-based round counters: round 0's job is round 1 of
+      // (cap + 1) total possible rounds per user message.
+      continuationHint: { round: continuation + 1, maxRounds: maxContinuations + 1 },
+    });
 
     // W1.4 Stop — the loop already persisted the note and landed status
     // 'stopped'; releasing to 'active' here would clobber that terminal
@@ -153,9 +167,6 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
     if (result.endReason === "stopped") return;
 
     if (result.endReason === "tool_limit") {
-      const maxContinuations = parsePositiveIntEnv(
-        process.env.AI_AGENT_MAX_CONTINUATIONS, DEFAULT_MAX_CONTINUATIONS,
-      );
       // W1.4 Stop — continuation boundary: a Stop that landed during this
       // round (after the loop's last own check) must halt the chain here,
       // not ride into another full round of spend.
@@ -215,10 +226,14 @@ export async function handleAgentTurn(data: AgentTurnInput, deps: AgentTurnDeps)
       // (loop.ts) is already in history, but that's silent to the operator
       // unless they're watching the SSE tail. Leave one more, clearly
       // user-facing note explaining why the build stopped short of done.
+      // D1111: counts rounds in the same "N of M" language as the
+      // continuation notes so the transcript's round arithmetic adds up.
       await appendMessage(deps.pool, data.conversationId, "assistant", [
         {
           type: "text",
-          text: `Paused after ${continuation + 1} batches — send a message to continue.`,
+          text:
+            `Paused after ${continuation + 1} of ${maxContinuations + 1} build rounds — ` +
+            `send a message to continue.`,
         },
       ]);
       await releaseConversationTurn(deps.pool, data.conversationId, "active");

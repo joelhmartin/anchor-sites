@@ -55,6 +55,8 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
 
     expect(runTurn).toHaveBeenCalledWith({
       pool: db.getPool(), conversationId: conv.id, siteId: site.id,
+      // D1111 — round counters always ride along (round 1 of cap+1 here).
+      continuationHint: { round: 1, maxRounds: 4 },
     });
 
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
@@ -168,6 +170,21 @@ d("handleAgentTurn (P-T9 / ai.agent-turn)", () => {
 
     const convAfter = await getConversation(db.getPool(), conv.id, site.id);
     expect(convAfter!.status).toBe("active");
+  });
+
+  it("D1111: the continuation hint tracks the round number — continuation:2 runs as round 3 of 4", async () => {
+    const site = await db.seedSite(`agent-turn-hint-${runId}`);
+    const conv = await createConversation(db.getPool(), site.id, "t");
+
+    const runTurn = vi.fn().mockResolvedValue({ endReason: "completed", toolCalls: 5 });
+    await handleAgentTurn(
+      { conversationId: conv.id, siteId: site.id, continuation: 2 },
+      { pool: db.getPool(), runTurn },
+    );
+
+    expect(runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ continuationHint: { round: 3, maxRounds: 4 } }),
+    );
   });
 
   it("completed never re-enqueues, regardless of continuation round", async () => {

@@ -1010,6 +1010,59 @@ d("runAgentTurn", () => {
     expect((second.messages as unknown[]).length).toBeGreaterThan((first.messages as unknown[]).length);
   });
 
+  it("D1111: with a continuation hint and rounds remaining, the tool-cap note is an honest 'Continuing — round N of M' SYSTEM row, not 'stopping here'", async () => {
+    const { site, conv } = await seedConvo(`loop-continuing-note-${runId}`);
+
+    const { client } = makeFakeClient([
+      cannedMessage({
+        content: [toolUseBlock("n1", "get_site_overview", {})],
+        stop_reason: "tool_use",
+        usage: usage(100, 20),
+      }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      limits: { maxToolCalls: 1 },
+      continuationHint: { round: 2, maxRounds: 4 },
+    });
+
+    expect(result).toEqual({ endReason: "tool_limit", toolCalls: 1 });
+    const messages = await listMessages(db.getPool(), conv.id);
+    const last = messages[messages.length - 1];
+    // A system row (amber SystemLine in the transcript, dropped from the
+    // model context) with the round counter — never the misleading
+    // "stopping here" on a build that auto-continues.
+    expect(last.role).toBe("system");
+    const text = JSON.stringify(last.content);
+    expect(text).toMatch(/Continuing — round 2 of 4/);
+    expect(JSON.stringify(messages.map((m) => m.content))).not.toMatch(/stopping here/i);
+  });
+
+  it("D1111: on the FINAL round the hint falls through to the plain tool-cap note (handleAgentTurn adds the user-facing paused note)", async () => {
+    const { site, conv } = await seedConvo(`loop-final-round-${runId}`);
+
+    const { client } = makeFakeClient([
+      cannedMessage({
+        content: [toolUseBlock("n2", "get_site_overview", {})],
+        stop_reason: "tool_use",
+        usage: usage(100, 20),
+      }),
+    ]);
+
+    const result = await runAgentTurn({
+      pool: db.getPool(), conversationId: conv.id, siteId: site.id, env: API_ENV, client,
+      limits: { maxToolCalls: 1 },
+      continuationHint: { round: 4, maxRounds: 4 },
+    });
+
+    expect(result).toEqual({ endReason: "tool_limit", toolCalls: 1 });
+    const messages = await listMessages(db.getPool(), conv.id);
+    const last = messages[messages.length - 1];
+    expect(last.role).toBe("assistant");
+    expect(JSON.stringify(last.content)).toMatch(/stopping here/i);
+  });
+
   it("reports a turn error instead of calling the API when a conversation has no user row at all", async () => {
     const site = await db.seedSite(`loop-nouser-${runId}`);
     const conv = await createConversation(db.getPool(), site.id, "t");

@@ -434,6 +434,15 @@ export async function runAgentTurn(input: {
   // (and the `deadline`/"promoted" branch below) stay only for direct unit
   // coverage in loop.test.ts; nothing production reaches them anymore.
   limits?: { maxToolCalls?: number; deadlineMs?: number };
+  /**
+   * W1.5 / D1111 — round counters from the job path (`handleAgentTurn`),
+   * 1-based: `round` is THIS round's number, `maxRounds` the total rounds a
+   * single user message may consume (continuation cap + 1). When present
+   * and more rounds remain, the tool-cap note becomes an honest
+   * "Continuing — round N of M…" SYSTEM row instead of the misleading
+   * assistant text "…stopping here." on builds that then silently continue.
+   */
+  continuationHint?: { round: number; maxRounds: number };
   genId?: () => string;
 }): Promise<AgentTurnResult> {
   const { pool, conversationId, siteId } = input;
@@ -700,6 +709,25 @@ export async function runAgentTurn(input: {
     }
 
     if (toolCalls >= maxToolCalls) {
+      const hint = input.continuationHint;
+      if (hint && hint.round < hint.maxRounds) {
+        // D1111 — the build will auto-continue (handleAgentTurn re-enqueues
+        // on tool_limit below the cap), so the note must read as
+        // "continuing", not "stopping". Persisted as a role-'system' row:
+        // it renders as the amber SystemLine in the transcript
+        // (client history.ts) AND is dropped from the model context
+        // (buildApiMessages filters system rows), so the next round resumes
+        // cleanly from the trailing tool results instead of seeing its own
+        // infrastructure note as conversation content.
+        const text =
+          `Continuing — round ${hint.round} of ${hint.maxRounds}: reached this round's ` +
+          `${maxToolCalls}-tool-call limit; the build continues automatically.`;
+        await appendMessage(pool, conversationId, "system", [{ type: "text", text }]);
+        onEvent({ type: "turn_done", reason: "max_tools", message: text });
+        return { endReason: "tool_limit", toolCalls };
+      }
+      // No hint (direct/test callers) or final round (handleAgentTurn then
+      // appends its own user-facing "Paused after N batches…" note).
       const text = `Reached the limit of ${maxToolCalls} tool calls for this turn; stopping here.`;
       await persistAssistantText(pool, conversationId, text, onEvent);
       onEvent({ type: "turn_done", reason: "max_tools", message: text });
