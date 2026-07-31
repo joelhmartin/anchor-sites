@@ -168,8 +168,6 @@ export const localRetail: TemplateSeed = {
               "Vinyl Wednesdays, First Friday listening parties, and Saturday crate-digs turn the shop into a living room for Federal Hill's record collectors. Pull up a milk crate and stay a while.",
             primary_cta_label: "See the Full Calendar",
             primary_cta_href: "/events",
-            secondary_cta_label: "",
-            secondary_cta_href: "#",
             image_asset_id: "",
             image_alt: "Neighbors browsing crates of records during a First Friday listening party at Rowhouse Records",
             variant: "image-left",
@@ -306,8 +304,6 @@ export const localRetail: TemplateSeed = {
             eyebrow: "In-Store Events",
             title: "Come hang out, not just shop",
             subtitle: "Every week has something going on at Rowhouse — here's the regular lineup.",
-            cta_label: "",
-            cta_href: "#",
             align: "left",
           },
         },
@@ -318,14 +314,6 @@ export const localRetail: TemplateSeed = {
             html:
               "<h2>Vinyl Wednesdays</h2><p>Every Wednesday, 5–7pm. The week's new arrivals get their first spin on the shop turntable, staff picks included. Come early for first crack at anything rare.</p><h2>First Friday Listening Party</h2><p>First Friday of the month, 7–9pm. We clear the front room, pour some cider, and spin full albums start to finish — a different genre theme every month, picked by a different staffer.</p><h2>Crate Dig Saturdays</h2><p>Every Saturday, 11am–1pm. The dollar crates get a fresh dump from the week's trade-ins before the shop even opens to the rest of the day — regulars know to show up early.</p><h2>Baltimore Local Spotlight</h2><p>Third Thursday of the month, 6–8pm. A short in-store set from a Baltimore-based artist or band, followed by an informal Q&amp;A and a signing at the counter.</p>",
             max_width: "medium",
-          },
-        },
-        {
-          id: "events-photo",
-          type: "image",
-          props: {
-            alt: "Neighbors packed into the front room of Rowhouse Records for a First Friday listening party",
-            fit: "cover",
           },
         },
         {
@@ -360,8 +348,6 @@ export const localRetail: TemplateSeed = {
             eyebrow: "Visit Us",
             title: "Find us on Light Street",
             subtitle: "Three blocks up from the harbor, in a converted rowhouse storefront with a green awning.",
-            cta_label: "",
-            cta_href: "#",
             align: "left",
           },
         },

@@ -487,14 +487,6 @@ export const dentalPractice: TemplateSeed = {
           },
         },
         {
-          id: "contact-office-image",
-          type: "image",
-          props: {
-            alt: "Willowbrook Dental & TMJ Care reception area overlooking the Tennessee River",
-            fit: "cover",
-          },
-        },
-        {
           id: "contact-form",
           type: "crm_form",
           props: {

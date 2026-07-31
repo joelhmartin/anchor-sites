@@ -13,7 +13,8 @@ export const splitHeroSchema = z.object({
   eyebrow: z.string().max(80).default(""),
   heading: z.string().min(1).max(120).default("A headline that earns the scroll"),
   body: z.string().max(500).default(""),
-  primary_cta_label: z.string().max(40).default("Get started"),
+  // D713 — empty label = no button rendered; absent must mean absent.
+  primary_cta_label: z.string().max(40).default(""),
   primary_cta_href: z.string().max(500).default("#"),
   secondary_cta_label: z.string().max(40).default(""),
   secondary_cta_href: z.string().max(500).default("#"),

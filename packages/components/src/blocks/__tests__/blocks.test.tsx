@@ -63,6 +63,13 @@ describe("ac-hero", () => {
     expect(container.querySelector('[data-field="subtitle"]')).toBeNull();
   });
 
+  it("D713: an omitted cta_label defaults to absent (no phantom 'Get started' button)", () => {
+    const props = heroSchema.parse({ title: "T" });
+    expect(props.cta_label).toBe("");
+    const { container } = render(<Hero {...props} />);
+    expect(container.querySelector(".ac-hero__cta")).toBeNull();
+  });
+
   it("regression: empty cta_label renders no button in normal mode", () => {
     const props = heroSchema.parse({ title: "T", cta_label: "" });
     const { container } = render(<Hero {...props} />);

@@ -83,6 +83,31 @@ describe("template catalog invariants (W1.6)", () => {
     });
   });
 
+  describe("D712/D713 — no placeholder artifacts", () => {
+    it("no standalone image block ships without an asset (permanently empty box)", () => {
+      for (const t of allTemplates) {
+        for (const { page, block } of blocksOf(t)) {
+          if (block.type !== "image") continue;
+          expect(
+            String(block.props.asset_id ?? ""),
+            `${t.slug}/${page} ${block.id} is an image block with no asset`,
+          ).not.toBe("");
+        }
+      }
+    });
+
+    it("no authored empty-string CTA labels — omit the prop instead", () => {
+      for (const t of allTemplates) {
+        for (const { page, block } of blocksOf(t)) {
+          for (const [key, value] of Object.entries(block.props)) {
+            if (!/cta_label$/.test(key)) continue;
+            expect(value, `${t.slug}/${page} ${block.id}.${key}`).not.toBe("");
+          }
+        }
+      }
+    });
+  });
+
   describe("D711 — no copy that rots on a calendar", () => {
     it("no hardcoded copyright years — footers use the render-time {year} token", () => {
       for (const t of allTemplates) {
