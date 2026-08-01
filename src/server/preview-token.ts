@@ -216,12 +216,24 @@ function verifyScoped(
  * the fix is the parent minting a fresh token, which happens on the next
  * change/refresh in the workspace.
  */
-const PREVIEW_EXPIRED_HTML = `<!doctype html>
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+}
+
+/**
+ * D304/D808 — a styled, human error document for the preview iframe. The
+ * frame is sandboxed onto an opaque origin, so the parent can't read the
+ * status or body: a raw `{"error":…}` JSON 404/500/401 just sat naked inside
+ * the polished browser-window chrome with no way back. Every preview-route
+ * failure that an iframe can hit renders one of these instead.
+ */
+function previewErrorHtml(title: string, message: string): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Preview expired</title>
+<title>${escapeHtml(title)}</title>
 <style>
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
          background: #fafafa; color: #18181b; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -232,20 +244,38 @@ const PREVIEW_EXPIRED_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <h1>Preview expired</h1>
-  <p>This draft preview link has expired. Reload the workspace (or make any change)
-     and the preview will come back with a fresh link — nothing was lost.</p>
+  <h1>${escapeHtml(title)}</h1>
+  <p>${escapeHtml(message)}</p>
 </main>
 </body>
 </html>
 `;
+}
 
 function sendPreviewExpired(res: Response): void {
-  res.status(401).set("Cache-Control", "no-store").type("html").send(PREVIEW_EXPIRED_HTML);
+  res
+    .status(401)
+    .set("Cache-Control", "no-store")
+    .type("html")
+    .send(
+      previewErrorHtml(
+        "Preview expired",
+        "This draft preview link has expired. Reload the workspace (or make any change) and the preview will come back with a fresh link — nothing was lost.",
+      ),
+    );
+}
+
+/**
+ * D304 — send a styled HTML error into the preview frame (404 deleted page,
+ * 500 render failure, …). Callers gate on `prefersHtml(req)` so API/curl
+ * clients keep their JSON error shape.
+ */
+export function sendPreviewHtmlError(res: Response, status: number, title: string, message: string): void {
+  res.status(status).set("Cache-Control", "no-store").type("html").send(previewErrorHtml(title, message));
 }
 
 /** True when the request's Accept header prefers HTML over JSON (iframe navigation). */
-function prefersHtml(req: Request): boolean {
+export function prefersHtml(req: Request): boolean {
   return req.accepts(["json", "html"]) === "html";
 }
 

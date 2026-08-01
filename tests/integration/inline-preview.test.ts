@@ -104,6 +104,48 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(res.text).not.toContain("window.__AC_EDIT_BOOT__");
   });
 
+  // ── D304 — styled in-frame error documents (the sandboxed opaque-origin
+  // iframe can't detect status, so a raw JSON 404/500 sat naked in the
+  // browser-window chrome). HTML-accepting (iframe) requests get a styled
+  // page; API/curl clients keep their JSON error shape. ──
+
+  it("D304: a deleted/unknown page renders a styled HTML 404 for an iframe (Accept: text/html)", async () => {
+    const site = await db.seedSite("preview-404-html");
+    const res = await auth(
+      request(app)
+        .get(`/api/sites/${site.id}/pages/00000000-0000-0000-0000-000000000000/preview`)
+        .set("Accept", "text/html"),
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers["content-type"]).toContain("text/html");
+    expect(res.headers["cache-control"]).toContain("no-store");
+    expect(res.text).toContain("<h1>Page not found</h1>");
+    expect(res.text).not.toContain('{"error"');
+  });
+
+  it("D304: the same 404 keeps a raw JSON shape for an API/curl client (Accept: application/json)", async () => {
+    const site = await db.seedSite("preview-404-json");
+    const res = await auth(
+      request(app)
+        .get(`/api/sites/${site.id}/pages/00000000-0000-0000-0000-000000000000/preview`)
+        .set("Accept", "application/json"),
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers["content-type"]).toContain("application/json");
+    expect(res.body).toEqual({ error: "page not found for this site" });
+  });
+
+  it("D304: an unknown site renders a styled HTML 404 for an iframe", async () => {
+    const res = await auth(
+      request(app)
+        .get(`/api/sites/00000000-0000-0000-0000-000000000000/pages/00000000-0000-0000-0000-000000000001/preview`)
+        .set("Accept", "text/html"),
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers["content-type"]).toContain("text/html");
+    expect(res.text).toContain("<h1>Site not found</h1>");
+  });
+
   // ── FINAL whole-branch review, FIX-NOW item 6 — preview iframe nav escape ──
   //
   // `<a href="/about">` inside the sandboxed preview resolves against the

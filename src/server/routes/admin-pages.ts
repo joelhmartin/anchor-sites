@@ -17,7 +17,7 @@ import { seoFieldsSchema } from "../seo/schema.js";
 import { renderPage, type PageRecord } from "../render-page.js";
 import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
-import { mintPreviewToken, previewQueryAuth } from "../preview-token.js";
+import { mintPreviewToken, prefersHtml, previewQueryAuth, sendPreviewHtmlError } from "../preview-token.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
 import { CAROUSEL_ISLAND_CSP_HASH } from "../csp.js";
 // Item 6 (final review) — preview-only site-relative link rewriting.
@@ -499,6 +499,12 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           [siteId],
         );
         if (siteRes.rowCount === 0) {
+          // D304 — an iframe navigation gets a styled in-frame document, not
+          // raw JSON naked inside the browser-window chrome.
+          if (prefersHtml(req)) {
+            sendPreviewHtmlError(res, 404, "Site not found", "This site no longer exists.");
+            return;
+          }
           res.status(404).json({ error: "site not found" });
           return;
         }
@@ -510,6 +516,17 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           [pageId, siteId],
         );
         if (pageRes.rowCount === 0) {
+          // D304 — styled in-frame document for a deleted/renamed page (e.g.
+          // an in-preview link the switcher never learned was removed).
+          if (prefersHtml(req)) {
+            sendPreviewHtmlError(
+              res,
+              404,
+              "Page not found",
+              "This page may have been deleted or renamed. Pick another page from the switcher, or reload the workspace.",
+            );
+            return;
+          }
           res.status(404).json({ error: "page not found for this site" });
           return;
         }
@@ -671,6 +688,19 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
         const { html } = renderPage(site, page, { assets, path: previewPath, editable, rewriteHref });
         res.status(200).type("html").send(html);
       } catch (err) {
+        // D304 — a render/DB failure that reaches an iframe navigation gets a
+        // styled in-frame document instead of the global handler's raw JSON
+        // 500 (which would fill the polished preview frame with `{"error":…}`).
+        // API/curl clients still fall through to the JSON error handler.
+        if (prefersHtml(req)) {
+          sendPreviewHtmlError(
+            res,
+            500,
+            "Preview unavailable",
+            "Something went wrong rendering this preview. Reload the workspace, or make a change and try again.",
+          );
+          return;
+        }
         next(err);
       }
     },
