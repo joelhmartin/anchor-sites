@@ -317,14 +317,21 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
   // parent can read neither status nor document. Proactive refresh is the
   // only signal available.)
 
-  it("re-mints the preview token at ~80% of its TTL and adopts the fresh one", async () => {
+  // D305 — the token still re-mints at ~80% TTL, but the fresh one is HELD,
+  // not baked into `src` on the timer: a passive refresh must NOT navigate a
+  // healthy idle frame (the old behavior silently reset scroll and any
+  // in-frame page the user had browsed to every ~12 min). The held token is
+  // adopted on the next INTENTIONAL navigation (a nonce bump here).
+  it("re-mints at ~80% TTL but holds the fresh token until the next intentional navigation (no proactive re-navigation)", async () => {
     clearAdminToken();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { mintCalls } = mockPagesApi("s1", [
         { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
       ]);
-      render(<SitePreviewPanel siteId="s1" previewPageId={null} previewNonce={0} agentBusy={false} />);
+      const { rerender } = render(
+        <SitePreviewPanel siteId="s1" previewPageId="pg1" previewNonce={0} agentBusy={false} />,
+      );
       await waitFor(() =>
         expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
           encodeURIComponent(previewTokenFor("s1", 1)),
@@ -332,16 +339,19 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
       );
       expect(mintCalls.length).toBe(1);
 
-      // Just short of 80% — still the original token, no second mint.
+      // Cross 80% of the TTL — the token DOES re-mint…
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS * 0.7);
-      });
-      expect(mintCalls.length).toBe(1);
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS * 0.15);
+        await vi.advanceTimersByTimeAsync(PREVIEW_TTL_MS * 0.85);
       });
       await waitFor(() => expect(mintCalls.length).toBe(2));
+      // …but the rendered src still carries the ORIGINAL token — the frame
+      // was never navigated by the passive refresh.
+      expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
+        encodeURIComponent(previewTokenFor("s1", 1)),
+      );
+
+      // An intentional navigation (nonce bump) adopts the held fresh token.
+      rerender(<SitePreviewPanel siteId="s1" previewPageId="pg1" previewNonce={1} agentBusy={false} />);
       await waitFor(() =>
         expect((screen.getByTitle("Draft preview") as HTMLIFrameElement).getAttribute("src")).toContain(
           encodeURIComponent(previewTokenFor("s1", 2)),

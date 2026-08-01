@@ -136,6 +136,11 @@ export function SitePreviewPanel({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const handleRef = useRef<InlineEditorHandle | null>(null);
   const mountedRef = useRef(true);
+  // D305 — the freshest minted token, mirrored into a ref so a passive
+  // refresh doesn't itself trigger a render that swaps `src`. It's read
+  // (adopted into `srcToken`) only on an INTENTIONAL navigation.
+  const previewTokenRef = useRef<PreviewToken | null>(null);
+  previewTokenRef.current = previewToken;
 
   // Suppressed-reload queue: while edit mode is ON at all, hold onto
   // whatever page/nonce the drawer's change events point at rather than
@@ -157,6 +162,12 @@ export function SitePreviewPanel({
   useEffect(() => {
     if (edit) return;
     setDisplayed({ pageId: effectivePreviewPageId, nonce: previewNonce });
+    // D305 — an intentional navigation (page switch / nonce bump / edit exit)
+    // is exactly the moment to adopt the freshest token: the frame is
+    // reloading anyway, so baking in the current token loses no scroll and
+    // re-authenticates the rewritten in-frame links for the newly-rendered
+    // page. A PASSIVE timer refresh (below) does NOT run this effect.
+    if (previewTokenRef.current) setSrcToken(previewTokenRef.current.token);
   }, [effectivePreviewPageId, previewNonce, edit]);
 
   /**
@@ -238,15 +249,20 @@ export function SitePreviewPanel({
     };
   }, [siteId]);
 
-  // Adopt a (re)minted token into the rendered src — but never while an edit
-  // session is live, for the same reason `displayed.pageId` is pinned: the
-  // src change navigates the iframe, tearing the contenteditable session down
-  // under the live `InlineEditorHandle`. The pending token is adopted the
-  // moment edit mode turns off (this effect re-runs on `edit`).
+  // D305 — adopt a minted token into the rendered src ONLY on first
+  // availability (the initial load, or after a site switch reset both to
+  // null): there's no scroll or in-frame navigation to lose yet, and the
+  // frame needs *some* token to render at all. Every LATER refresh is held
+  // in `previewTokenRef` and adopted lazily on the next intentional
+  // navigation (the `displayed` effect above) — NOT here — so the old
+  // ~12-min proactive re-navigation that silently reset scroll and any
+  // in-frame page the user had browsed to is gone. (While an edit session is
+  // live nothing is adopted at all, for the same reason `displayed.pageId`
+  // is pinned: it would tear down the contenteditable under the live handle.)
   useEffect(() => {
     if (edit) return;
-    setSrcToken(previewToken?.token ?? null);
-  }, [previewToken, edit]);
+    if (srcToken === null && previewToken) setSrcToken(previewToken.token);
+  }, [previewToken, edit, srcToken]);
 
   /**
    * Flush + destroy whatever handle is live, then — fix-round-1 directed
