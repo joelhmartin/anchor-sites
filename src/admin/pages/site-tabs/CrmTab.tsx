@@ -4,7 +4,10 @@ import { useApi } from "../../lib/useApi.js";
 import type { SiteDetail } from "../../lib/siteTypes.js";
 import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
+import { Input } from "../../ui/input.js";
+import { Label } from "../../ui/label.js";
 import { Spinner } from "../../ui/spinner.js";
+import { GitCard } from "./GitCard.js";
 
 type PhoneNumber = {
   id: string;
@@ -17,6 +20,69 @@ type PhoneNumbersResponse = {
   phone_numbers: PhoneNumber[];
 };
 
+/**
+ * D427 — CTM (call tracking) is an integration, so its account-ID field lives
+ * here, not buried in Settings. Its own small save (PATCH ctm_account_id) with
+ * a baseline reset (D422) so Save disarms after saving.
+ */
+function CtmCard({ site }: { site: SiteDetail }) {
+  const [ctm, setCtm] = useState(site.ctm_account_id ?? "");
+  const [base, setBase] = useState(site.ctm_account_id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dirty = ctm.trim() !== base;
+
+  async function save() {
+    if (!dirty || busy) return;
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await apiFetch(`/api/sites/${site.id}`, {
+        method: "PATCH",
+        body: { ctm_account_id: ctm.trim() || null },
+      });
+      setBase(ctm.trim());
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t save CTM account ID.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 pt-5">
+        <h3 className="text-sm font-semibold text-zinc-700">Call tracking (CTM)</h3>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="crm-ctm-account-id">CTM account ID</Label>
+          <Input
+            id="crm-ctm-account-id"
+            placeholder="e.g. 12345"
+            value={ctm}
+            onChange={(e) => {
+              setSaved(false);
+              setCtm(e.target.value);
+            }}
+          />
+          <p className="text-xs text-zinc-400">
+            Leave empty to disable CTM script injection for this site.
+          </p>
+        </div>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={save} disabled={!dirty || busy}>
+            {busy ? <Spinner /> : "Save"}
+          </Button>
+          {saved && <span className="text-sm text-green-600">Saved.</span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BlockUsageCard() {
   return (
     <Card>
@@ -24,8 +90,8 @@ function BlockUsageCard() {
         <h3 className="text-sm font-semibold text-zinc-700">Block usage</h3>
         <p className="text-xs text-zinc-500">
           <strong>PhoneNumber block</strong> — Add a <code>phone_number</code> block to any page.
-          CTM will swap the displayed number at runtime using the CTM account ID set in{" "}
-          <strong>Settings → CTM account ID</strong>.
+          CTM will swap the displayed number at runtime using the CTM account ID set in the{" "}
+          <strong>Call tracking (CTM)</strong> card above.
         </p>
         <p className="text-xs text-zinc-500">
           <strong>CRM Form block</strong> — Add a <code>crm_form</code> block and paste the embed
@@ -196,7 +262,13 @@ export function CrmTab({ site }: { site: SiteDetail }) {
 
       {hascrm && <PhoneNumbersCard siteId={site.id} />}
 
+      <CtmCard site={site} />
+
       <BlockUsageCard />
+
+      {/* D427 — GitHub sync is an integration; a user hunting "GitHub" looks
+          here, not in Settings. */}
+      <GitCard siteId={site.id} slug={site.slug} />
     </div>
   );
 }

@@ -8,7 +8,6 @@ import { Card, CardContent } from "../../ui/card.js";
 import { Input } from "../../ui/input.js";
 import { Label } from "../../ui/label.js";
 import { Spinner } from "../../ui/spinner.js";
-import { GitCard } from "./GitCard.js";
 
 /**
  * Settings tab (P4-T4.15). Edit display_name + brand tokens (reusing the
@@ -26,7 +25,6 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
 
   const [displayName, setDisplayName] = useState(site.display_name);
   const [tokens, setTokens] = useState<Record<string, string>>(initialTokens);
-  const [ctmAccountId, setCtmAccountId] = useState(site.ctm_account_id ?? "");
   const [analyticsDisabled, setAnalyticsDisabled] = useState(site.analytics_disabled ?? false);
   const analyticsToggleId = useId();
   const [busy, setBusy] = useState(false);
@@ -39,7 +37,6 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
   // re-sending the same PATCH; "Saved." and an armed Save no longer contradict.
   const [baseName, setBaseName] = useState(site.display_name);
   const [baseTokens, setBaseTokens] = useState<Record<string, string>>(initialTokens);
-  const [baseCtm, setBaseCtm] = useState(site.ctm_account_id ?? "");
   const [baseAnalytics, setBaseAnalytics] = useState(site.analytics_disabled ?? false);
 
   function setToken(key: string, value: string) {
@@ -49,9 +46,8 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
 
   const nameChanged = displayName.trim() !== baseName;
   const tokensChanged = JSON.stringify(tokens) !== JSON.stringify(baseTokens);
-  const ctmChanged = ctmAccountId.trim() !== baseCtm;
   const analyticsChanged = analyticsDisabled !== baseAnalytics;
-  const hasChanges = nameChanged || tokensChanged || ctmChanged || analyticsChanged;
+  const hasChanges = nameChanged || tokensChanged || analyticsChanged;
   const canSave = hasChanges && displayName.trim().length > 0 && !busy;
 
   async function save() {
@@ -62,19 +58,16 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
     const body: {
       display_name?: string;
       default_brand_tokens?: Record<string, string>;
-      ctm_account_id?: string | null;
       analytics_disabled?: boolean;
     } = {};
     if (nameChanged) body.display_name = displayName.trim();
     if (tokensChanged) body.default_brand_tokens = tokens;
-    if (ctmChanged) body.ctm_account_id = ctmAccountId.trim() || null;
     if (analyticsChanged) body.analytics_disabled = analyticsDisabled;
     try {
       await apiFetch(`/api/sites/${site.id}`, { method: "PATCH", body });
       // Advance the baseline to the saved values so Save disarms (D422).
       setBaseName(displayName.trim());
       setBaseTokens(tokens);
-      setBaseCtm(ctmAccountId.trim());
       setBaseAnalytics(analyticsDisabled);
       setSaved(true);
     } catch (err) {
@@ -98,20 +91,6 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
                 setDisplayName(e.target.value);
               }}
             />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="settings-ctm-account-id">CTM account ID</Label>
-            <Input
-              id="settings-ctm-account-id"
-              placeholder="e.g. 12345"
-              value={ctmAccountId}
-              onChange={(e) => {
-                setSaved(false);
-                setCtmAccountId(e.target.value);
-              }}
-            />
-            <p className="text-xs text-zinc-400">Leave empty to disable CTM script injection for this site.</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -164,7 +143,17 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
         </CardContent>
       </Card>
 
-      <GitCard siteId={site.id} slug={site.slug} />
+      {/* D427 — call tracking (CTM) and GitHub sync moved to the Integrations
+          tab, where users hunt for them. */}
+      <Card>
+        <CardContent className="flex flex-col gap-1 pt-5">
+          <Label>Integrations</Label>
+          <p className="text-xs text-zinc-400">
+            Call tracking (CTM), CRM, and GitHub sync live in the{" "}
+            <strong>Integrations</strong> tab.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
