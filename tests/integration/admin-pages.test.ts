@@ -119,6 +119,49 @@ d("admin pages API (integration)", () => {
     expect(res.status).toBe(401);
   });
 
+  // ---------- STATUS (D436 — per-page publish/unpublish) ----------
+
+  it("PATCH .../status publishes then unpublishes a single page (D436)", async () => {
+    // Start from a known draft state.
+    await pool.query(`UPDATE pages SET status = 'draft', published_at = NULL, published_snapshot = NULL WHERE id = $1`, [muldoonPageId]);
+
+    const pub = await request(app)
+      .patch(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}/status`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "published" });
+    expect(pub.status).toBe(200);
+    expect(pub.body.page.status).toBe("published");
+    const afterPub = await pool.query(
+      `SELECT status, published_at, published_snapshot FROM pages WHERE id = $1`,
+      [muldoonPageId],
+    );
+    expect(afterPub.rows[0].status).toBe("published");
+    expect(afterPub.rows[0].published_at).not.toBeNull();
+    expect(afterPub.rows[0].published_snapshot).not.toBeNull();
+
+    const unpub = await request(app)
+      .patch(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}/status`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "draft" });
+    expect(unpub.status).toBe(200);
+    const afterUnpub = await pool.query(`SELECT status, published_at FROM pages WHERE id = $1`, [muldoonPageId]);
+    expect(afterUnpub.rows[0].status).toBe("draft");
+    expect(afterUnpub.rows[0].published_at).toBeNull();
+  });
+
+  it("PATCH .../status 400s an invalid status and 404s an unknown page (D436)", async () => {
+    const bad = await request(app)
+      .patch(`/api/sites/${muldoonSiteId}/pages/${muldoonPageId}/status`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "archived" });
+    expect(bad.status).toBe(400);
+    const missing = await request(app)
+      .patch(`/api/sites/${muldoonSiteId}/pages/00000000-0000-0000-0000-000000000000/status`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "published" });
+    expect(missing.status).toBe(404);
+  });
+
   // ---------- LOAD (single page with blocks) ----------
 
   it("GET returns the page with its blocks, seo, slug, title, status (P5-T5.5)", async () => {

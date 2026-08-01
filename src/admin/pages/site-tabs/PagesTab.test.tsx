@@ -139,6 +139,49 @@ describe("PagesTab (P4-T4.13)", () => {
     expect(body.slug).toBeUndefined(); // omitted → server defaults to the template's slug
   });
 
+  it("publishes a draft page from the list via PATCH status (D436)", async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/pages/p2/status" && method === "PATCH") {
+        return json({ page: { id: "p2", status: "published" } });
+      }
+      getCount += 1;
+      return json({ pages: [getCount === 1 ? PAGE_B : { ...PAGE_B, status: "published" }] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("About us")).toBeTruthy());
+    // PAGE_B is a draft → the row offers "Publish".
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/pages/p2/status" && (c[1] as RequestInit | undefined)?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse((patch![1] as RequestInit).body as string)).toEqual({ status: "published" });
+    });
+  });
+
+  it("shows a 409 (agent running) when publishing from the list (D436/D610)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/status") && method === "PATCH") {
+        return json({ error: "Agent is running — publish is disabled until the build finishes." }, 409);
+      }
+      return json({ pages: [PAGE_B] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("About us")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(screen.getByText(/Agent is running/)).toBeTruthy());
+  });
+
   it("opening one create form closes the other (D432)", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).startsWith("/api/templates")) {

@@ -62,6 +62,31 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
   const [tplBusy, setTplBusy] = useState(false);
   const [tplError, setTplError] = useState<string | null>(null);
 
+  // D436 — per-page publish/unpublish from the list (parity with Blog/Events
+  // status controls). Keyed by page id so each row spinners independently.
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  async function setPageStatus(page: PageRow, next: "draft" | "published") {
+    setStatusBusy(page.id);
+    setStatusError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/pages/${page.id}/status`, {
+        method: "PATCH",
+        body: { status: next },
+      });
+      reload();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setStatusError(err.message);
+      } else {
+        setStatusError(err instanceof Error ? err.message : "Couldn’t change the page status.");
+      }
+    } finally {
+      setStatusBusy(null);
+    }
+  }
+
   const slugValid = SLUG_RE.test(pageSlug);
   const canSubmit = title.trim().length > 0 && slugValid && !busy;
   const tplSlugValid = tplSlug === "" || SLUG_RE.test(tplSlug);
@@ -267,6 +292,8 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
         </Card>
       )}
 
+      {statusError && <p className="text-sm text-red-600">{statusError}</p>}
+
       {!loading && !error && pages.length === 0 && (
         <Card>
           <CardContent className="pt-5 text-sm text-zinc-600">
@@ -298,13 +325,32 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
                     </TD>
                     <TD>{formatDateTime(p.updated_at)}</TD>
                     <TD>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => navigate(`/sites/${slug}?page=${p.id}`)}
-                      >
-                        Edit
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        {/* D436 — publish/unpublish without leaving the list. */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={statusBusy === p.id}
+                          onClick={() =>
+                            setPageStatus(p, p.status === "published" ? "draft" : "published")
+                          }
+                        >
+                          {statusBusy === p.id ? (
+                            <Spinner />
+                          ) : p.status === "published" ? (
+                            "Unpublish"
+                          ) : (
+                            "Publish"
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => navigate(`/sites/${slug}?page=${p.id}`)}
+                        >
+                          Edit
+                        </Button>
+                      </div>
                     </TD>
                   </TR>
                 ))}

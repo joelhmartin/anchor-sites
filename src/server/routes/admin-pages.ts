@@ -920,6 +920,96 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // PATCH /api/sites/:siteId/pages/:pageId/status — D436: publish/unpublish a
+  // SINGLE page from the manage Pages list (parity with the Blog/Events status
+  // dropdowns). The generic save route can flip status too, but only as part
+  // of a full-blocks POST — the list has no blocks to send. This is
+  // status-only and carries the same D301 snapshot semantics as the bulk
+  // publish route: publishing freezes the working copy as the live payload +
+  // stamps published_at + writes a 'manual' revision; unpublishing clears
+  // published_at and retains the snapshot.
+  // -------------------------------------------------------------------------
+  router.patch(
+    "/sites/:siteId/pages/:pageId/status",
+    admin,
+    saveLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = z.object({ status: z.enum(["draft", "published"]) }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "invalid payload — status must be 'draft' or 'published'" });
+        return;
+      }
+      const { siteId, pageId } = req.params;
+      const { status } = parsed.data;
+
+      const client = await pool.connect();
+      try {
+        // D610: don't flip a page live mid-build (mirrors the bulk route).
+        if (status === "published") {
+          const running = await client.query(
+            `SELECT 1 FROM ai_conversations WHERE site_id = $1 AND status = 'running' LIMIT 1`,
+            [siteId],
+          );
+          if ((running.rowCount ?? 0) > 0) {
+            res.status(409).json({
+              error: "Agent is running — publish is disabled until the build finishes.",
+            });
+            return;
+          }
+        }
+
+        await client.query("BEGIN");
+        const upd = await client.query<{ id: string; status: string; blocks: Block[]; seo: Record<string, unknown> }>(
+          `UPDATE pages
+              SET status = $3,
+                  published_snapshot = CASE WHEN $3 = 'published' THEN ${PAGE_SNAPSHOT_SQL} ELSE published_snapshot END,
+                  published_at = CASE
+                    WHEN $3 = 'published' THEN now()
+                    WHEN $3 = 'draft'     THEN NULL
+                    ELSE published_at
+                  END
+            WHERE id = $1 AND site_id = $2
+            RETURNING id, status, blocks, seo`,
+          [pageId, siteId, status],
+        );
+        if (upd.rowCount === 0) {
+          await client.query("ROLLBACK");
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+        if (status === "published") {
+          await client.query(
+            `INSERT INTO page_revisions (page_id, blocks, seo, source)
+             VALUES ($1, $2::jsonb, $3::jsonb, 'manual')`,
+            [pageId, JSON.stringify(upd.rows[0].blocks ?? []), JSON.stringify(upd.rows[0].seo ?? {})],
+          );
+        }
+        await client.query("COMMIT");
+
+        // Publish trigger (T4, GitHub sync): same best-effort enqueue as the
+        // save/bulk routes.
+        if (status === "published" && resolveGitMode() === "api") {
+          try {
+            const gitState = await getGitState(pool, siteId);
+            if (gitState?.enabled) {
+              enqueueGitExport({ siteId, trigger: "publish" }).catch(() => undefined);
+            }
+          } catch {
+            // best-effort
+          }
+        }
+
+        res.status(200).json({ page: { id: pageId, status: upd.rows[0].status } });
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        next(err);
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // POST /api/sites/:siteId/provision — add DNS records + Cloud Run mapping
   // POST /api/sites/provision         — same, but take slug in body
   // -------------------------------------------------------------------------
