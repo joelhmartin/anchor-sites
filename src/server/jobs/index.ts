@@ -31,6 +31,12 @@ import {
 } from "./site-provision.js";
 import { pruneExpiredAuthRows } from "./auth-prune.js";
 import { DOMAIN_VERIFY_SWEEP, sweepPendingDomains } from "./domain-verify-sweep.js";
+import {
+  MEDIA_PENDING_SWEEP,
+  MEDIA_ORPHAN_SWEEP,
+  sweepAbandonedUploads,
+  sweepOrphanAssets,
+} from "./media-gc.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
@@ -41,6 +47,7 @@ export const SITE_PROVISION = "site.provision";
 export const AUTH_PRUNE = "auth.prune-expired";
 export { CRM_SYNC_JOB };
 export { DOMAIN_VERIFY_SWEEP };
+export { MEDIA_PENDING_SWEEP, MEDIA_ORPHAN_SWEEP };
 
 /**
  * D606/D114/D1009 (W2-JOBS) — the canonical list of every queue this worker
@@ -62,6 +69,8 @@ export const ALL_QUEUE_NAMES = [
   CRM_SYNC_JOB,
   AUTH_PRUNE,
   DOMAIN_VERIFY_SWEEP,
+  MEDIA_PENDING_SWEEP,
+  MEDIA_ORPHAN_SWEEP,
 ] as const;
 
 /**
@@ -516,6 +525,33 @@ export async function registerHandlers(boss: PgBoss): Promise<void> {
     }
   });
   await boss.schedule(DOMAIN_VERIFY_SWEEP, "*/30 * * * *", undefined, { tz: "UTC" });
+
+  // D510 (W2-TERM): reap abandoned upload rows (no GCS object) >24h old.
+  // Hourly — an abandoned upload is cheap to leave for an hour, and the GCS
+  // existence check per candidate keeps each run small. Same
+  // min-instances=1 dependency as the sweeps above.
+  await boss.createQueue(MEDIA_PENDING_SWEEP);
+  await boss.work(MEDIA_PENDING_SWEEP, async () => {
+    const counts = await sweepAbandonedUploads({ pool: defaultPool });
+    if (counts.deleted > 0) {
+      // eslint-disable-next-line no-console
+      console.log("[media-pending-sweep]", counts);
+    }
+  });
+  await boss.schedule(MEDIA_PENDING_SWEEP, "17 * * * *", undefined, { tz: "UTC" });
+
+  // D513 (W2-TERM): mark long-unreferenced ready assets, reclaim archived
+  // unreferenced ones (GCS objects + row). Daily at 05:10 UTC — overnight,
+  // after auth-prune, off the odd-hours cloud routines.
+  await boss.createQueue(MEDIA_ORPHAN_SWEEP);
+  await boss.work(MEDIA_ORPHAN_SWEEP, async () => {
+    const counts = await sweepOrphanAssets({ pool: defaultPool });
+    if (counts.marked > 0 || counts.reclaimed > 0) {
+      // eslint-disable-next-line no-console
+      console.log("[media-orphan-sweep]", counts);
+    }
+  });
+  await boss.schedule(MEDIA_ORPHAN_SWEEP, "10 5 * * *", undefined, { tz: "UTC" });
 }
 
 /**
