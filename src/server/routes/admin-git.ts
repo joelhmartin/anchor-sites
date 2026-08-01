@@ -5,6 +5,7 @@ import { pool as defaultPool } from "../db.js";
 import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { resolveGitMode } from "../git/client.js";
+import { siteExportDir } from "../git/export.js";
 import { getGitState, setGitEnabled } from "../git/state-repo.js";
 import { GIT_EXPORT, GIT_IMPORT } from "../jobs/index.js";
 import type { GitExportInput } from "../jobs/git-export.js";
@@ -190,6 +191,11 @@ export function adminGitRouter(opts: AdminGitOptions = {}): Router {
     return (r.rowCount ?? 0) > 0;
   }
 
+  async function siteSlug(siteId: string): Promise<string | null> {
+    const r = await pool.query<{ slug: string }>(`SELECT slug FROM sites WHERE id = $1`, [siteId]);
+    return r.rows[0]?.slug ?? null;
+  }
+
   // ---------------------------------------------------------------------
   // GET /sites/:siteId/git
   // ---------------------------------------------------------------------
@@ -206,11 +212,18 @@ export function adminGitRouter(opts: AdminGitOptions = {}): Router {
         }
         const configured = resolveGitMode(env) === "api";
         const state = await getGitState(pool, siteId);
-        res.status(200).json({
-          configured,
-          repo: configured ? (env.GITHUB_CONTENT_REPO ?? null) : null,
-          state,
-        });
+        const repo = configured ? (env.GITHUB_CONTENT_REPO ?? null) : null;
+        // D317 — return the canonical GitHub deep link instead of leaving the
+        // client to hardcode branch `main` + the `sites/` prefix. `HEAD`
+        // resolves to the repo's real default branch (main/master/trunk) with
+        // no extra API call, and `siteExportDir` is the exporter's own path
+        // constant, so the link tracks the layout if it ever changes.
+        let url: string | null = null;
+        if (repo && state?.enabled) {
+          const slug = await siteSlug(siteId);
+          if (slug) url = `https://github.com/${repo}/tree/HEAD/${siteExportDir(slug)}`;
+        }
+        res.status(200).json({ configured, repo, state, url });
       } catch (err) {
         next(err);
       }

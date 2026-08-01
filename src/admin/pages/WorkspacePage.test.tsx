@@ -223,7 +223,24 @@ describe("WorkspacePage (Task B2)", () => {
     );
   });
 
-  it("renders a GitHub deep link only when git sync is configured AND enabled", async () => {
+  it("renders a GitHub deep link only when git sync is configured AND enabled (D317: uses the server's canonical url)", async () => {
+    mockWorkspaceFetch({
+      git: {
+        configured: true,
+        repo: "acme-corp/content",
+        state: { enabled: true },
+        // D317 — the server now returns the canonical link (HEAD resolves the
+        // real default branch; export path derived server-side).
+        url: "https://github.com/acme-corp/content/tree/HEAD/sites/acme",
+      },
+    });
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+    const link = await screen.findByRole("link", { name: /GitHub/ });
+    expect(link.getAttribute("href")).toBe("https://github.com/acme-corp/content/tree/HEAD/sites/acme");
+  });
+
+  it("D317: falls back to the local derivation when an older server omits url", async () => {
     mockWorkspaceFetch({ git: { configured: true, repo: "acme-corp/content", state: { enabled: true } } });
     renderAt("/sites/acme");
     await screen.findByTitle("Draft preview");

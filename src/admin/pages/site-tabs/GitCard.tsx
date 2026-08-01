@@ -20,7 +20,13 @@ type SiteGitState = {
   updated_at: string;
 };
 
-type GitStatus = { configured: boolean; repo: string | null; state: SiteGitState | null };
+type GitStatus = {
+  configured: boolean;
+  repo: string | null;
+  state: SiteGitState | null;
+  /** D317 — server-built canonical deep link; optional for older servers. */
+  url?: string | null;
+};
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
@@ -173,7 +179,12 @@ export function GitCard({
 
   const state = data.state;
   const enabled = state?.enabled ?? false;
-  const repoUrl = data.repo ? `https://github.com/${data.repo}/tree/main/sites/${slug}` : null;
+  // D317 — prefer the server's canonical URL (branch via HEAD + export path
+  // derived server-side); fall back to the hardcoded derivation only for an
+  // older server that doesn't return `url`.
+  const repoUrl = data.repo
+    ? (data.url ?? `https://github.com/${data.repo}/tree/main/sites/${slug}`)
+    : null;
 
   return (
     <Card>

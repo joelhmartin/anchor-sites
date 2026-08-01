@@ -39,7 +39,15 @@ type PageOption = {
 /** Mirrors `src/server/git/state-repo.ts`'s `SiteGitState`, the same shape
  * `GitCard` reads (`site-tabs/GitCard.tsx`). */
 type SiteGitState = { enabled: boolean };
-type GitStatus = { configured: boolean; repo: string | null; state: SiteGitState | null };
+type GitStatus = {
+  configured: boolean;
+  repo: string | null;
+  state: SiteGitState | null;
+  /** D317 — server-built canonical deep link (branch + export path derived
+   * server-side). Optional so an older deployment degrades to the local
+   * derivation below. */
+  url?: string | null;
+};
 
 type Viewport = "desktop" | "mobile";
 
@@ -290,9 +298,12 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   }, [materializing, reloadPages]);
 
   const { data: gitData } = useApi<GitStatus>(`/api/sites/${siteId}/git`);
+  // D317 — prefer the server's canonical URL; fall back to the (branch-
+  // and prefix-hardcoding) local derivation only for an older server that
+  // doesn't return `url`.
   const gitUrl =
     gitData?.configured && gitData.state?.enabled && gitData.repo
-      ? `https://github.com/${gitData.repo}/tree/main/sites/${slug}`
+      ? (gitData.url ?? `https://github.com/${gitData.repo}/tree/main/sites/${slug}`)
       : null;
 
   function handleChangeEvent(c: AgentChangeEvent) {

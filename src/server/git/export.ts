@@ -4,6 +4,16 @@ import { generateBlocksMd, generateReadme, serializeSite } from "./serialize.js"
 import { recordExport, recordGitError } from "./state-repo.js";
 
 /**
+ * The single source of truth for a site's directory inside the content
+ * monorepo. Both the exporter (which writes here) and the git-status route
+ * (which builds the GitHub deep link, D317) derive the path from this, so a
+ * changed layout can't leave the workspace link pointing at a 404.
+ */
+export function siteExportDir(slug: string): string {
+  return `sites/${slug}`;
+}
+
+/**
  * Exporter (T4, GitHub sync): pushes a site's current DB state to the
  * content-monorepo as a single atomic commit, skipping the API round-trip
  * entirely when nothing changed.
@@ -59,7 +69,7 @@ export async function exportSite(
     const serialized = await serializeSite(pool, siteId);
     const files = new Map<string, string>();
     for (const [key, content] of serialized) {
-      files.set(`sites/${site.slug}/${key}`, content);
+      files.set(`${siteExportDir(site.slug)}/${key}`, content);
     }
     files.set("README.md", generateReadme(client.repo));
     files.set("BLOCKS.md", generateBlocksMd());

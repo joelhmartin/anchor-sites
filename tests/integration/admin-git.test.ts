@@ -87,7 +87,8 @@ d("admin git endpoints (integration, GitHub sync Task 7)", () => {
       const site = await db.seedSite("git-get-unconfigured");
       const res = await auth(request(app).get(`/api/sites/${site.id}/git`));
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ configured: false, repo: null, state: null });
+      // D317 — the body now carries a canonical `url` (null when unconfigured).
+      expect(res.body).toEqual({ configured: false, repo: null, state: null, url: null });
     });
 
     it("reports configured:true + repo + state once the server is configured and the site enabled", async () => {
@@ -98,6 +99,16 @@ d("admin git endpoints (integration, GitHub sync Task 7)", () => {
       expect(res.body.configured).toBe(true);
       expect(res.body.repo).toBe("anchorcorps/content");
       expect(res.body.state.enabled).toBe(true);
+      // D317 — canonical GitHub deep link: HEAD (real default branch) + the
+      // exporter's own `sites/<slug>` path constant. No hardcoded `main`.
+      expect(res.body.url).toBe(`https://github.com/anchorcorps/content/tree/HEAD/sites/${site.slug}`);
+    });
+
+    it("D317: url is null when git is configured but the site hasn't enabled sync", async () => {
+      const site = await db.seedSite("git-get-not-enabled");
+      const res = await auth(request(appConfigured).get(`/api/sites/${site.id}/git`));
+      expect(res.status).toBe(200);
+      expect(res.body.url).toBeNull();
     });
   });
 
