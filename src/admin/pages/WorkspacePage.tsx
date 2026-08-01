@@ -21,6 +21,7 @@ import { UserMenu } from "../components/UserMenu.js";
 import { Button } from "../ui/button.js";
 import { Card, CardContent } from "../ui/card.js";
 import { Spinner } from "../ui/spinner.js";
+import { usePopover } from "../ui/popover.js";
 import { cn } from "../ui/cn.js";
 
 type PageOption = {
@@ -389,30 +390,17 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     }
   }
 
-  // Fix round 1 (Important finding 2 — a11y): the popover is `role="dialog"`
-  // but was rendered with none of the behavior that implies — Escape and an
-  // outside click now both close it, mirroring what Radix's Dialog gives
-  // for free (kept as a hand-rolled anchored popover rather than switching
-  // to that full-screen-overlay primitive, since this is meant to hang off
-  // the button, not take over the screen).
-  useEffect(() => {
-    if (!publishOpen) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setPublishOpen(false);
-    }
-    function handlePointerDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (publishPopoverRef.current?.contains(target)) return;
-      if (publishButtonRef.current?.contains(target)) return;
-      setPublishOpen(false);
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [publishOpen]);
+  // D315/D313 — the shared popover primitive replaces the hand-rolled
+  // Escape + outside-click effect and COMPLETES the `role="dialog"` contract
+  // it only half-implemented: a focus trap (Tab cycles within the popover)
+  // and focus restored to the Publish button when it closes.
+  usePopover({
+    open: publishOpen,
+    onClose: () => setPublishOpen(false),
+    panelRef: publishPopoverRef,
+    triggerRef: publishButtonRef,
+    keyboard: "dialog",
+  });
 
   // Initial focus: the Confirm button when the popover opens (or reopens
   // after Cancel/Done reset publishResult), and the Done button once a

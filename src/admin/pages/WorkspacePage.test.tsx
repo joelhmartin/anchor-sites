@@ -536,6 +536,20 @@ describe("WorkspacePage (Task B2)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish site" })).toBeNull());
   });
 
+  it("D313 — closing the publish popover restores focus to the Publish button", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const publish = screen.getByRole("button", { name: "Publish" });
+    fireEvent.click(publish);
+    await screen.findByRole("dialog", { name: "Publish site" });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish site" })).toBeNull());
+    expect(document.activeElement).toBe(publish);
+  });
+
   it("Fix round 1 (Important finding 2) — a click outside the popover closes it", async () => {
     mockWorkspaceFetch();
     renderAt("/sites/acme");

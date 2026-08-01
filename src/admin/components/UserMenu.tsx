@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { User as UserIcon } from "lucide-react";
 import { signOut, signOutEverywhere } from "../lib/session.js";
 import { useStudioSessionContext } from "../auth/useStudioSession.js";
+import { usePopover } from "../ui/popover.js";
 
 /**
  * Top-bar avatar/menu button (Task B6, 2026-07-30 lovable-workspace SDD,
@@ -43,24 +44,18 @@ export function UserMenu() {
   const initialSource = displayName ?? user?.email ?? "";
   const initial = initialSource ? initialSource[0].toUpperCase() : null;
 
-  useEffect(() => {
-    if (!open) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    function handlePointerDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (menuRef.current?.contains(target)) return;
-      if (buttonRef.current?.contains(target)) return;
-      setOpen(false);
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [open]);
+  // D315/D313 — the shared popover primitive: outside-click + Escape dismiss,
+  // plus the `role="menu"` keyboard contract this previously CLAIMED but
+  // didn't implement — arrow-key navigation between items, focus moved into
+  // the menu on open, and focus restored to the trigger on close.
+  usePopover({
+    open,
+    onClose: () => setOpen(false),
+    panelRef: menuRef,
+    triggerRef: buttonRef,
+    keyboard: "menu",
+    autoFocusFirstItem: true,
+  });
 
   async function handleSignOut() {
     setOpen(false);

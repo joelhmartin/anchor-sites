@@ -62,4 +62,29 @@ describe("UserMenu identity + session terminality (D813 / D805)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out everywhere" }));
     expect(signOutEverywhere).toHaveBeenCalledTimes(1);
   });
+
+  // D313 — the role="menu" keyboard contract (was claimed, not implemented).
+  it("[D313] moves focus into the menu on open and cycles items with arrow keys", () => {
+    renderMenu();
+    const menu = () => screen.getByRole("menu", { name: "Account" });
+    fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
+    // Focus lands on the first item.
+    const sites = screen.getByRole("menuitem", { name: "Sites" });
+    expect(document.activeElement).toBe(sites);
+    // ArrowDown → next item.
+    fireEvent.keyDown(menu(), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Sign out" }));
+    // ArrowUp wraps back.
+    fireEvent.keyDown(menu(), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(sites);
+  });
+
+  // D313 — focus is restored to the trigger when the menu closes (Escape).
+  it("[D313] restores focus to the trigger on close", () => {
+    renderMenu();
+    const trigger = screen.getByRole("button", { name: "Account menu" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(trigger);
+  });
 });
