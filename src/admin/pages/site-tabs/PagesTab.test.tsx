@@ -50,6 +50,22 @@ describe("PagesTab (P4-T4.13)", () => {
     expect(screen.getByText("draft")).toBeTruthy();
   });
 
+  it("shows same-day edits with distinct Updated timestamps (D433)", async () => {
+    const morning = { ...PAGE_A, id: "pm", title: "Morning", updated_at: "2026-05-18T09:00:00Z" };
+    const evening = { ...PAGE_A, id: "pe", title: "Evening", updated_at: "2026-05-18T17:00:00Z" };
+    global.fetch = vi.fn(async () => json({ pages: [morning, evening] })) as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Morning")).toBeTruthy());
+    const cells = screen.getAllByRole("cell").map((c) => c.textContent);
+    // The two rows' Updated cells must not collapse to the same string.
+    const morningRow = screen.getByText("Morning").closest("tr")!;
+    const eveningRow = screen.getByText("Evening").closest("tr")!;
+    const morningUpdated = morningRow.querySelectorAll("td")[3].textContent;
+    const eveningUpdated = eveningRow.querySelectorAll("td")[3].textContent;
+    expect(morningUpdated).not.toBe(eveningUpdated);
+    expect(cells.length).toBeGreaterThan(0);
+  });
+
   it("creates a page via POST and refreshes the list", async () => {
     let getCount = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

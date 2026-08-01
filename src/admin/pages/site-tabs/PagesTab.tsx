@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, apiFetch } from "../../lib/apiFetch.js";
 import { useApi } from "../../lib/useApi.js";
+import { formatDateTime } from "../../lib/datetime.js";
 import { Badge, type BadgeProps } from "../../ui/badge.js";
 import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
@@ -291,7 +292,7 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
                     <TD>
                       <Badge tone={statusTone(p.status)}>{p.status}</Badge>
                     </TD>
-                    <TD>{new Date(p.updated_at).toLocaleDateString()}</TD>
+                    <TD>{formatDateTime(p.updated_at)}</TD>
                     <TD>
                       <Button
                         size="sm"
