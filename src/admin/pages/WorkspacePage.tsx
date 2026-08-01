@@ -257,6 +257,10 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const publishButtonRef = useRef<HTMLButtonElement | null>(null);
   const publishPopoverRef = useRef<HTMLDivElement | null>(null);
   const publishConfirmRef = useRef<HTMLButtonElement | null>(null);
+  // D312 — the Cancel/Close button is always present (Confirm may be absent
+  // when there's nothing to publish or the agent is running), so it's the
+  // initial-focus fallback when there's no Confirm to land on.
+  const publishCancelRef = useRef<HTMLButtonElement | null>(null);
   const publishDoneRef = useRef<HTMLButtonElement | null>(null);
 
   const {
@@ -391,8 +395,8 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   useEffect(() => {
     if (!publishOpen) return;
     if (publishResult) publishDoneRef.current?.focus();
-    else publishConfirmRef.current?.focus();
-  }, [publishOpen, publishResult]);
+    else (publishConfirmRef.current ?? publishCancelRef.current)?.focus();
+  }, [publishOpen, publishResult, agentBusy, draftPageCount]);
 
   const {
     items, draft, setDraft, sending, busy, reconnecting, conversation, error, usageText, usageTitle,
@@ -625,19 +629,19 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                 Critical finding 1). Task B6: solid black pill, not the
                 app's default indigo — no blue buttons in this shell. */}
             <div className="relative">
+              {/* D312 — the button stays FOCUSABLE even when there's nothing
+                  to publish or the agent is running. A `disabled` button
+                  isn't focusable, so keyboard/SR users got no explanation at
+                  all — and the popover's "Everything is published." branch
+                  was unreachable dead copy. Now the button always opens the
+                  popover, which carries the honest state (and gates the
+                  actual Confirm). Only the in-flight publish disables it. */}
               <Button
                 ref={publishButtonRef}
                 type="button"
                 variant="dark"
                 size="sm"
-                disabled={agentBusy || publishing || draftPageCount === 0}
-                title={
-                  agentBusy
-                    ? "Agent is running"
-                    : draftPageCount === 0
-                      ? "Nothing to publish"
-                      : undefined
-                }
+                disabled={publishing}
                 onClick={() => {
                   setPublishError(null);
                   setPublishResult(null);
@@ -742,34 +746,49 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                       </div>
                     </div>
                   ) : (
+                    // D312 — the popover now carries every gated state as real
+                    // copy (the "Everything is published." branch used to be
+                    // unreachable because the button was disabled before you
+                    // could open it). Confirm is only rendered when a publish
+                    // can actually proceed.
                     <div className="flex flex-col gap-2">
-                      <p className="text-sm text-zinc-700">
-                        {draftPageCount > 0
-                          ? `Publish ${draftPageCount} ${draftPageCount === 1 ? "page" : "pages"}?`
-                          : "Everything is published."}
-                      </p>
+                      {agentBusy ? (
+                        <p className="text-sm text-zinc-700">
+                          The agent is still building — wait for it to finish, then publish so you don’t
+                          ship a half-finished site.
+                        </p>
+                      ) : draftPageCount === 0 ? (
+                        <p className="text-sm text-zinc-700">Everything is published.</p>
+                      ) : (
+                        <p className="text-sm text-zinc-700">
+                          Publish {draftPageCount} {draftPageCount === 1 ? "page" : "pages"}?
+                        </p>
+                      )}
                       {publishError && <p className="text-xs text-red-600">{publishError}</p>}
                       <div className="flex justify-end gap-2">
                         <Button
+                          ref={publishCancelRef}
                           type="button"
                           size="sm"
                           variant="outline"
                           disabled={publishing}
                           onClick={() => setPublishOpen(false)}
                         >
-                          Cancel
+                          {agentBusy || draftPageCount === 0 ? "Close" : "Cancel"}
                         </Button>
-                        <Button
-                          ref={publishConfirmRef}
-                          type="button"
-                          size="sm"
-                          variant="dark"
-                          className="rounded-full px-4"
-                          disabled={publishing || agentBusy || draftPageCount === 0}
-                          onClick={handlePublish}
-                        >
-                          {publishing ? "Publishing…" : "Confirm"}
-                        </Button>
+                        {!agentBusy && draftPageCount > 0 && (
+                          <Button
+                            ref={publishConfirmRef}
+                            type="button"
+                            size="sm"
+                            variant="dark"
+                            className="rounded-full px-4"
+                            disabled={publishing}
+                            onClick={handlePublish}
+                          >
+                            {publishing ? "Publishing…" : "Confirm"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}

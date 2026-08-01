@@ -352,14 +352,19 @@ describe("WorkspacePage (Task B2)", () => {
     expect(screen.queryByText(/will go live shortly/i)).toBeNull();
   });
 
-  it("Fix round 1 (Critical finding 1) — disables Publish (and shows an explanatory title) when every page is already published", async () => {
+  it("D312 — with nothing to publish, the button stays focusable and the popover explains (no dead disabled button)", async () => {
     mockWorkspaceFetch({ pages: [HOME_PAGE] }); // HOME_PAGE.status === "published"
     renderAt("/sites/acme");
     await screen.findByTitle("Draft preview");
 
     const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
-    expect(publish.disabled).toBe(true);
-    expect(publish.title).toBe("Nothing to publish");
+    // Focusable — not a disabled button keyboard/SR users can't reach.
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+    const dialog = await screen.findByRole("dialog", { name: "Publish site" });
+    expect(dialog.textContent).toContain("Everything is published.");
+    // No Confirm to accidentally publish nothing.
+    expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
   });
 
   // ── W1.3 — publish means something ──
@@ -382,14 +387,16 @@ describe("WorkspacePage (Task B2)", () => {
     expect(dialog.textContent).toContain("Publish 2 pages?");
   });
 
-  it("D301: a clean published page (has_unpublished_changes:false) disables Publish", async () => {
+  it("D301/D312: a clean published page (has_unpublished_changes:false) leaves the button focusable and the popover says everything is published", async () => {
     mockWorkspaceFetch({ pages: [{ ...HOME_PAGE, has_unpublished_changes: false }] });
     renderAt("/sites/acme");
     await screen.findByTitle("Draft preview");
 
     const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
-    expect(publish.disabled).toBe(true);
-    expect(publish.title).toBe("Nothing to publish");
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+    const dialog = await screen.findByRole("dialog", { name: "Publish site" });
+    expect(dialog.textContent).toContain("Everything is published.");
   });
 
   it("D610: a 409 (build running) surfaces the server's message in the confirmation popover", async () => {
@@ -476,7 +483,7 @@ describe("WorkspacePage (Task B2)", () => {
     expect(errorEl.className).toContain("text-red-600");
   });
 
-  it("disables the Publish button while the agent is busy", async () => {
+  it("D312: while the agent is busy the Publish button stays focusable and the popover explains why publishing is blocked", async () => {
     mockWorkspaceFetch({
       conversations: [{ id: "c9", site_id: "s1", title: "Old", status: "running", token_usage: {} }],
       conversationDetail: {
@@ -489,7 +496,11 @@ describe("WorkspacePage (Task B2)", () => {
     renderAt("/sites/acme");
 
     const publish = (await screen.findByRole("button", { name: "Publish" })) as HTMLButtonElement;
-    expect(publish.disabled).toBe(true);
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+    const dialog = await screen.findByRole("dialog", { name: "Publish site" });
+    expect(dialog.textContent).toMatch(/agent is still building/i);
+    expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull();
   });
 
   it("Fix round 1 (Important finding 2) — Escape closes the confirmation popover", async () => {
@@ -529,15 +540,14 @@ describe("WorkspacePage (Task B2)", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Confirm" })));
   });
 
-  it("Fix round 1 (Minor finding 3) — disables Confirm if the agent starts running while the popover is already open", async () => {
+  it("Fix round 1 (Minor finding 3) / D312 — if the agent starts running while the popover is open, Confirm is withdrawn and the popover explains", async () => {
     mockWorkspaceFetch();
     renderAt("/sites/acme");
     await screen.findByTitle("Draft preview");
 
     fireEvent.click(await screen.findByRole("button", { name: "Publish" }));
-    await screen.findByRole("dialog", { name: "Publish site" });
-    const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
-    expect(confirm.disabled).toBe(false);
+    const dialog = await screen.findByRole("dialog", { name: "Publish site" });
+    expect(within(dialog).getByRole("button", { name: "Confirm" })).toBeTruthy();
 
     // Sending a chat message flips `sending` (and therefore `busy`) to true
     // synchronously, before the POST resolves — the same race the finding
@@ -546,7 +556,9 @@ describe("WorkspacePage (Task B2)", () => {
     fireEvent.change(textarea, { target: { value: "Add a services page" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => expect(confirm.disabled).toBe(true));
+    // Confirm is withdrawn entirely (not just disabled) and the reason shows.
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull());
+    expect(dialog.textContent).toMatch(/agent is still building/i);
   });
 
   it("links Manage to the tab-based shell", async () => {
