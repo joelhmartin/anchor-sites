@@ -34,10 +34,15 @@ const putPayload = z.object({
 
 /** Public shape of a registered plugin (no live values). */
 function describePlugin(m: PluginManifest) {
+  const requiredEnv = m.requiredEnv ?? [];
   return {
     name: m.name,
     version: m.version,
-    required_env: m.requiredEnv ?? [],
+    required_env: requiredEnv,
+    // D438 — presence check only (names, never values): which required env
+    // vars are absent on the server, so the UI can warn and refuse to enable a
+    // plugin that would fail at runtime.
+    missing_env: requiredEnv.filter((e) => !process.env[e]),
     secret_config_keys: m.secretConfigKeys ?? [],
     has_router: typeof m.createRouter === "function",
     blocks: (m.blocks ?? []).map((b) => ({
