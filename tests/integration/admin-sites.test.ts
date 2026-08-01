@@ -103,13 +103,14 @@ d("admin sites API — GET /api/sites (P4-T4.2)", () => {
     // A real operator-archived user site: same status='archived' as the
     // covers site, but is_system=false. It must appear (badged) so the
     // operator can find and restore it.
+    const userSlug = `d502-archived-user-${Date.now()}`;
     await pool.query(
       `INSERT INTO sites (slug, display_name, status, is_system) VALUES ($1, $2, 'archived', false)`,
-      ["d502-archived-user-site", "Archived User Site"],
+      [userSlug, "Archived User Site"],
     );
     const r = await request(app).get("/api/sites").set("X-Admin-Token", ADMIN_TOKEN);
     const rows = r.body.sites as { slug: string; status: string }[];
-    const archived = rows.find((s) => s.slug === "d502-archived-user-site");
+    const archived = rows.find((s) => s.slug === userSlug);
     expect(archived).toBeDefined();
     expect(archived?.status).toBe("archived");
     // The system covers site (also 'archived') stays hidden.
@@ -476,6 +477,41 @@ d("admin sites API — PATCH site + create page (P4-T4.6)", () => {
       .patch(`/api/sites/00000000-0000-0000-0000-000000000000`)
       .set("X-Admin-Token", ADMIN_TOKEN)
       .send({ display_name: "X" });
+    expect(r.status).toBe(404);
+  });
+
+  it("D500: PATCH status archives the site (and restore returns it to active)", async () => {
+    const archive = await request(app)
+      .patch(`/api/sites/${siteId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "archived" });
+    expect(archive.status).toBe(200);
+    expect(archive.body.site.status).toBe("archived");
+    const dbA = await pool.query<{ status: string }>(`SELECT status FROM sites WHERE id = $1`, [siteId]);
+    expect(dbA.rows[0].status).toBe("archived");
+
+    const restore = await request(app)
+      .patch(`/api/sites/${siteId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "active" });
+    expect(restore.status).toBe(200);
+    expect(restore.body.site.status).toBe("active");
+  });
+
+  it("D500: PATCH rejects hard-delete-ish statuses (only active|archived)", async () => {
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "deleted" });
+    expect(r.status).toBe(400);
+  });
+
+  it("D500/D502: a system site cannot be archived through this route", async () => {
+    const sysId = await ensureSystemTemplatesSite(pool);
+    const r = await request(app)
+      .patch(`/api/sites/${sysId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ status: "archived" });
     expect(r.status).toBe(404);
   });
 

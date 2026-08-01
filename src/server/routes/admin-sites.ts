@@ -40,6 +40,16 @@ const patchSitePayload = z
     ctm_account_id: z.string().max(200).nullable().optional(),
     // P12-T12.1 (D-054) — analytics opt-out per site.
     analytics_disabled: z.boolean().optional(),
+    // D500/D104/D409 (W2-TERM) — the site's lifecycle transition. ONLY
+    // 'archived' (retire: deprovisions CRM, and resolveSite's status='active'
+    // gate drafts the live surface off — an archived site 404s) and 'active'
+    // (restore) are operator-reachable here. Hard delete is deliberately
+    // withheld: CASCADE would drop the DB rows but NOT the external state
+    // (GCS objects, CRM records, Cloud Run domain mappings), which needs a
+    // dedicated offboarding job first (noted in the plan). 'suspended' stays
+    // unimplemented (D501, W3-DATA) — not offered so we never render a state
+    // no path can reach.
+    status: z.enum(["active", "archived"]).optional(),
   })
   .refine(
     (v) =>
@@ -47,10 +57,11 @@ const patchSitePayload = z
       v.default_brand_tokens !== undefined ||
       v.seo_defaults !== undefined ||
       v.ctm_account_id !== undefined ||
-      v.analytics_disabled !== undefined,
+      v.analytics_disabled !== undefined ||
+      v.status !== undefined,
     {
       message:
-        "at least one of display_name, default_brand_tokens, seo_defaults, ctm_account_id or analytics_disabled is required",
+        "at least one of display_name, default_brand_tokens, seo_defaults, ctm_account_id, analytics_disabled or status is required",
     },
   );
 
@@ -270,18 +281,22 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
         return;
       }
       const { siteId } = req.params;
-      const { display_name, default_brand_tokens, seo_defaults, ctm_account_id, analytics_disabled } = parsed.data;
+      const { display_name, default_brand_tokens, seo_defaults, ctm_account_id, analytics_disabled, status } = parsed.data;
       try {
         // ctm_account_id: undefined = not in payload (leave as-is); null = explicit clear.
         const ctmValue = ctm_account_id === undefined ? undefined : ctm_account_id;
+        // D500/D409: never let a system site be archived/restored through this
+        // operator route — is_system rows aren't managed here. The
+        // `NOT is_system` guard makes a stray PATCH a clean 404.
         const result = await pool.query<{ id: string }>(
           `UPDATE sites
               SET display_name = COALESCE($1, display_name),
                   default_brand_tokens = COALESCE($2::jsonb, default_brand_tokens),
                   seo_defaults = COALESCE($3::jsonb, seo_defaults),
                   ctm_account_id = CASE WHEN $5 THEN $4 ELSE ctm_account_id END,
-                  analytics_disabled = CASE WHEN $7 THEN $6 ELSE analytics_disabled END
-            WHERE id = $8
+                  analytics_disabled = CASE WHEN $7 THEN $6 ELSE analytics_disabled END,
+                  status = CASE WHEN $9 THEN $8 ELSE status END
+            WHERE id = $10 AND NOT is_system
             RETURNING id`,
           [
             display_name ?? null,
@@ -291,6 +306,8 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
             ctmValue !== undefined,
             analytics_disabled ?? false,
             analytics_disabled !== undefined,
+            status ?? "active",
+            status !== undefined,
             siteId,
           ],
         );
@@ -346,8 +363,11 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
               }
             });
           }
-          // Deprovision when site is archived via PATCH status (status not in patchSitePayload yet,
-          // but guard here for when it lands — D-053).
+          // D500 (W2-TERM): archiving a site via PATCH status now REACHES
+          // this branch (status landed in patchSitePayload) — an archived
+          // site's CRM record is deprovisioned best-effort, retried via the
+          // CRM_SYNC job on failure. No longer the dead "for when it lands"
+          // guard the audit (D104) flagged.
           if (site.crm_site_id && site.status === "archived") {
             crmClient.deprovisionSite(site.crm_site_id).catch((err) => {
               // eslint-disable-next-line no-console

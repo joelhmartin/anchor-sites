@@ -16,7 +16,7 @@ import { Spinner } from "../../ui/spinner.js";
  * fields to `PATCH /api/sites/:siteId`. Hostnames are read-only here — domain
  * management is Phase 10.
  */
-export function SettingsTab({ site }: { site: SiteDetail }) {
+export function SettingsTab({ site, onSiteChanged }: { site: SiteDetail; onSiteChanged?: () => void }) {
   // Show the full palette: site values win over the defaults for any key.
   const initialTokens = useMemo(
     () => ({ ...DEFAULT_BRAND_TOKENS, ...site.default_brand_tokens }),
@@ -30,6 +30,34 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  // D500/D409 — site archive (Danger zone). Deletion is deliberately withheld
+  // (external GCS/CRM/domain state needs an offboarding job first); archive is
+  // the operator's terminal-with-a-path-out: it drafts the live surface off
+  // (resolveSite gates on status='active', so an archived site 404s) and can
+  // be restored. Confirm-gated because it takes the public site down.
+  const archived = site.status === "archived";
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+
+  async function setStatus(next: "active" | "archived") {
+    if (next === "archived" && !window.confirm(
+      `Archive “${site.display_name}”? Its public site goes offline immediately (visitors get a 404). ` +
+        `You can restore it here anytime — nothing is deleted.`,
+    )) {
+      return;
+    }
+    setLifecycleBusy(true);
+    setLifecycleError(null);
+    try {
+      await apiFetch(`/api/sites/${site.id}`, { method: "PATCH", body: { status: next } });
+      onSiteChanged?.();
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : "Couldn’t update the site.");
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
 
   // D422 — dirty is measured against this baseline, NOT the mount-time `site`
   // prop (which the parent never refreshes). After a successful save the
@@ -152,6 +180,50 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
             Call tracking (CTM), CRM, and GitHub sync live in the{" "}
             <strong>Integrations</strong> tab.
           </p>
+        </CardContent>
+      </Card>
+
+      {/* D500/D409 — Danger zone: the site's operator-reachable terminal
+          state. Archive (reversible) is offered; hard delete is deliberately
+          withheld until an offboarding job can clean external state. */}
+      <Card className="border-red-200">
+        <CardContent className="flex flex-col gap-3 pt-5">
+          <Label className="text-red-700">Danger zone</Label>
+          {archived ? (
+            <>
+              <p className="text-sm text-zinc-700">
+                This site is <strong>archived</strong> — its public URL returns a 404 and it’s
+                hidden from the live surface. Restore it to bring it back online.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="self-start"
+                onClick={() => setStatus("active")}
+                disabled={lifecycleBusy}
+              >
+                {lifecycleBusy ? <Spinner /> : "Restore site"}
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-zinc-700">
+                Archiving takes the public site <strong>offline</strong> (visitors get a 404) and
+                removes it from the live surface. Nothing is deleted — you can restore it here
+                anytime.
+              </p>
+              <Button
+                type="button"
+                variant="danger"
+                className="self-start"
+                onClick={() => setStatus("archived")}
+                disabled={lifecycleBusy}
+              >
+                {lifecycleBusy ? <Spinner /> : "Archive site"}
+              </Button>
+            </>
+          )}
+          {lifecycleError && <p className="text-sm text-red-600">{lifecycleError}</p>}
         </CardContent>
       </Card>
     </div>

@@ -96,7 +96,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
     ? (requestedTab as TabKey)
     : "pages";
   const [tab, setTab] = useState<TabKey>(initialTab);
-  const { data, loading, error } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
+  const { data, loading, error, reload } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = data?.site;
 
   // D412 — complete the ARIA tabs contract: roving tabindex + arrow-key
@@ -237,7 +237,7 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             {tab === "domains" && <DomainsTab siteId={site.id} />}
             {tab === "integrations" && <CrmTab site={site} />}
             {tab === "seo" && <SeoSettingsTab site={site} />}
-            {tab === "settings" && <SettingsTab site={site} />}
+            {tab === "settings" && <SettingsTab site={site} onSiteChanged={reload} />}
           </div>
         </>
       )}
