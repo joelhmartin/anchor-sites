@@ -138,6 +138,33 @@ describe("SiteDetailPage (P4-T4.12) — management shell (served at /manage sinc
     expect(screen.queryByRole("link", { name: /View live site/ })).toBeNull();
   });
 
+  it("links back to the workspace and explains the split (D411)", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme");
+    const link = await screen.findByRole("link", { name: /Open workspace/ });
+    expect(link.getAttribute("href")).toBe("/sites/acme");
+    expect(screen.getByText(/Design pages and content in the/)).toBeTruthy();
+  });
+
+  it("wires the ARIA tabs contract and supports arrow-key navigation (D412)", async () => {
+    mockApi([SITE], SITE);
+    renderAt("acme");
+    const pagesTab = await screen.findByRole("tab", { name: "Pages" });
+    // Selected tab is focusable (roving tabindex); it controls a labelled panel.
+    expect(pagesTab.getAttribute("tabindex")).toBe("0");
+    expect(pagesTab.getAttribute("aria-controls")).toBe("tabpanel-pages");
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.getAttribute("aria-labelledby")).toBe("tab-pages");
+    // An inactive tab is removed from the tab sequence.
+    expect(screen.getByRole("tab", { name: "Blog" }).getAttribute("tabindex")).toBe("-1");
+    // ArrowRight moves selection to the next tab.
+    fireEvent.keyDown(pagesTab, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Blog" }).getAttribute("aria-selected")).toBe("true");
+    // ArrowLeft from the first wraps to the last (Settings).
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Pages" }), { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("shows a not-found card when the slug has no matching site", async () => {
     mockApi([SITE], SITE);
     renderAt("ghost");

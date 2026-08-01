@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "../lib/useApi.js";
 import { liveSiteUrl } from "../lib/siteUrl.js";
@@ -99,12 +99,39 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
   const { data, loading, error } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = data?.site;
 
+  // D412 — complete the ARIA tabs contract: roving tabindex + arrow-key
+  // navigation across the tablist (Left/Right wrap, Home/End jump), plus
+  // id/aria-controls/aria-labelledby wiring below.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  function onTabKeyDown(e: React.KeyboardEvent, index: number) {
+    let next = index;
+    if (e.key === "ArrowRight") next = (index + 1) % TABS.length;
+    else if (e.key === "ArrowLeft") next = (index - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = TABS.length - 1;
+    else return;
+    e.preventDefault();
+    setTab(TABS[next].key);
+    tabRefs.current[next]?.focus();
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <Link to="/" className="text-sm text-zinc-500 hover:text-zinc-700">
-          ← Sites
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/" className="text-sm text-zinc-500 hover:text-zinc-700">
+            ← Sites
+          </Link>
+          {/* D411 — name the other surface and the split. Manage previously
+              only pointed outward ("Sites"/"View live"); the workspace linked
+              here but never back. */}
+          <Link
+            to={`/sites/${slug}`}
+            className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            Open workspace →
+          </Link>
+        </div>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold">{site?.display_name ?? slug}</h1>
@@ -140,6 +167,10 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
           </div>
         </div>
         <p className="text-sm text-zinc-500">{slug}</p>
+        <p className="text-xs text-zinc-400">
+          Design pages and content in the <strong>workspace</strong>; manage settings, domains,
+          members, and integrations here.
+        </p>
         {/* D911 — the live render strips the "(placeholder)" seed marker from
             public surfaces, but the honest fix is a real name; keep nudging
             until the operator renames. */}
@@ -164,13 +195,20 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
 
       {site && (
         <>
-          <div role="tablist" className="flex gap-1 border-b border-zinc-200">
-            {TABS.map((t) => (
+          <div role="tablist" aria-label="Site management sections" className="flex gap-1 border-b border-zinc-200">
+            {TABS.map((t, i) => (
               <button
                 key={t.key}
+                ref={(el) => {
+                  tabRefs.current[i] = el;
+                }}
+                id={`tab-${t.key}`}
                 role="tab"
                 aria-selected={tab === t.key}
+                aria-controls={`tabpanel-${t.key}`}
+                tabIndex={tab === t.key ? 0 : -1}
                 onClick={() => setTab(t.key)}
+                onKeyDown={(e) => onTabKeyDown(e, i)}
                 className={cn(
                   "-mb-px border-b-2 px-4 py-2 text-sm font-medium",
                   tab === t.key
@@ -183,7 +221,13 @@ function SiteDetailView({ siteId, slug }: { siteId: string; slug: string }) {
             ))}
           </div>
 
-          <div role="tabpanel" className="min-w-0 flex-1">
+          <div
+            role="tabpanel"
+            id={`tabpanel-${tab}`}
+            aria-labelledby={`tab-${tab}`}
+            tabIndex={0}
+            className="min-w-0 flex-1"
+          >
             {tab === "pages" && <PagesTab siteId={site.id} slug={slug} />}
             {tab === "blog" && <BlogTab siteId={site.id} slug={slug} />}
             {tab === "events" && <EventsTab siteId={site.id} slug={slug} />}
