@@ -128,6 +128,31 @@ export const GIT_IMPORT_RETRY_OPTIONS = {
 } as const;
 
 /**
+ * D615 (W2-JOBS) — media.process-upload retry policy. The handler's own doc
+ * comment CLAIMED "pg-boss retries via its built-in backoff", but the queue
+ * was created with no options, so it inherited the default: 2 IMMEDIATE
+ * retries, zero delay, no backoff — the comment was false armor. The handler
+ * downloads the original from GCS and runs sharp; a transient GCS blip
+ * benefits from a short backoff rather than two instant re-hammers. 3
+ * retries, 10s base, exponential — the handler is idempotent (content-hashed
+ * variant keys overwrite identical bytes), so a retry never corrupts output.
+ *
+ * NOTE — deliberately NO stately singletonKey on this queue (the audit's
+ * D615 fix-class suggested `singletonKey: asset_id`). That would DEFEAT D604:
+ * the media.ts /complete route re-enqueues a stale-'processing' asset whose
+ * worker died, and under stately a singletonKey=asset_id send would return
+ * null (dedupe) against the dead worker's not-yet-expired 'active' job,
+ * silently dropping the recovery. The idempotent handler makes the
+ * dedupe's value marginal anyway (a racing double-/complete just processes
+ * identical bytes twice), so recovery wins over dedupe here.
+ */
+export const MEDIA_PROCESS_RETRY_OPTIONS = {
+  retryLimit: 3,
+  retryDelay: 10,
+  retryBackoff: true,
+} as const;
+
+/**
  * pg-boss bootstrap (D-030, P3-T3.8).
  *
  * Lifecycle:
@@ -326,13 +351,25 @@ export async function stopJobs(): Promise<void> {
  * must never call this outside `bootJobs`.
  */
 export async function registerHandlers(boss: PgBoss): Promise<void> {
-  await boss.createQueue(MEDIA_PROCESS_UPLOAD);
+  // D615: explicit retry-with-backoff (see MEDIA_PROCESS_RETRY_OPTIONS's doc
+  // — the handler's old "built-in backoff" comment was false). No stately
+  // singletonKey by design (it would fight D604's stuck-state recovery).
+  await boss.createQueue(MEDIA_PROCESS_UPLOAD, { ...MEDIA_PROCESS_RETRY_OPTIONS });
   await boss.work<MediaProcessUploadInput>(MEDIA_PROCESS_UPLOAD, async ([job]) => {
     await handleMediaProcessUpload(job.data, { pool: defaultPool });
   });
 
   // P7-T7.5: template materialization (D-042).
-  await boss.createQueue(TEMPLATE_MATERIALIZE);
+  // D605: `stately` policy — the from-template + re-materialize routes both
+  // send() with `singletonKey: ${siteId}:${templateId}`, but `singletonKey`
+  // is INERT under the default `standard` policy (the same bug already fixed
+  // for AGENT_TURN/GIT_EXPORT/GIT_IMPORT/SITE_PROVISION was missed on this
+  // fifth queue), so a double-submit queued duplicate materializations. Under
+  // stately, a second send for a key already queued/active dedupes to null;
+  // the handler is ON-CONFLICT idempotent regardless, so this is belt +
+  // braces. A COMPLETED prior job doesn't block, so a deliberate
+  // re-materialize (after a failure) still queues a fresh job.
+  await boss.createQueue(TEMPLATE_MATERIALIZE, { policy: "stately" });
   await boss.work<MaterializeTemplateInput>(TEMPLATE_MATERIALIZE, async ([job]) => {
     await handleMaterializeTemplate(job.data, { pool: defaultPool });
   });

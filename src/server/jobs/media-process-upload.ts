@@ -15,11 +15,16 @@ import {
 /**
  * pg-boss handler for `media.process-upload` (P3-T3.10 / D-031).
  *
- * Flow: pending → processing → ready (or failed). On failure, pg-boss
- * retries via its built-in backoff; the handler is idempotent because
- * variant URLs are content-hashed and uploads use `if-generation-match`
- * not at the GCS-API level — re-running the job just overwrites with
- * identical bytes at the same key.
+ * Flow: pending → processing → ready (or failed). On a thrown failure,
+ * pg-boss retries per the queue's configured ladder — MEDIA_PROCESS_RETRY_OPTIONS
+ * in jobs/index.ts: 3 retries on a 10s exponential backoff (D615 — the queue
+ * previously had NO options and inherited pg-boss's default 2 immediate,
+ * un-backed-off retries, which this comment used to misdescribe as "built-in
+ * backoff"). The handler is idempotent: variant object keys are content-hashed
+ * (sha256 of the rendered bytes), so re-running the job just overwrites the
+ * same keys with byte-identical output. A stale 'processing' row whose worker
+ * died mid-run is recovered by the /complete route's re-enqueue (D604), not by
+ * a singletonKey (there deliberately isn't one — see MEDIA_PROCESS_RETRY_OPTIONS).
  */
 
 export type MediaProcessUploadInput = {

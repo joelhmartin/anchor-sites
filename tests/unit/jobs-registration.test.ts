@@ -14,9 +14,14 @@ import type { PgBoss } from "pg-boss";
 import {
   registerHandlers,
   GIT_EXPORT,
+  GIT_IMPORT,
   SITE_PROVISION,
   AGENT_TURN,
+  TEMPLATE_MATERIALIZE,
+  MEDIA_PROCESS_UPLOAD,
   GIT_EXPORT_RETRY_OPTIONS,
+  GIT_IMPORT_RETRY_OPTIONS,
+  MEDIA_PROCESS_RETRY_OPTIONS,
   SITE_PROVISION_LOCAL_CONCURRENCY,
   ALL_QUEUE_NAMES,
 } from "../../src/server/jobs/index.js";
@@ -77,6 +82,32 @@ describe("registerHandlers options (D617/D618)", () => {
     await registerHandlers(boss);
     const agentTurn = createQueueCalls.find((c) => c.name === AGENT_TURN);
     expect(agentTurn!.options).toMatchObject({ policy: "stately" });
+  });
+
+  it("D605: TEMPLATE_MATERIALIZE gets the stately policy so its singletonKey isn't inert", async () => {
+    const { boss, createQueueCalls } = makeStubBoss();
+    await registerHandlers(boss);
+    const materialize = createQueueCalls.find((c) => c.name === TEMPLATE_MATERIALIZE);
+    expect(materialize!.options).toMatchObject({ policy: "stately" });
+  });
+
+  it("D615: MEDIA_PROCESS_UPLOAD carries an explicit retry ladder and NO stately singletonKey (D604 recovery)", async () => {
+    const { boss, createQueueCalls } = makeStubBoss();
+    await registerHandlers(boss);
+    const media = createQueueCalls.find((c) => c.name === MEDIA_PROCESS_UPLOAD);
+    expect(media!.options).toMatchObject({ ...MEDIA_PROCESS_RETRY_OPTIONS });
+    // Deliberately not stately: a singletonKey would defeat the /complete
+    // stuck-state re-enqueue.
+    expect(media!.options).not.toHaveProperty("policy", "stately");
+    expect(MEDIA_PROCESS_RETRY_OPTIONS.retryBackoff).toBe(true);
+  });
+
+  it("D603: GIT_IMPORT's queue keeps stately AND gains the backoff retry ladder", async () => {
+    const { boss, createQueueCalls } = makeStubBoss();
+    await registerHandlers(boss);
+    const gitImport = createQueueCalls.find((c) => c.name === GIT_IMPORT);
+    expect(gitImport!.options).toMatchObject({ policy: "stately", ...GIT_IMPORT_RETRY_OPTIONS });
+    expect(GIT_IMPORT_RETRY_OPTIONS.retryBackoff).toBe(true);
   });
 
   // D606/D114/D1009: the jobs-health endpoint drives its per-queue report off
