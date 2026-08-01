@@ -22,6 +22,7 @@ import { adminAiAgentRouter } from "./routes/admin-ai-agent.js";
 import { meRouter } from "./routes/me.js";
 import { gitWebhookRouter, type RawBodyRequest } from "./routes/git-webhook.js";
 import { adminGitRouter } from "./routes/admin-git.js";
+import { adminUsersRouter } from "./routes/admin-users.js";
 import { resolveSite } from "../middleware/resolveSite.js";
 import { loadPlugins } from "./plugins/loader.js";
 import { mountStudioAuth } from "./auth/studio-auth-mount.js";
@@ -164,6 +165,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Task 10 (AI site agent): conversation CRUD + SSE message/tail routes.
   app.use("/api", adminAiAgentRouter());
+
+  // D522 (W2-TERM): Studio user offboarding (list + delete → CASCADE revokes
+  // sessions/accounts).
+  app.use("/api", adminUsersRouter());
 
   // GitHub sync Task 7: admin status/enable/export endpoints backing the
   // Studio GitCard. Gated by requireAdmin like every other admin-sites route.
