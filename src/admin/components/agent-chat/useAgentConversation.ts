@@ -56,8 +56,13 @@ export type UseAgentConversationResult = {
   reconnecting: boolean;
   error: string | null;
   conversation: AiConversation | null;
-  /** Formatted footer text, e.g. "123 tokens today · +45 this turn". */
+  /** Formatted footer text, e.g. "123 tokens today · +45 this turn"
+   * (large counts compact to "12.3K"). */
   usageText: string;
+  /** D322 — exact figures + the honest UTC-reset caveat, surfaced as a
+   * tooltip so the compact footer stays glanceable without hiding the truth
+   * that "today" is a UTC day, not the operator's local one. */
+  usageTitle: string;
   send: (overrideText?: string) => Promise<void>;
   stop: () => void;
   /** D1104/D108 — archive the current conversation and reset to a fresh one
@@ -617,7 +622,17 @@ export function useAgentConversation({
   const usage = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
   const totalToday = usage.input + usage.output;
   const deltaTotal = lastTurnDelta ? lastTurnDelta.input + lastTurnDelta.output : null;
-  const usageText = deltaTotal ? `${totalToday} tokens today · +${deltaTotal} this turn` : `${totalToday} tokens today`;
+  const usageText = deltaTotal
+    ? `${formatTokens(totalToday)} tokens today · +${formatTokens(deltaTotal)} this turn`
+    : `${formatTokens(totalToday)} tokens today`;
+  // D322 — the tooltip carries the exact numbers and the honest caveat. The
+  // footer's day boundary is UTC (the server keys `token_usage` by
+  // `toISOString().slice(0,10)`, repo.ts), which resets mid-evening in
+  // most timezones; say so rather than implying a local-midnight reset.
+  const usageTitle =
+    `${totalToday.toLocaleString()} AI tokens used today` +
+    (deltaTotal ? ` (about ${deltaTotal.toLocaleString()} on the last change)` : "") +
+    ". Resets at midnight UTC.";
 
   return {
     items,
@@ -631,8 +646,21 @@ export function useAgentConversation({
     error,
     conversation,
     usageText,
+    usageTitle,
     send,
     stop,
     newConversation,
   };
+}
+
+/** Compact token count: 999 → "999", 1234 → "1.2K", 20000 → "20K",
+ * 1_500_000 → "1.5M". Keeps small counts verbatim so the footer reads
+ * exactly as before under normal single-turn usage. */
+function formatTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) {
+    const k = n / 1000;
+    return `${k < 10 ? k.toFixed(1) : Math.round(k)}K`;
+  }
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }

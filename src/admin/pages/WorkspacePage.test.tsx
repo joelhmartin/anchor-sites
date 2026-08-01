@@ -196,6 +196,33 @@ describe("WorkspacePage (Task B2)", () => {
     );
   });
 
+  // D323 — the banner is dismissable and clears on the first send.
+  it("D323: the ai_error banner can be dismissed", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme?ai_error=1");
+    await waitFor(() =>
+      expect(screen.getByText(/initial AI build couldn.t be started automatically/)).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/initial AI build couldn.t be started automatically/)).toBeNull(),
+    );
+  });
+
+  it("D323: sending a message clears the ai_error banner (and it stays gone)", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme?ai_error=1");
+    const textarea = (await screen.findByLabelText("Message")) as HTMLTextAreaElement;
+    await screen.findByText(/initial AI build couldn.t be started automatically/);
+
+    fireEvent.change(textarea, { target: { value: "Build me a homepage" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/initial AI build couldn.t be started automatically/)).toBeNull(),
+    );
+  });
+
   it("renders a GitHub deep link only when git sync is configured AND enabled", async () => {
     mockWorkspaceFetch({ git: { configured: true, repo: "acme-corp/content", state: { enabled: true } } });
     renderAt("/sites/acme");

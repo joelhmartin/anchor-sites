@@ -34,6 +34,7 @@ export function Composer({
   resumeVisible,
   onResume,
   usageText,
+  usageTitle,
 }: {
   draft: string;
   onDraftChange: (value: string) => void;
@@ -49,6 +50,8 @@ export function Composer({
   resumeVisible: boolean;
   onResume: () => void;
   usageText: string;
+  /** D322 — exact figures + UTC-reset caveat, shown as a tooltip. */
+  usageTitle?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inFlight = busy || sending;
@@ -93,7 +96,9 @@ export function Composer({
           className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-5 text-zinc-900 placeholder:text-zinc-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
         />
         <div className="mt-1.5 flex items-center justify-between gap-2">
-          <span className="text-xs text-zinc-400">{usageText}</span>
+          <span className="text-xs text-zinc-400" title={usageTitle}>
+            {usageText}
+          </span>
           {inFlight ? (
             <button
               type="button"

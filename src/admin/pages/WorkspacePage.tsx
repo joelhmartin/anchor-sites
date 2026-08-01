@@ -139,7 +139,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const { data: siteData } = useApi<{ site: SiteDetail }>(`/api/sites/${siteId}`);
   const site = siteData?.site;
 
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // `?ai=1` (new-site "Start with AI" hand-off) auto-focuses the composer —
   // the workspace itself IS the landing surface now, so there's no drawer
   // to auto-open; `?ai_error=1` explains an empty transcript when the
@@ -384,8 +384,8 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   }, [publishOpen, publishResult]);
 
   const {
-    items, draft, setDraft, sending, busy, reconnecting, conversation, error, usageText, send, stop,
-    newConversation,
+    items, draft, setDraft, sending, busy, reconnecting, conversation, error, usageText, usageTitle,
+    send, stop, newConversation,
   } = useAgentConversation({
     siteId,
     active: true,
@@ -397,6 +397,23 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
     onChangeEvent: handleChangeEvent,
     onStatusChange: handleStatusChange,
   });
+
+  // D323 — the `?ai_error=1` banner ("initial AI build couldn't be started")
+  // is moot the instant the operator kicks off a build themselves, and it
+  // persists in the URL so it survived reloads AND a successful build. Clear
+  // the param (replace, so Back doesn't resurrect it) on the first send, and
+  // give it a dismiss affordance for the operator who just wants it gone.
+  function dismissAiError() {
+    if (!aiError) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("ai_error");
+    setSearchParams(next, { replace: true });
+  }
+
+  function handleSend(preset?: string) {
+    dismissAiError();
+    void send(preset);
+  }
 
   // Autoscroll pin (mirrors AgentChatDrawer): only follow new content when
   // the user was already near the bottom.
@@ -462,13 +479,23 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
         </div>
 
         {aiError && (
-          <p className="shrink-0 border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
-            The site was created, but the initial AI build couldn't be started automatically. Send a
-            message below to kick it off.
-          </p>
+          <div className="flex shrink-0 items-start gap-2 border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            <p className="flex-1">
+              The site was created, but the initial AI build couldn't be started automatically. Send a
+              message below to kick it off.
+            </p>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={dismissAiError}
+              className="shrink-0 rounded px-1 font-medium text-amber-600 hover:bg-amber-100 hover:text-amber-800"
+            >
+              ✕
+            </button>
+          </div>
         )}
 
-        {showEmptyState && <EmptyState onPreset={(preset) => send(preset)} />}
+        {showEmptyState && <EmptyState onPreset={(preset) => handleSend(preset)} />}
 
         <ChatTranscript
           items={items}
@@ -493,13 +520,14 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
           <Composer
             draft={draft}
             onDraftChange={setDraft}
-            onSend={() => send()}
+            onSend={() => handleSend()}
             onStop={stop}
             sending={sending}
             busy={busy}
             resumeVisible={conversation?.status === "error" || conversation?.status === "stopped"}
             onResume={() => send("continue")}
             usageText={usageText}
+            usageTitle={usageTitle}
           />
         </div>
       </div>
