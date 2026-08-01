@@ -65,4 +65,17 @@ describe("SeoSettingsTab (P9-T9.8)", () => {
     });
     await screen.findByText("Saved.");
   });
+
+  it("disarms Save after a successful save — no forever re-send (D422)", async () => {
+    const fetchMock = vi.fn(async () => json({ site: { id: "s1" } }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<SeoSettingsTab site={baseSite} />);
+    fireEvent.change(screen.getByLabelText("Title template"), { target: { value: "%s — Acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved.");
+    // Baseline advanced to the saved value → Save is disabled again, so a
+    // second click can't re-send the same PATCH.
+    expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

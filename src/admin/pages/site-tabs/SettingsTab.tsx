@@ -33,15 +33,24 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // D422 — dirty is measured against this baseline, NOT the mount-time `site`
+  // prop (which the parent never refreshes). After a successful save the
+  // baseline advances to what we just wrote, so Save disarms and stops
+  // re-sending the same PATCH; "Saved." and an armed Save no longer contradict.
+  const [baseName, setBaseName] = useState(site.display_name);
+  const [baseTokens, setBaseTokens] = useState<Record<string, string>>(initialTokens);
+  const [baseCtm, setBaseCtm] = useState(site.ctm_account_id ?? "");
+  const [baseAnalytics, setBaseAnalytics] = useState(site.analytics_disabled ?? false);
+
   function setToken(key: string, value: string) {
     setSaved(false);
     setTokens((t) => ({ ...t, [key]: value }));
   }
 
-  const nameChanged = displayName.trim() !== site.display_name;
-  const tokensChanged = JSON.stringify(tokens) !== JSON.stringify(initialTokens);
-  const ctmChanged = ctmAccountId.trim() !== (site.ctm_account_id ?? "");
-  const analyticsChanged = analyticsDisabled !== (site.analytics_disabled ?? false);
+  const nameChanged = displayName.trim() !== baseName;
+  const tokensChanged = JSON.stringify(tokens) !== JSON.stringify(baseTokens);
+  const ctmChanged = ctmAccountId.trim() !== baseCtm;
+  const analyticsChanged = analyticsDisabled !== baseAnalytics;
   const hasChanges = nameChanged || tokensChanged || ctmChanged || analyticsChanged;
   const canSave = hasChanges && displayName.trim().length > 0 && !busy;
 
@@ -62,6 +71,11 @@ export function SettingsTab({ site }: { site: SiteDetail }) {
     if (analyticsChanged) body.analytics_disabled = analyticsDisabled;
     try {
       await apiFetch(`/api/sites/${site.id}`, { method: "PATCH", body });
+      // Advance the baseline to the saved values so Save disarms (D422).
+      setBaseName(displayName.trim());
+      setBaseTokens(tokens);
+      setBaseCtm(ctmAccountId.trim());
+      setBaseAnalytics(analyticsDisabled);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t save settings.");

@@ -90,6 +90,23 @@ describe("SettingsTab (P4-T4.15)", () => {
     expect(body.default_brand_tokens["--theme-main"]).toBe("#112233");
   });
 
+  it("disarms Save after a successful save — no forever re-send (D422)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);
+      return json({ site: { ...SITE, display_name: "Renamed" } });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<SettingsTab site={SITE} />);
+    const save = () => screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement;
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Renamed" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(screen.getByText("Saved.")).toBeTruthy());
+    // Baseline advanced → Save disarms; it can't keep re-sending the PATCH.
+    expect(save().disabled).toBe(true);
+    const patchCalls = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "PATCH");
+    expect(patchCalls).toHaveLength(1);
+  });
+
   it("surfaces a save validation error", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);

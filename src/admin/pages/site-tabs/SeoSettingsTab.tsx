@@ -25,11 +25,21 @@ export function SeoSettingsTab({ site }: { site: SiteDetail }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // D422 — dirty is measured against this baseline, refreshed on save, not the
+  // mount-time `site` prop (which the parent never reloads). Without this the
+  // Save button stayed armed after "Saved." and re-sent the same PATCH forever.
+  const [base, setBase] = useState({
+    titleTemplate: initial.titleTemplate ?? "",
+    defaultDescription: initial.defaultDescription ?? "",
+    ogImage: initial.defaultOgImageAssetId ?? "",
+    twitterHandle: initial.twitterHandle ?? "",
+  });
+
   const dirty =
-    titleTemplate !== (initial.titleTemplate ?? "") ||
-    defaultDescription !== (initial.defaultDescription ?? "") ||
-    ogImage !== (initial.defaultOgImageAssetId ?? "") ||
-    twitterHandle !== (initial.twitterHandle ?? "");
+    titleTemplate !== base.titleTemplate ||
+    defaultDescription !== base.defaultDescription ||
+    ogImage !== base.ogImage ||
+    twitterHandle !== base.twitterHandle;
 
   const change = (setter: (v: string) => void) => (v: string) => {
     setSaved(false);
@@ -48,6 +58,8 @@ export function SeoSettingsTab({ site }: { site: SiteDetail }) {
     if (twitterHandle.trim()) seo_defaults.twitterHandle = twitterHandle.trim();
     try {
       await apiFetch(`/api/sites/${site.id}`, { method: "PATCH", body: { seo_defaults } });
+      // Advance the baseline so Save disarms (D422).
+      setBase({ titleTemplate, defaultDescription, ogImage, twitterHandle });
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn’t save SEO defaults.");
