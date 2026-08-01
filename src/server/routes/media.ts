@@ -236,6 +236,47 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // PATCH /api/sites/:siteId/media/:assetId — D417: edit an asset's alt text.
+  //
+  // Alt used to be hardcoded to the filename at upload and never editable, so
+  // every published image carried "IMG_4032.jpg"-grade alt. This lets the
+  // operator set real alt text after the fact (and the upload path no longer
+  // defaults to the filename). Site-scoped; 404 if the asset isn't this site's.
+  // -------------------------------------------------------------------------
+  const patchMediaPayload = z.object({ alt: z.string().max(500) });
+  router.patch(
+    "/sites/:siteId/media/:assetId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, assetId } = req.params;
+      const parsed = patchMediaPayload.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid payload",
+          details: parsed.error.errors.map((e) => ({
+            path: e.path.join(".") || "(root)",
+            message: e.message,
+          })),
+        });
+        return;
+      }
+      try {
+        const upd = await pool.query<{ id: string; alt: string }>(
+          `UPDATE media_assets SET alt = $1 WHERE id = $2 AND site_id = $3 RETURNING id, alt`,
+          [parsed.data.alt, assetId, siteId],
+        );
+        if (upd.rowCount === 0) {
+          res.status(404).json({ error: "media asset not found for this site" });
+          return;
+        }
+        res.json({ asset: upd.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // POST /api/sites/:siteId/media/stock-search — Task 8 (inline editing)
   //
   // Thin wrapper around searchPixabay for the operator media picker. Hit

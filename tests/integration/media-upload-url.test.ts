@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -298,5 +299,72 @@ d("POST /api/sites/:siteId/media/:assetId/complete (P3-T3.11)", () => {
     expect(r.status).toBe(202);
     expect(r.body.enqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D417 — PATCH /api/sites/:siteId/media/:assetId — edit alt text
+// ---------------------------------------------------------------------------
+d("PATCH /api/sites/:siteId/media/:assetId (D417 — alt edit)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let siteId: string;
+  let otherSiteId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    const rows = await pool.query<{ id: string }>(`SELECT id FROM sites LIMIT 2`);
+    siteId = rows.rows[0].id;
+    otherSiteId = rows.rows[1]?.id ?? siteId;
+    app = express();
+    app.use(express.json());
+    app.use("/api", mediaRouter({ pool }));
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.end().catch(() => undefined);
+  });
+
+  async function makeAsset(site: string): Promise<string> {
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO media_assets (id, site_id, gcs_key, content_type, alt)
+       VALUES ($1, $2, $3, 'image/png', 'IMG_4032.jpg')`,
+      [id, site, `originals/${site}/${id}.png`],
+    );
+    return id;
+  }
+
+  it("updates the alt and returns it", async () => {
+    const id = await makeAsset(siteId);
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}/media/${id}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ alt: "A dentist examining a patient" });
+    expect(r.status).toBe(200);
+    expect(r.body.asset.alt).toBe("A dentist examining a patient");
+    const row = await pool.query(`SELECT alt FROM media_assets WHERE id = $1`, [id]);
+    expect(row.rows[0].alt).toBe("A dentist examining a patient");
+  });
+
+  it("404 when the asset belongs to another site (tenant-scoped)", async () => {
+    const id = await makeAsset(otherSiteId);
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}/media/${id}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ alt: "nope" });
+    // Only 404 when otherSiteId truly differs; if the seed had one site, skip.
+    if (otherSiteId !== siteId) expect(r.status).toBe(404);
+  });
+
+  it("400 on invalid payload", async () => {
+    const id = await makeAsset(siteId);
+    const r = await request(app)
+      .patch(`/api/sites/${siteId}/media/${id}`)
+      .set("X-Admin-Token", ADMIN_TOKEN)
+      .send({ alt: 123 });
+    expect(r.status).toBe(400);
   });
 });

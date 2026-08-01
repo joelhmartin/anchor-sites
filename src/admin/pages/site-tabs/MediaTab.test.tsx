@@ -76,23 +76,68 @@ describe("MediaTab (P4-T4.14)", () => {
     render(<MediaTab siteId="s1" />);
     await waitFor(() => expect(screen.getByText(/No media yet/)).toBeTruthy());
 
+    // D417 — the operator supplies alt at upload (no longer the filename).
+    fireEvent.change(screen.getByLabelText("Alt text for next upload"), {
+      target: { value: "Company logo" },
+    });
     const file = new File(["bytes"], "photo.png", { type: "image/png" });
     fireEvent.change(screen.getByTestId("media-upload-input"), { target: { files: [file] } });
 
     await waitFor(() => expect(seq).toEqual(["upload-url", "put", "complete"]));
 
-    // upload-url POST carries the file's content type + name as alt.
+    // upload-url POST carries the content type + the operator-entered alt, NOT
+    // the filename.
     const urlCall = fetchMock.mock.calls.find(
       (c) => String(c[0]) === "/api/sites/s1/media/upload-url",
     )!;
     expect(JSON.parse((urlCall[1] as RequestInit).body as string)).toEqual({
       content_type: "image/png",
-      alt: "photo.png",
+      alt: "Company logo",
     });
     // The signed PUT carries the raw file as the body (no admin token to GCS).
     const putCall = fetchMock.mock.calls.find((c) => String(c[0]) === "https://signed.example/put")!;
     expect((putCall[1] as RequestInit).method).toBe("PUT");
     expect((putCall[1] as RequestInit).body).toBe(file);
+  });
+
+  it("edits an asset's alt text via PATCH (D417)", async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/media/m1" && method === "PATCH") {
+        return json({ asset: { id: "m1", alt: "A company logo" } });
+      }
+      getCount += 1;
+      return json({ media: [READY] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<MediaTab siteId="s1" />);
+    await waitFor(() => expect(screen.getByAltText("A logo")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit alt text" }));
+    fireEvent.change(screen.getByLabelText(/Alt text for image m1/), {
+      target: { value: "A company logo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/media/m1" && (c[1] as RequestInit | undefined)?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse((patch![1] as RequestInit).body as string)).toEqual({ alt: "A company logo" });
+    });
+    expect(getCount).toBeGreaterThan(1); // reloaded after save
+  });
+
+  it("makes tiles keyboard-focusable (D431)", async () => {
+    global.fetch = vi.fn(async () => json({ media: [READY] })) as unknown as typeof fetch;
+    render(<MediaTab siteId="s1" />);
+    const img = await screen.findByAltText("A logo");
+    const tile = img.parentElement as HTMLElement;
+    expect(tile.getAttribute("tabindex")).toBe("0");
   });
 
   it("surfaces an upload error when the PUT to storage fails", async () => {
