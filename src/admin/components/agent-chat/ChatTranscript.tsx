@@ -7,11 +7,10 @@
 // small sparkle gutter icon and flowing text — so the transcript reads like
 // a conversation, not a chat-widget mockup.
 
-import type { Ref } from "react";
+import { useState, type Ref } from "react";
 import type { AgentChangeEvent } from "../../lib/agent-api.js";
 import type { DisplayItem } from "./types.js";
 import { ChangeCard } from "./ChangeCard.js";
-import { ReasoningDisclosure } from "./ReasoningDisclosure.js";
 import { Markdown } from "./Markdown.js";
 import { ToolStepRow, TypingPulse } from "./ToolSteps.js";
 import { SparkleIcon } from "./icons.js";
@@ -56,25 +55,118 @@ function UserBubble({ text }: { text: string }) {
 }
 
 function AssistantMessage({ item }: { item: Extract<DisplayItem, { kind: "assistant" }> }) {
-  const reasoning = item.reasoning;
   return (
     <div className="agent-chat-enter max-w-[92%]">
-      {reasoning && reasoning.stepCount > 0 && (
-        <ReasoningDisclosure
-          summary={`Worked through ${reasoning.stepCount} step${reasoning.stepCount === 1 ? "" : "s"} · ${reasoning.seconds}s`}
-          toolSteps={reasoning.toolSteps}
-        />
-      )}
       <div className="flex items-start gap-2">
         <SparkleIcon className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-        <Markdown>{item.text || "…"}</Markdown>
+        {/* D320 — the ANSWER is what a screen reader should announce. The
+            live region is scoped here (and on SystemLine) rather than on the
+            whole scroll container, so the dozens of tool-step appends and
+            running→done flips a build produces no longer drown it out. */}
+        <div aria-live="polite" className="min-w-0">
+          <Markdown>{item.text || "…"}</Markdown>
+        </div>
       </div>
     </div>
   );
 }
 
+// D320 — `role="status"` is an implicit polite live region: system captions
+// (errors, "Stopped.", stall notes) deserve announcement; nothing else in
+// the transcript container does.
 function SystemLine({ text }: { text: string }) {
-  return <p className="my-1.5 px-2 text-center text-xs text-amber-600">{text}</p>;
+  return (
+    <p role="status" className="my-1.5 px-2 text-center text-xs text-amber-600">
+      {text}
+    </p>
+  );
+}
+
+/**
+ * D327 — collapse a run of consecutive tool-step rows.
+ *
+ * Since Task A2 every tool call is a permanent transcript row, so a 20-tool
+ * build left ~20 trace rows around each answer forever — defeating the
+ * "clean conversation" design the now-deleted `ReasoningDisclosure` existed
+ * for. This restores that: while any step in the group is still running the
+ * rows stay expanded (live progress), and the moment they've all settled the
+ * group folds into a one-line "Worked through N steps" disclosure (default
+ * collapsed; any error is surfaced in the summary so a failure can't hide).
+ */
+function StepGroup({ steps }: { steps: Extract<DisplayItem, { kind: "step" }>[] }) {
+  const anyRunning = steps.some((s) => s.state === "running");
+  const anyError = steps.some((s) => s.state === "error");
+  const [open, setOpen] = useState(false);
+
+  if (anyRunning) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        {steps.map((s) => (
+          <ToolStepRow key={s.id} step={s} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-chat-enter">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+      >
+        <svg
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        >
+          <path
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
+          />
+        </svg>
+        {anyError ? (
+          <span className="text-amber-600">
+            Worked through {steps.length} step{steps.length === 1 ? "" : "s"} · a step failed
+          </span>
+        ) : (
+          <span>
+            Worked through {steps.length} step{steps.length === 1 ? "" : "s"}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="ml-1 mt-1 flex flex-col gap-0.5 border-l-2 border-zinc-200 pl-2.5">
+          {steps.map((s) => (
+            <ToolStepRow key={s.id} step={s} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Coalesce `items` so consecutive `step` items render as one `StepGroup`
+ * (D327) while everything else keeps its own row, order preserved. */
+type Renderable =
+  | { kind: "item"; item: DisplayItem }
+  | { kind: "steps"; steps: Extract<DisplayItem, { kind: "step" }>[] };
+
+function groupItems(items: DisplayItem[]): Renderable[] {
+  const out: Renderable[] = [];
+  for (const item of items) {
+    if (item.kind === "step") {
+      const last = out[out.length - 1];
+      if (last && last.kind === "steps") last.steps.push(item);
+      else out.push({ kind: "steps", steps: [item] });
+    } else {
+      out.push({ kind: "item", item });
+    }
+  }
+  return out;
 }
 
 /**
@@ -112,7 +204,11 @@ export function ChatTranscript({
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      aria-live="polite"
+      // D320 — deliberately NOT a live region (and NOT role="log", which
+      // implies aria-live). Announcement is scoped to the assistant answer
+      // and system captions instead (AssistantMessage / SystemLine); tool
+      // steps announce nothing (their running state is exposed via
+      // aria-busy on the row, not by insertion into a live region).
       // `min-h-0` is load-bearing: without it, a flex child defaults to
       // `min-height: auto` (its content height), which stops it from ever
       // shrinking below the transcript's full content height — so
@@ -122,11 +218,15 @@ export function ChatTranscript({
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"
     >
       <style>{ENTER_ANIMATION_STYLE}</style>
-      {items.map((item) => {
+      {groupItems(items).map((r) => {
+        if (r.kind === "steps") return <StepGroup key={`steps-${r.steps[0].id}`} steps={r.steps} />;
+        const item = r.item;
         if (item.kind === "user") return <UserBubble key={item.id} text={item.text} />;
         if (item.kind === "assistant") return <AssistantMessage key={item.id} item={item} />;
         if (item.kind === "system") return <SystemLine key={item.id} text={item.text} />;
-        if (item.kind === "step") return <ToolStepRow key={item.id} step={item} />;
+        // `step` items were coalesced into `steps` groups above, so the only
+        // remaining kind here is `change`.
+        if (item.kind !== "change") return null;
         return (
           <ChangeCard
             key={item.id}

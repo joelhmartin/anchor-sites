@@ -2,15 +2,13 @@
 import type { AgentChangeEvent } from "../../lib/agent-api.js";
 import type { ToolStep } from "./chatReducer.js";
 
-export type AssistantReasoning = {
-  stepCount: number;
-  seconds: number;
-  toolSteps: ToolStep[];
-};
-
 export type DisplayItem =
   | { id: string; kind: "user"; text: string }
-  | { id: string; kind: "assistant"; text: string; reasoning?: AssistantReasoning }
+  // D327 — the `reasoning` field (and its `ReasoningDisclosure` renderer)
+  // was dead since Task A2: `history.ts` never populated it. Tool steps now
+  // collapse via `ChatTranscript`'s `StepGroup` instead, driven by the same
+  // persisted `step` items.
+  | { id: string; kind: "assistant"; text: string }
   | { id: string; kind: "change"; change: AgentChangeEvent }
   // Fix round 1 (Finding 2 — reviewer, Task A2): a tool call/result tailed
   // from persisted `ai_messages` rows, rendered as a visible progress step

@@ -27,6 +27,9 @@ import type { ToolStep } from "./chatReducer.js";
 export function ToolStepRow({ step }: { step: ToolStep }) {
   return (
     <div
+      // D320 — the running row carries its own progress semantics
+      // (`aria-busy`) instead of being announced by a container live region.
+      aria-busy={step.state === "running"}
       className={cn(
         "flex items-center gap-2 rounded-md px-1.5 py-[3px]",
         step.state === "running" && "agent-chat-step-running",
