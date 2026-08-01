@@ -4,6 +4,7 @@ import { useApi } from "../../lib/useApi.js";
 import { Badge } from "../../ui/badge.js";
 import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
+import { Dialog, DialogContent, DialogDescription } from "../../ui/dialog.js";
 import { Spinner } from "../../ui/spinner.js";
 import { Table, TBody, TD, TH, THead, TR } from "../../ui/table.js";
 
@@ -17,10 +18,10 @@ type Member = {
 type AuthConfig = { providers: { emailPassword?: boolean } };
 
 /**
- * Members / Auth tab (P8-T8.13, D-048). Read-only view of this site's member
- * accounts (`tenant_auth_user`, site-scoped) plus a per-site login-provider
- * toggle backed by `tenant_auth_config`. v1 exposes the email+password
- * provider; social providers (per-site client IDs) are a later refinement.
+ * Members / Auth tab (P8-T8.13, D-048). This site's member accounts
+ * (`tenant_auth_user`, site-scoped) with a per-row Remove action (D423), plus
+ * a per-site login-provider toggle backed by `tenant_auth_config` that warns
+ * before turning off the only sign-in method (D424).
  */
 export function MembersTab({ siteId }: { siteId: string }) {
   const members = useApi<{ members: Member[] }>(`/api/sites/${siteId}/members`);
@@ -30,13 +31,21 @@ export function MembersTab({ siteId }: { siteId: string }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // D424 — confirm before disabling the last enabled provider.
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  // D423 — the member queued for removal (confirm dialog).
+  const [confirmRemove, setConfirmRemove] = useState<Member | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   // Seed the toggle from the loaded config (default on).
   useEffect(() => {
     if (config.data) setEmailPassword(config.data.providers.emailPassword !== false);
   }, [config.data]);
 
-  async function save() {
+  const rows = members.data?.members ?? [];
+
+  async function persist() {
     setBusy(true);
     setError(null);
     setSaved(false);
@@ -51,10 +60,33 @@ export function MembersTab({ siteId }: { siteId: string }) {
       setError(err instanceof Error ? err.message : "Couldn’t save auth settings.");
     } finally {
       setBusy(false);
+      setConfirmDisable(false);
     }
   }
 
-  const rows = members.data?.members ?? [];
+  function save() {
+    // D424 — email+password is the sole v1 provider; turning it off locks every
+    // member out. Confirm (with the member count) before committing.
+    if (!emailPassword) {
+      setConfirmDisable(true);
+      return;
+    }
+    void persist();
+  }
+
+  async function removeMember(member: Member) {
+    setRemoveBusy(true);
+    setRemoveError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/members/${member.id}`, { method: "DELETE" });
+      setConfirmRemove(null);
+      members.reload();
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : "Couldn’t remove this member.");
+    } finally {
+      setRemoveBusy(false);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -122,6 +154,7 @@ export function MembersTab({ siteId }: { siteId: string }) {
                   <TH>Email</TH>
                   <TH>Verified</TH>
                   <TH>Joined</TH>
+                  <TH>{""}</TH>
                 </TR>
               </THead>
               <TBody>
@@ -135,6 +168,18 @@ export function MembersTab({ siteId }: { siteId: string }) {
                       </Badge>
                     </TD>
                     <TD>{new Date(m.created_at).toLocaleDateString()}</TD>
+                    <TD>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setRemoveError(null);
+                          setConfirmRemove(m);
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </TD>
                   </TR>
                 ))}
               </TBody>
@@ -142,6 +187,51 @@ export function MembersTab({ siteId }: { siteId: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* D423 — confirm removing a member (deletes their account + sessions). */}
+      <Dialog open={confirmRemove !== null} onOpenChange={(next) => !next && setConfirmRemove(null)}>
+        {confirmRemove && (
+          <DialogContent title={`Remove ${confirmRemove.name || confirmRemove.email}?`}>
+            <DialogDescription>
+              This permanently deletes <span className="font-medium">{confirmRemove.email}</span>’s
+              account and signs them out. They can sign up again unless the site is closed to new
+              members.
+            </DialogDescription>
+            {removeError && <p className="mt-3 text-sm text-red-600">{removeError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setConfirmRemove(null)} disabled={removeBusy}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={() => removeMember(confirmRemove)} disabled={removeBusy}>
+                {removeBusy ? <Spinner /> : "Remove member"}
+              </Button>
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
+
+      {/* D424 — confirm disabling the only sign-in method. */}
+      <Dialog open={confirmDisable} onOpenChange={(next) => !next && setConfirmDisable(false)}>
+        <DialogContent title="Turn off the only login method?">
+          <DialogDescription>
+            Email + password is the only way members sign in to this site. Turning it off locks out
+            {" "}
+            <span className="font-medium">
+              {rows.length} {rows.length === 1 ? "member" : "members"}
+            </span>{" "}
+            — no one will be able to log in until you turn a provider back on.
+          </DialogDescription>
+          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setConfirmDisable(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => void persist()} disabled={busy}>
+              {busy ? <Spinner /> : "Disable anyway"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

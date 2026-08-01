@@ -129,4 +129,20 @@ d("admin tenant members/auth-config API (P8-T8.13)", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  // D423 — remove a member (e.g. an abusive signup).
+  it("deletes a member and 404s a cross-site delete", async () => {
+    await seedMember(pool, siteId, "mem-del", "del@x.test");
+    // Cross-site: the member belongs to `siteId`, deleting via `otherId` 404s.
+    const cross = await auth(request(app).delete(`/api/sites/${otherId}/members/mem-del`));
+    expect(cross.status).toBe(404);
+    // Same-site delete succeeds and the row is gone.
+    const ok = await auth(request(app).delete(`/api/sites/${siteId}/members/mem-del`));
+    expect(ok.status).toBe(204);
+    const row = await pool.query(`SELECT 1 FROM tenant_auth_user WHERE id = 'mem-del'`);
+    expect(row.rowCount).toBe(0);
+    // Deleting again 404s (already gone).
+    const again = await auth(request(app).delete(`/api/sites/${siteId}/members/mem-del`));
+    expect(again.status).toBe(404);
+  });
 });

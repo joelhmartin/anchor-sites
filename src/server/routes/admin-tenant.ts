@@ -361,6 +361,32 @@ export function adminTenantRouter(opts: AdminTenantOptions = {}): Router {
     },
   );
 
+  // DELETE /api/sites/:siteId/members/:memberId — D423: remove a member
+  // account (e.g. a spam/abusive signup). tenant_auth_session and
+  // tenant_auth_account both FK userId with ON DELETE CASCADE, so this one
+  // delete also drops the member's sessions (forced logout) and credential
+  // rows. Site-scoped: 404 if the member isn't this site's.
+  router.delete(
+    "/sites/:siteId/members/:memberId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId, memberId } = req.params;
+        const del = await pool.query(
+          `DELETE FROM tenant_auth_user WHERE id = $1 AND site_id = $2`,
+          [memberId, siteId],
+        );
+        if ((del.rowCount ?? 0) === 0) {
+          res.status(404).json({ error: "member not found for this site" });
+          return;
+        }
+        res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // GET /api/sites/:siteId/auth-config — per-site login providers.
   router.get(
     "/sites/:siteId/auth-config",
