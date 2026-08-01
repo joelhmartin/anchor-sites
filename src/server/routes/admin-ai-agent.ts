@@ -333,21 +333,22 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
         const { conversation, created } = await getOrCreateConversation(pool, siteId, resolvedTitle);
 
         if (message) {
-          if (run === "job") {
-            // Item 1 (Codex P1 — serialize turns per conversation), reordered
-            // per round 2 item 2: `runJobTurn` claims BEFORE appending the
-            // seed message, then releases before enqueueing (see its doc
-            // comment above for why the release has to happen before, not
-            // after, the `send()` call). The job handler
-            // (src/server/jobs/agent-turn.ts) claims 'running' again for
-            // itself at entry and HOLDS it for the turn's full (potentially
-            // long) execution — that's what actually closes the race this
-            // fix targets (a later inline message POST arriving while the
-            // job build is still tailing).
-            await runJobTurn(res, { conversationId: conversation.id, siteId, message }, { conversation });
-            return;
-          }
-          await appendMessage(pool, conversation.id, "user", [{ type: "text", text: message }]);
+          // D1115 — a persisted user message must always have a turn that
+          // will answer it. Task A2 removed the inline turn path (no HTTP
+          // request may run an agent loop, Cloud Run's 60s cap), so EVERY
+          // seed message enqueues an AGENT_TURN job via `runJobTurn`. The
+          // old `run:"inline"`/omitted branch appended the user message with
+          // NO enqueue, stranding a dead-letter message no job would ever
+          // answer — a conversation seeded from it just sat silent forever.
+          // `run` is now vestigial for the seed-message case (any value ⇒
+          // job); kept in the schema only for request-shape compatibility.
+          //
+          // `runJobTurn` claims the turn lock BEFORE appending, then releases
+          // before enqueueing (see its doc comment); the job handler re-claims
+          // 'running' at entry and holds it for the turn's full execution.
+          void run;
+          await runJobTurn(res, { conversationId: conversation.id, siteId, message }, { conversation });
+          return;
         }
 
         res.status(created ? 201 : 200).json({ conversation });

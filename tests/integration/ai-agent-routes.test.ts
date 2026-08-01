@@ -324,10 +324,14 @@ d("agent HTTP API (integration, Task 10)", () => {
   it("derives the title from the first 60 chars of the message when no title is given", async () => {
     const site = await db.seedSite("agent-routes-title");
     const longMessage = "x".repeat(100);
+    enqueueSpy.mockClear();
     const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({
       message: longMessage,
     });
-    expect(created.status).toBe(201);
+    // D1115 — a seed message now ALWAYS enqueues a turn (no more dead-letter);
+    // create-with-message returns runJobTurn's 202, still carrying the
+    // conversation so the title is asserted from the same body.
+    expect(created.status).toBe(202);
     expect(created.body.conversation.title).toBe(longMessage.slice(0, 60));
 
     const detail = await auth(
@@ -335,6 +339,23 @@ d("agent HTTP API (integration, Task 10)", () => {
     );
     expect(detail.body.messages).toHaveLength(1);
     expect(detail.body.messages[0].role).toBe("user");
+  });
+
+  it("D1115 — a seed message with run omitted still enqueues an AGENT_TURN (never a dead-letter user message)", async () => {
+    const site = await db.seedSite("agent-routes-seed-noruns");
+    enqueueSpy.mockClear();
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({
+      message: "build me a homepage",
+      // run deliberately omitted — the old code appended the message with no job
+    });
+    expect(created.status).toBe(202);
+    expect(created.body.queued).toBe(true);
+    expect(created.body.user_message_id).toBeTruthy();
+    expect(enqueueSpy).toHaveBeenCalledWith({
+      conversationId: created.body.conversation.id,
+      siteId: site.id,
+      continuation: 0,
+    });
   });
 
   it("404s for a conversation fetched under the wrong siteId (cross-tenant guard)", async () => {
