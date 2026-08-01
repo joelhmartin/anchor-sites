@@ -5,21 +5,21 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 // Stub BlockBodyEditor (Task B5 — Puck removed): real TipTap/ProseMirror is
 // fragile in jsdom; visual QA is operator-run. Surfaces the `value` it was
-// given and fires `onPublish` with it, plus the `slug` it was passed.
+// given and fires `onSave` with it, plus the `slug` it was passed.
 vi.mock("../components/BlockBodyEditor.js", () => ({
   BlockBodyEditor: ({
     slug,
     value,
-    onPublish,
+    onSave,
   }: {
     slug: string;
     value: unknown;
-    onPublish: (v: unknown) => void;
+    onSave: (v: unknown) => void;
   }) => (
     <div>
       <pre data-testid="body-value">{JSON.stringify(value)}</pre>
       <span data-testid="body-slug">{slug}</span>
-      <button type="button" onClick={() => onPublish(value)}>
+      <button type="button" onClick={() => onSave(value)}>
         Stub publish
       </button>
     </div>

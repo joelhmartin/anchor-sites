@@ -42,13 +42,13 @@ const RICH_TEXT_BLOCK: Block = {
 };
 const HERO_BLOCK: Block = { id: "h1", type: "hero", props: { title: "Hi" } };
 
-function renderEditor(value: Block[], onPublish = vi.fn()) {
+function renderEditor(value: Block[], onSave = vi.fn(), saveLabel?: string) {
   render(
     <MemoryRouter>
-      <BlockBodyEditor slug="acme" value={value} onPublish={onPublish} />
+      <BlockBodyEditor slug="acme" value={value} onSave={onSave} saveLabel={saveLabel} />
     </MemoryRouter>,
   );
-  return onPublish;
+  return onSave;
 }
 
 describe("BlockBodyEditor (Task B5 — Puck removed)", () => {
@@ -65,27 +65,27 @@ describe("BlockBodyEditor (Task B5 — Puck removed)", () => {
 
   it("round-trips a single rich-text block: publish emits [{id, type: rich-text, props}]", () => {
     nextHtml = "<p>edited</p>";
-    const onPublish = renderEditor([RICH_TEXT_BLOCK]);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
-    expect(onPublish).toHaveBeenCalledWith([
+    const onSave = renderEditor([RICH_TEXT_BLOCK]);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith([
       { id: "b1", type: "rich-text", props: { html: "<p>edited</p>", max_width: "medium" } },
     ]);
   });
 
   it("sanitizes the outgoing html (strips a disallowed tag, keeps an https link)", () => {
     nextHtml = '<p>ok</p><script>alert(1)</script><p><a href="https://example.com">go</a></p>';
-    const onPublish = renderEditor([RICH_TEXT_BLOCK]);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
-    const [[blocks]] = onPublish.mock.calls;
+    const onSave = renderEditor([RICH_TEXT_BLOCK]);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const [[blocks]] = onSave.mock.calls;
     expect(blocks[0].props.html).toBe('<p>ok</p><p><a href="https://example.com">go</a></p>');
   });
 
   it("starts a fresh empty body as an editable rich-text block with a default", () => {
-    const onPublish = renderEditor([]);
+    const onSave = renderEditor([]);
     expect(capturedOpts?.content).toBe("<p>Edit this text.</p>");
     nextHtml = "<p>first content</p>";
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
-    const [[blocks]] = onPublish.mock.calls;
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const [[blocks]] = onSave.mock.calls;
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe("rich-text");
     expect(blocks[0].props).toEqual({ html: "<p>first content</p>", max_width: "medium" });
@@ -93,21 +93,27 @@ describe("BlockBodyEditor (Task B5 — Puck removed)", () => {
     expect(blocks[0].id.length).toBeGreaterThan(0);
   });
 
+  it("uses the honest save label the parent passes (D419)", () => {
+    renderEditor([RICH_TEXT_BLOCK], vi.fn(), "Publish");
+    expect(screen.getByRole("button", { name: "Publish" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
   it("shows a read-only AI-managed panel for a single non-rich-text block and never mounts TipTap", () => {
-    const onPublish = renderEditor([HERO_BLOCK]);
+    const onSave = renderEditor([HERO_BLOCK]);
     expect(screen.getByText(/AI-managed/)).toBeTruthy();
     const link = screen.getByRole("link", { name: /workspace/i });
     expect(link.getAttribute("href")).toBe("/sites/acme");
     expect(capturedOpts).toBeNull(); // useEditor never called
-    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
-    expect(onPublish).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("shows the read-only panel for a mixed multi-block body (rich-text among others) and doesn't destroy it", () => {
-    const onPublish = renderEditor([HERO_BLOCK, RICH_TEXT_BLOCK]);
+    const onSave = renderEditor([HERO_BLOCK, RICH_TEXT_BLOCK]);
     expect(screen.getByText(/AI-managed/)).toBeTruthy();
     expect(capturedOpts).toBeNull();
-    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
-    expect(onPublish).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
   });
 });

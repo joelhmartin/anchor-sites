@@ -193,11 +193,18 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
       <SeoPanel siteId={siteId} value={seo} onChange={setSeo} />
 
       <p className="text-xs text-zinc-500">
-        Edit the event description below, then use the editor’s <strong>Publish</strong> button to
-        save (details, SEO, and description are saved together).
+        Edit the event description below, then use the{" "}
+        <strong>{status === "published" ? "Publish" : "Save draft"}</strong> button to save (details,
+        SEO, and description are saved together). The <strong>Status</strong> field above decides
+        whether this goes live.
       </p>
 
-      <BlockBodyEditor slug={slug} value={event.description ?? []} onPublish={save} />
+      <BlockBodyEditor
+        slug={slug}
+        value={event.description ?? []}
+        onSave={save}
+        saveLabel={status === "published" ? "Publish" : "Save draft"}
+      />
     </div>
   );
 }

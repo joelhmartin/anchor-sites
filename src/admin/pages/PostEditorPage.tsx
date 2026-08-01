@@ -158,11 +158,17 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
       <SeoPanel siteId={siteId} value={seo} onChange={setSeo} />
 
       <p className="text-xs text-zinc-500">
-        Edit the post body below, then use the editor’s <strong>Publish</strong> button to save
-        (title, excerpt, status, SEO, and body are saved together).
+        Edit the post body below, then use the <strong>{status === "published" ? "Publish" : "Save draft"}</strong>{" "}
+        button to save (title, excerpt, status, SEO, and body are saved together). The{" "}
+        <strong>Status</strong> field above decides whether this goes live.
       </p>
 
-      <BlockBodyEditor slug={slug} value={post.body ?? []} onPublish={save} />
+      <BlockBodyEditor
+        slug={slug}
+        value={post.body ?? []}
+        onSave={save}
+        saveLabel={status === "published" ? "Publish" : "Save draft"}
+      />
     </div>
   );
 }

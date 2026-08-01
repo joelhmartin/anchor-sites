@@ -38,17 +38,24 @@ function isSingleRichText(value: Block[]): value is [Block] {
 export function BlockBodyEditor({
   slug,
   value,
-  onPublish,
+  onSave,
+  // D419 — the button used to always read "Publish" but only ever performed a
+  // plain save of whatever the parent's status dropdown said (selecting
+  // "draft" then clicking "Publish" saved a draft). The parent now passes an
+  // honest label driven by that status, so "Publish" appears only when the
+  // save actually publishes.
+  saveLabel = "Save",
 }: {
   /** Site slug — used to link out to the workspace in the AI-managed state. */
   slug: string;
   value: Block[];
-  onPublish: (blocks: Block[]) => void;
+  onSave: (blocks: Block[]) => void;
+  saveLabel?: string;
 }) {
   if (value.length > 0 && !isSingleRichText(value)) {
     return <AiManagedPanel slug={slug} />;
   }
-  return <RichTextBody value={value} onPublish={onPublish} />;
+  return <RichTextBody value={value} onSave={onSave} saveLabel={saveLabel} />;
 }
 
 function AiManagedPanel({ slug }: { slug: string }) {
@@ -69,10 +76,12 @@ const HTTP_URL = /^https?:/i;
 
 function RichTextBody({
   value,
-  onPublish,
+  onSave,
+  saveLabel,
 }: {
   value: Block[];
-  onPublish: (blocks: Block[]) => void;
+  onSave: (blocks: Block[]) => void;
+  saveLabel: string;
 }) {
   const existing = isSingleRichText(value) ? value[0] : null;
   const [blockId] = useState(() => existing?.id ?? nanoid());
@@ -103,10 +112,10 @@ function RichTextBody({
     editorProps: { attributes: { class: "ac-tiptap__content" } },
   });
 
-  function publish() {
+  function save() {
     if (!editor) return;
     const html = sanitizeHtml(editor.getHTML());
-    onPublish([{ id: blockId, type: "rich-text", props: { html, max_width: maxWidth } }]);
+    onSave([{ id: blockId, type: "rich-text", props: { html, max_width: maxWidth } }]);
   }
 
   function setLink() {
@@ -133,10 +142,10 @@ function RichTextBody({
       <div className="flex justify-end border-t border-zinc-200 p-2">
         <button
           type="button"
-          onClick={publish}
+          onClick={save}
           className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          Publish
+          {saveLabel}
         </button>
       </div>
     </div>
