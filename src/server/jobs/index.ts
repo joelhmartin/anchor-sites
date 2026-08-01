@@ -37,6 +37,12 @@ import {
   sweepAbandonedUploads,
   sweepOrphanAssets,
 } from "./media-gc.js";
+import {
+  PAGE_REVISION_SWEEP,
+  AI_MESSAGE_SWEEP,
+  sweepPageRevisions,
+  sweepAiMessages,
+} from "./retention.js";
 
 export const MEDIA_PROCESS_UPLOAD = "media.process-upload";
 export const TEMPLATE_MATERIALIZE = "template.materialize";
@@ -48,6 +54,7 @@ export const AUTH_PRUNE = "auth.prune-expired";
 export { CRM_SYNC_JOB };
 export { DOMAIN_VERIFY_SWEEP };
 export { MEDIA_PENDING_SWEEP, MEDIA_ORPHAN_SWEEP };
+export { PAGE_REVISION_SWEEP, AI_MESSAGE_SWEEP };
 
 /**
  * D606/D114/D1009 (W2-JOBS) — the canonical list of every queue this worker
@@ -71,6 +78,8 @@ export const ALL_QUEUE_NAMES = [
   DOMAIN_VERIFY_SWEEP,
   MEDIA_PENDING_SWEEP,
   MEDIA_ORPHAN_SWEEP,
+  PAGE_REVISION_SWEEP,
+  AI_MESSAGE_SWEEP,
 ] as const;
 
 /**
@@ -552,6 +561,32 @@ export async function registerHandlers(boss: PgBoss): Promise<void> {
     }
   });
   await boss.schedule(MEDIA_ORPHAN_SWEEP, "10 5 * * *", undefined, { tz: "UTC" });
+
+  // D506 (W2-TERM): page_revisions retention — keep newest 50/page, drop
+  // beyond-50 rows older than 90 days. Weekly (Sunday 05:20 UTC) — history
+  // grows slowly and the window-function delete is the heaviest sweep here.
+  await boss.createQueue(PAGE_REVISION_SWEEP);
+  await boss.work(PAGE_REVISION_SWEEP, async () => {
+    const r = await sweepPageRevisions(defaultPool);
+    if (r.deleted > 0) {
+      // eslint-disable-next-line no-console
+      console.log("[page-revision-sweep]", r);
+    }
+  });
+  await boss.schedule(PAGE_REVISION_SWEEP, "20 5 * * 0", undefined, { tz: "UTC" });
+
+  // D518 (W2-TERM): ai_messages retention — purge transcript content of
+  // conversations archived + idle for 90 days (keeps the conversation row).
+  // Daily at 05:30 UTC.
+  await boss.createQueue(AI_MESSAGE_SWEEP);
+  await boss.work(AI_MESSAGE_SWEEP, async () => {
+    const r = await sweepAiMessages(defaultPool);
+    if (r.deleted > 0) {
+      // eslint-disable-next-line no-console
+      console.log("[ai-message-sweep]", r);
+    }
+  });
+  await boss.schedule(AI_MESSAGE_SWEEP, "30 5 * * *", undefined, { tz: "UTC" });
 }
 
 /**
