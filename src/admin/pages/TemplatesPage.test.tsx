@@ -69,6 +69,35 @@ describe("TemplatesPage (D429)", () => {
     });
   });
 
+  it("D109/D721: Show archived lists archived templates and restores one via POST", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/templates/t1/restore" && method === "POST") {
+        return json({ template: { id: "t1", status: "active" } });
+      }
+      if (url === "/api/templates?status=archived") {
+        return json({ templates: [TEMPLATES.templates[0]] });
+      }
+      return json({ templates: [TEMPLATES.templates[1]] }); // active list
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Promo Page")).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText("Show archived"));
+    await waitFor(() => expect(screen.getByText("Dental Basic")).toBeTruthy());
+
+    const row = screen.getByText("Dental Basic").closest("tr")!;
+    fireEvent.click(row.querySelector("button")!);
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/templates/t1/restore" && (c[1] as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+    });
+  });
+
   it("shows an empty state when there are no templates", async () => {
     global.fetch = vi.fn(async () => json({ templates: [] })) as unknown as typeof fetch;
     renderPage();

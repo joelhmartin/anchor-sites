@@ -215,3 +215,22 @@ export async function archiveTemplate(
   );
   return res.rowCount && res.rowCount > 0 ? res.rows[0] : null;
 }
+
+/**
+ * D109 (W2-TERM) — the un-delete DELETE (archive) always lacked: revive a
+ * template to `status:'active'` so an archived template can rejoin the
+ * gallery. Idempotent; returns the updated row, or `null` if no such template.
+ * The theme law: a soft delete needs an un-delete; `archived` is not a dead
+ * end.
+ */
+export async function restoreTemplate(
+  id: string,
+  opts: { pool?: Pool } = {},
+): Promise<TemplateRow | null> {
+  const pool = opts.pool ?? defaultPool;
+  const res = await pool.query<TemplateRow>(
+    `UPDATE templates SET status = 'active' WHERE id = $1 RETURNING ${TEMPLATE_COLS}`,
+    [id],
+  );
+  return res.rowCount && res.rowCount > 0 ? res.rows[0] : null;
+}

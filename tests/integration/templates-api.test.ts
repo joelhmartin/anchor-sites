@@ -250,4 +250,27 @@ d("save-as-template API (integration, P7-T7.3)", () => {
     );
     expect(missing.status).toBe(404);
   });
+
+  it("D109: POST /api/templates/:id/restore revives an archived template to active", async () => {
+    const created = await auth(
+      request(app).post(`/api/sites/${muldoonSiteId}/save-as-template`),
+    ).send({ name: "Restore Target", slug: "apitest-restore" });
+    const id = created.body.template.id;
+
+    await auth(request(app).delete(`/api/templates/${id}`));
+    const archived = await auth(request(app).get(`/api/templates?status=active`));
+    expect(archived.body.templates.find((t: { id: string }) => t.id === id)).toBeUndefined();
+
+    const restore = await auth(request(app).post(`/api/templates/${id}/restore`));
+    expect(restore.status).toBe(200);
+    expect(restore.body.template.status).toBe("active");
+
+    const active = await auth(request(app).get(`/api/templates?status=active`));
+    expect(active.body.templates.find((t: { id: string }) => t.id === id)).toBeDefined();
+
+    const missing = await auth(
+      request(app).post(`/api/templates/00000000-0000-0000-0000-000000000000/restore`),
+    );
+    expect(missing.status).toBe(404);
+  });
 });

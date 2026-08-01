@@ -9,6 +9,7 @@ import {
   listTemplates,
   getTemplate,
   archiveTemplate,
+  restoreTemplate,
   TemplateValidationError,
   TemplateSlugConflictError,
 } from "../templates/repo.js";
@@ -738,6 +739,29 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
           return;
         }
         res.json({ template: archived });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // POST /api/templates/:id/restore — D109/D721: the un-delete DELETE never
+  // had. Revives an archived template to status:'active' so it rejoins the
+  // gallery. Idempotent (restoring an already-active template is a no-op that
+  // still 200s). 404 if no such template.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/templates/:id/restore",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const restored = await restoreTemplate(req.params.id, { pool });
+        if (!restored) {
+          res.status(404).json({ error: "template not found" });
+          return;
+        }
+        res.json({ template: restored });
       } catch (err) {
         next(err);
       }

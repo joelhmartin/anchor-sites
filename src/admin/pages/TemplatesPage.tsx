@@ -18,14 +18,18 @@ type TemplateRow = {
 };
 
 /**
- * Templates management surface (D429 — the forward path the save-as-template
- * dialog now links to; coordinates with W3 D721). Minimal by design: lists the
- * active templates and lets an operator archive one (`DELETE /api/templates/:id`
- * is a soft archive). Rename isn't offered — the API has no PATCH for
- * templates yet; that lands with D721.
+ * Templates management surface (D429 curation home; D721). Lists active
+ * templates and lets an operator archive one (`DELETE /api/templates/:id` is a
+ * soft archive) — and, via the "Show archived" toggle, RESTORE an archived
+ * template (`POST /api/templates/:id/restore`, D109) so a soft delete is
+ * never a dead end. Rename isn't offered — the API has no PATCH for template
+ * metadata yet.
  */
 export function TemplatesPage() {
-  const { data, loading, error, reload } = useApi<{ templates: TemplateRow[] }>("/api/templates");
+  const [showArchived, setShowArchived] = useState(false);
+  const { data, loading, error, reload } = useApi<{ templates: TemplateRow[] }>(
+    showArchived ? "/api/templates?status=archived" : "/api/templates",
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const templates = data?.templates ?? [];
@@ -44,6 +48,20 @@ export function TemplatesPage() {
     }
   }
 
+  // D109/D721 — un-archive: revive an archived template back into the gallery.
+  async function restore(t: TemplateRow) {
+    setBusyId(t.id);
+    setActionError(null);
+    try {
+      await apiFetch(`/api/templates/${t.id}/restore`, { method: "POST" });
+      reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn’t restore the template.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -52,9 +70,20 @@ export function TemplatesPage() {
           ← Sites
         </Link>
       </div>
-      <p className="text-sm text-zinc-500">
-        Reusable site and page templates. Save a site as a template from its manage header.
-      </p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-zinc-500">
+          Reusable site and page templates. Save a site as a template from its manage header.
+        </p>
+        <label className="flex items-center gap-2 text-sm text-zinc-600">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            className="h-4 w-4"
+          />
+          Show archived
+        </label>
+      </div>
 
       {loading && (
         <div className="flex items-center gap-2 text-sm text-zinc-500">
@@ -71,7 +100,9 @@ export function TemplatesPage() {
       {!loading && !error && templates.length === 0 && (
         <Card>
           <CardContent className="pt-5 text-sm text-zinc-600">
-            No templates yet. Save a site as a template to reuse it.
+            {showArchived
+              ? "No archived templates."
+              : "No templates yet. Save a site as a template to reuse it."}
           </CardContent>
         </Card>
       )}
@@ -102,14 +133,25 @@ export function TemplatesPage() {
                     </TD>
                     <TD>{t.pages_count}</TD>
                     <TD>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busyId === t.id}
-                        onClick={() => archive(t)}
-                      >
-                        {busyId === t.id ? <Spinner /> : "Archive"}
-                      </Button>
+                      {showArchived ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busyId === t.id}
+                          onClick={() => restore(t)}
+                        >
+                          {busyId === t.id ? <Spinner /> : "Restore"}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busyId === t.id}
+                          onClick={() => archive(t)}
+                        >
+                          {busyId === t.id ? <Spinner /> : "Archive"}
+                        </Button>
+                      )}
                     </TD>
                   </TR>
                 ))}
