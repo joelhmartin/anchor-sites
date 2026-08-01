@@ -312,6 +312,85 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // DELETE /api/sites/:siteId/pages/:pageId — D105/D405/D505: the operator's
+  // page terminal state. Pages could be created three ways (blank, from-
+  // template, agent) but ended zero ways over HTTP for a human — only the AI
+  // `delete_page` tool could, so the agent outranked the operator.
+  //
+  // Reuses the exact tombstone-before-delete pattern W2-SEC established for
+  // that tool (src/server/ai/agent/tools/pages.ts): page_revisions CASCADEs
+  // away with the page, so the delete would otherwise destroy the very history
+  // that could undo it. The full row (content + publish state) is copied into
+  // `deleted_pages` in the same transaction with deleted_by='manual', so an
+  // accidental delete stays recoverable. The FOR UPDATE lock over the site's
+  // pages serializes against a concurrent publish (W1.3) and enforces the
+  // "can't delete the only page" guard TOCTOU-free. Deleting a PUBLISHED page
+  // removes it from the live site, so — same care as publish — a git.export
+  // is re-fired afterward.
+  // -------------------------------------------------------------------------
+  router.delete(
+    "/sites/:siteId/pages/:pageId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, pageId } = req.params;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const siteRows = await client.query<{ id: string }>(
+          `SELECT id FROM pages WHERE site_id = $1 FOR UPDATE`,
+          [siteId],
+        );
+        const target = siteRows.rows.find((r) => r.id === pageId);
+        if (!target) {
+          await client.query("ROLLBACK");
+          res.status(404).json({ error: "page not found for this site" });
+          return;
+        }
+        if ((siteRows.rowCount ?? 0) <= 1) {
+          await client.query("ROLLBACK");
+          res.status(409).json({ error: "cannot delete the only page on a site" });
+          return;
+        }
+
+        const tombRes = await client.query<{ id: string; status: string }>(
+          `INSERT INTO deleted_pages
+             (site_id, page_id, slug, title, blocks, seo, brand_tokens_override,
+              status, published_snapshot, sort_order, published_at, deleted_by)
+           SELECT site_id, id, slug, title, blocks, seo, brand_tokens_override,
+                  status, published_snapshot, sort_order, published_at, 'manual'
+             FROM pages WHERE id = $1 AND site_id = $2
+           RETURNING id, status`,
+          [pageId, siteId],
+        );
+        const wasPublished = tombRes.rows[0].status === "published";
+
+        await client.query(`DELETE FROM pages WHERE id = $1 AND site_id = $2`, [pageId, siteId]);
+        await client.query("COMMIT");
+
+        // Removing a published page changes the live site — re-fire the git
+        // export, same best-effort chain as the publish save above.
+        if (wasPublished && resolveGitMode() === "api") {
+          try {
+            const gitState = await getGitState(pool, siteId);
+            if (gitState?.enabled) {
+              enqueueGitExport({ siteId, trigger: "publish" }).catch(() => undefined);
+            }
+          } catch {
+            // best-effort — never affects the delete response
+          }
+        }
+
+        res.status(200).json({ deleted: { page_id: pageId, tombstone_id: tombRes.rows[0].id } });
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        next(err);
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // GET /api/sites/:siteId/pages/:pageId — single page with blocks + seo.
   // The visual editor (P5-T5.5) loads a page's current blocks from here; the
   // pages-list endpoint (admin-sites) deliberately omits blocks for size.

@@ -67,6 +67,37 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
 
+  // D105/D405/D505 — per-page delete (confirm-gated). Keyed by id so each row
+  // spinners independently. A recoverable tombstone is kept server-side.
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function deletePage(page: PageRow) {
+    if (
+      !window.confirm(
+        `Delete the page “${page.title}”?` +
+          (page.status === "published" ? " It will be removed from the live site." : "") +
+          " A restorable snapshot is kept, but there’s no un-delete button yet.",
+      )
+    ) {
+      return;
+    }
+    setDeleteBusy(page.id);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/pages/${page.id}`, { method: "DELETE" });
+      reload();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setDeleteError(err.message);
+      } else {
+        setDeleteError(err instanceof Error ? err.message : "Couldn’t delete the page.");
+      }
+    } finally {
+      setDeleteBusy(null);
+    }
+  }
+
   async function setPageStatus(page: PageRow, next: "draft" | "published") {
     setStatusBusy(page.id);
     setStatusError(null);
@@ -293,6 +324,7 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
       )}
 
       {statusError && <p className="text-sm text-red-600">{statusError}</p>}
+      {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
 
       {!loading && !error && pages.length === 0 && (
         <Card>
@@ -349,6 +381,17 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
                           onClick={() => navigate(`/sites/${slug}?page=${p.id}`)}
                         >
                           Edit
+                        </Button>
+                        {/* D105/D405/D505 — confirm-gated delete; disabled
+                            when it's the only page (server 409s anyway). */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50"
+                          disabled={deleteBusy === p.id || pages.length <= 1}
+                          onClick={() => deletePage(p)}
+                        >
+                          {deleteBusy === p.id ? <Spinner /> : "Delete"}
                         </Button>
                       </div>
                     </TD>

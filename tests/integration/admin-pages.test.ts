@@ -1230,3 +1230,91 @@ d("admin pages — git.export publish trigger (T4)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// DELETE /api/sites/:siteId/pages/:pageId (D105/D405/D505) — the operator's
+// page terminal state, reusing W2-SEC's deleted_pages tombstone pattern.
+// ---------------------------------------------------------------------------
+d("admin pages — DELETE page (D105/D405/D505)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let siteId: string;
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ($1, 'Del Test') RETURNING id`,
+      [`deltest-${Date.now()}`],
+    );
+    siteId = r.rows[0].id;
+    app = buildApp(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [siteId]).catch(() => undefined);
+    await pool.end().catch(() => undefined);
+  });
+
+  async function addPage(slug: string, status = "draft") {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+       VALUES ($1, $2, $2, '[]'::jsonb, '{}'::jsonb, $3) RETURNING id`,
+      [siteId, slug, status],
+    );
+    return r.rows[0].id;
+  }
+
+  it("401 without token", async () => {
+    const r = await request(app).delete(`/api/sites/${siteId}/pages/00000000-0000-0000-0000-000000000000`);
+    expect(r.status).toBe(401);
+  });
+
+  it("404 for a page not on this site", async () => {
+    await addPage(`keep-${Date.now()}`);
+    const r = await request(app)
+      .delete(`/api/sites/${siteId}/pages/00000000-0000-0000-0000-000000000000`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+
+  it("refuses to delete the site's only remaining page (409)", async () => {
+    // Fresh single-page site.
+    const s = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ($1, 'Solo') RETURNING id`,
+      [`solo-${Date.now()}`],
+    );
+    const only = await pool.query<{ id: string }>(
+      `INSERT INTO pages (site_id, slug, title, blocks, seo, status)
+       VALUES ($1, 'home', 'Home', '[]'::jsonb, '{}'::jsonb, 'draft') RETURNING id`,
+      [s.rows[0].id],
+    );
+    const r = await request(app)
+      .delete(`/api/sites/${s.rows[0].id}/pages/${only.rows[0].id}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(409);
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [s.rows[0].id]).catch(() => undefined);
+  });
+
+  it("deletes a page and writes a recoverable tombstone (deleted_by='manual')", async () => {
+    await addPage(`anchor-${Date.now()}`); // keep the site multi-page
+    const victim = await addPage(`victim-${Date.now()}`, "published");
+    const r = await request(app)
+      .delete(`/api/sites/${siteId}/pages/${victim}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(200);
+    expect(r.body.deleted.page_id).toBe(victim);
+
+    const gone = await pool.query(`SELECT 1 FROM pages WHERE id = $1`, [victim]);
+    expect(gone.rowCount).toBe(0);
+
+    const tomb = await pool.query<{ deleted_by: string; status: string }>(
+      `SELECT deleted_by, status FROM deleted_pages WHERE page_id = $1`,
+      [victim],
+    );
+    expect(tomb.rowCount).toBe(1);
+    expect(tomb.rows[0].deleted_by).toBe("manual");
+    expect(tomb.rows[0].status).toBe("published");
+  });
+});

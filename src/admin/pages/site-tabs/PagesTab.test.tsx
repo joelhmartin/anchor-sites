@@ -182,6 +182,44 @@ describe("PagesTab (P4-T4.13)", () => {
     await waitFor(() => expect(screen.getByText(/Agent is running/)).toBeTruthy());
   });
 
+  it("deletes a page (confirm-gated) via DELETE and refreshes (D105/D405/D505)", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/pages/p2" && method === "DELETE") {
+        return json({ deleted: { page_id: "p2", tombstone_id: "t1" } });
+      }
+      getCount += 1;
+      // Two pages before delete, one after.
+      return json({ pages: getCount === 1 ? [PAGE_A, PAGE_B] : [PAGE_A] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("About us")).toBeTruthy());
+    // Two Delete buttons; the second row (About us) is index 1.
+    const deleteButtons = screen.getAllByRole("button", { name: "Delete" });
+    fireEvent.click(deleteButtons[1]);
+    expect(confirmSpy).toHaveBeenCalled();
+
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/pages/p2" && (c[1] as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(del).toBeTruthy();
+    });
+    await waitFor(() => expect(screen.queryByText("About us")).toBeNull());
+  });
+
+  it("Delete is disabled when only one page remains (D505 last-page guard)", async () => {
+    global.fetch = vi.fn(async () => json({ pages: [PAGE_A] })) as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+    expect((screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("opening one create form closes the other (D432)", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).startsWith("/api/templates")) {

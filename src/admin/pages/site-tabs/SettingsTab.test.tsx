@@ -110,7 +110,7 @@ describe("SettingsTab (P4-T4.15)", () => {
   it("D500/D409: Danger zone archives the site (confirm-gated) and calls onSiteChanged", async () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onSiteChanged = vi.fn();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);
       return json({ site: { ...SITE, status: "archived" } });
     });
@@ -120,7 +120,9 @@ describe("SettingsTab (P4-T4.15)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Archive site" }));
     expect(confirmSpy).toHaveBeenCalled();
     await waitFor(() => expect(onSiteChanged).toHaveBeenCalled());
-    const patchCall = fetchMock.mock.calls.find((c) => String(c[0]) === "/api/sites/s1")!;
+    const patchCall = fetchMock.mock.calls.find(
+      (c) => String(c[0]) === "/api/sites/s1" && (c[1] as RequestInit | undefined)?.method === "PATCH",
+    )!;
     expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({ status: "archived" });
   });
 
