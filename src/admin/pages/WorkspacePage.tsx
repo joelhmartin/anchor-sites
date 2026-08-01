@@ -396,7 +396,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
 
   const {
     items, draft, setDraft, sending, busy, reconnecting, conversation, error, usageText, usageTitle,
-    send, stop, newConversation,
+    send, resume, stop, newConversation,
   } = useAgentConversation({
     siteId,
     active: true,
@@ -536,7 +536,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
             sending={sending}
             busy={busy}
             resumeVisible={conversation?.status === "error" || conversation?.status === "stopped"}
-            onResume={() => send("continue")}
+            onResume={() => void resume()}
             usageText={usageText}
             usageTitle={usageTitle}
           />

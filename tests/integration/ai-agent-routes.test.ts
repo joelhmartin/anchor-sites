@@ -437,6 +437,46 @@ d("agent HTTP API (integration, Task 10)", () => {
     ).toBe(true);
   });
 
+  it("D318 — resume enqueues a continuation for an errored conversation WITHOUT persisting a 'continue' user message", async () => {
+    const site = await db.seedSite("agent-routes-resume");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+    // Seed a real user message + drive the conversation into 'error'.
+    await appendMessage(db.getPool(), conversationId, "user", [{ type: "text", text: "build me a homepage" }]);
+    await setConversationStatus(db.getPool(), conversationId, "error");
+
+    enqueueSpy.mockClear();
+    const res = await auth(
+      request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/resume`),
+    ).send({});
+    expect(res.status).toBe(202);
+    expect(res.body.queued).toBe(true);
+    expect(res.body.job_id).toBe("job-id-1");
+    expect(enqueueSpy).toHaveBeenCalledWith({ conversationId, siteId: site.id, continuation: 0 });
+
+    // No new "continue" user message was written — history is unchanged bar
+    // the one real user row seeded above.
+    const detail = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    );
+    const userMessages = detail.body.messages.filter((m: { role: string }) => m.role === "user");
+    expect(userMessages).toHaveLength(1);
+    expect(JSON.stringify(userMessages[0].content)).not.toContain("continue");
+  });
+
+  it("D318 — resume 409s a conversation whose turn is already running", async () => {
+    const site = await db.seedSite("agent-routes-resume-running");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+    await setConversationStatus(db.getPool(), conversationId, "running");
+
+    const res = await auth(
+      request(app).post(`/api/sites/${site.id}/agent/conversations/${conversationId}/resume`),
+    ).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("turn already running");
+  });
+
   it("Fix round 1 (Finding 1 — reviewer) — the 202 response includes user_message_id, the real persisted id of the just-appended user row, so the client can tail from a non-null cursor instead of replacing its whole transcript", async () => {
     const site = await db.seedSite("agent-routes-user-message-id");
     const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});

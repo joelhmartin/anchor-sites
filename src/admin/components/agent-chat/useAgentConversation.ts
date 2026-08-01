@@ -64,6 +64,10 @@ export type UseAgentConversationResult = {
    * that "today" is a UTC day, not the operator's local one. */
   usageTitle: string;
   send: (overrideText?: string) => Promise<void>;
+  /** D318 — resume an errored/stopped build. Unlike the old `send("continue")`
+   * this posts a dedicated resume (no synthetic user message / "continue"
+   * bubble); the transcript gets a labeled system line instead. */
+  resume: () => Promise<void>;
   stop: () => void;
   /** D1104/D108 — archive the current conversation and reset to a fresh one
    * ("New conversation"). The next `send()` get-or-creates a new thread. */
@@ -587,6 +591,30 @@ export function useAgentConversation({
   }
 
   /**
+   * D318 — resume an errored/stopped build without the "continue" user
+   * bubble. The server's resume endpoint re-claims the turn and enqueues a
+   * continuation that resumes from persisted history (no message appended),
+   * so nothing protocol-shaped masquerades as a chat message. The transcript
+   * gets an honest, labeled system line instead.
+   */
+  async function resume() {
+    const cid = conversationId;
+    if (!cid || sending || conversation?.status === "running") return;
+    setSending(true);
+    setError(null);
+    setItems((prev) => [...prev, { id: nextId(), kind: "system", text: "Resuming the build…" }]);
+    usageBeforeRef.current = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
+    try {
+      await apiFetch(`/api/sites/${siteId}/agent/conversations/${cid}/resume`, { method: "POST" });
+      pendingUsageRefreshRef.current = true;
+      startTail(cid, lastMessageIdRef.current);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't resume the build.");
+      setSending(false);
+    }
+  }
+
+  /**
    * D1104/D108 — retire the current conversation and start fresh. Archiving
    * frees the one-per-site slot (D302's unique index), so the next `send()`
    * get-or-creates a brand-new thread instead of forever resuming the same
@@ -648,6 +676,7 @@ export function useAgentConversation({
     usageText,
     usageTitle,
     send,
+    resume,
     stop,
     newConversation,
   };

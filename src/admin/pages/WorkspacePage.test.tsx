@@ -94,6 +94,10 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
     if (url === "/api/sites/s1/agent/conversations/c1/messages" && method === "POST") {
       return json({ queued: true, job_id: "job-1", conversation_id: "c1", user_message_id: "m-user-1" }, 202);
     }
+    // D318 — dedicated resume endpoint (no synthetic "continue" message).
+    if (/\/agent\/conversations\/[^/]+\/resume$/.test(url) && method === "POST") {
+      return json({ queued: true, job_id: "job-resume" }, 202);
+    }
     if (overrides.conversationDetail && url.startsWith("/api/sites/s1/agent/conversations/") && method === "GET") {
       return json(overrides.conversationDetail);
     }
@@ -688,6 +692,38 @@ describe("WorkspacePage (Task B2)", () => {
       expect(screen.getByText("Anthropic credit balance too low — top up at console.anthropic.com")).toBeTruthy(),
     );
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  });
+
+  // D318 — Resume posts the dedicated /resume endpoint (no "continue" user
+  // bubble) and shows an honest, labeled system line instead.
+  it("D318: Resume hits /resume, not a synthetic 'continue' user message", async () => {
+    const fetchMock = mockWorkspaceFetch({
+      conversations: [{ id: "c1", site_id: "s1", title: "Old", status: "error", token_usage: {} }],
+      conversationDetail: {
+        conversation: { id: "c1", site_id: "s1", title: "Old", status: "error", token_usage: {} },
+        messages: [
+          { id: "m1", conversation_id: "c1", role: "user", content: [{ type: "text", text: "Build me a homepage" }], created_at: "t1" },
+        ],
+      },
+    });
+    renderAt("/sites/acme");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input) === "/api/sites/s1/agent/conversations/c1/resume" && init?.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    // No "continue" was posted as a message, and no "continue" user bubble rendered.
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).endsWith("/messages")),
+    ).toBe(false);
+    expect(screen.queryByText("continue")).toBeNull();
+    expect(screen.getByText("Resuming the build…")).toBeTruthy();
   });
 
   // ── Task B6 (2026-07-30 lovable-workspace SDD) — resizable chat rail ──

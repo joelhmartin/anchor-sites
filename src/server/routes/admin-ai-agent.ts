@@ -535,6 +535,56 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // POST /sites/:siteId/agent/conversations/:conversationId/resume
+  //
+  // D318 — resume an errored/stopped build WITHOUT a synthetic "continue"
+  // user message. The old client sent the literal string "continue" as a
+  // user message, which then rendered as a user chat bubble ("continue") and
+  // persisted — protocol masquerading as conversation. There is nothing to
+  // add to the conversation on a resume: the loop rebuilds its model messages
+  // from the persisted history (the original user row + any partial
+  // assistant/tool work is still the anchor), exactly as the auto-continue
+  // path does. So this just re-claims the turn and enqueues a continuation —
+  // no message written, no bubble. A running conversation is claim-blocked
+  // (409); an already-settled one resumes from where it stopped.
+  // -------------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/agent/conversations/:conversationId/resume",
+    admin,
+    messageLimiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, conversationId } = req.params;
+      try {
+        const conversation = await getConversation(pool, conversationId, siteId);
+        if (!conversation) {
+          res.status(404).json({ error: "conversation not found" });
+          return;
+        }
+        const claimToken = await claimConversationTurn(pool, conversationId);
+        if (claimToken === null) {
+          res.status(409).json({ error: "turn already running" });
+          return;
+        }
+        await releaseConversationTurn(pool, conversationId, "active", claimToken);
+        const jobId = await enqueue({ conversationId, siteId, continuation: 0 });
+        if (jobId) {
+          res.status(202).json({ queued: true, job_id: jobId });
+          return;
+        }
+        const deduped = await hasLiveAgentTurnJob(conversationId);
+        if (deduped) {
+          res.status(202).json({ queued: true, deduped: true });
+          return;
+        }
+        console.error("[agent] resume enqueue returned no id — reporting 503", { conversationId, siteId });
+        res.status(503).json({ error: "job queue unavailable" });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // GET /sites/:siteId/agent/conversations/:conversationId/events?after=<id>
   // SSE tail for job-run turns (progress lands in ai_messages; there's no
   // in-request onEvent to stream). Unlike the preview route, this one is
