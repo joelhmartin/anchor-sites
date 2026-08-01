@@ -168,6 +168,11 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const [previewPageId, setPreviewPageId] = useState<string | null>(initialPageParam);
   const [previewNonce, setPreviewNonce] = useState(0);
   const [agentBusy, setAgentBusy] = useState(false);
+  // D311 — while an inline edit session is live, the preview panel queues
+  // (does not apply) nonce bumps and page switches. Track that so the Refresh
+  // button and page switcher can honestly say so / disable, instead of
+  // appearing to do nothing.
+  const [previewEditing, setPreviewEditing] = useState(false);
   const [viewport, setViewport] = useState<Viewport>("desktop");
 
   // Task B6 — resizable chat rail.
@@ -311,9 +316,30 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
       ? (gitData.url ?? `https://github.com/${gitData.repo}/tree/main/sites/${slug}`)
       : null;
 
+  // D329 — every tailed change event used to bump `previewNonce`, and the
+  // nonce is in the iframe `key`, so a multi-step build fully remounted the
+  // preview (and, with D305, re-adopted the token → reset scroll) once per
+  // page-write — dozens of times per build. Coalesce the bumps with a
+  // trailing debounce so a burst of change events collapses into a single
+  // remount shortly after it settles. The page-id follow (cheap state) stays
+  // immediate; the panel pins the displayed page mid-edit regardless.
+  const nonceBumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function bumpPreviewNonceCoalesced() {
+    if (nonceBumpTimerRef.current) clearTimeout(nonceBumpTimerRef.current);
+    nonceBumpTimerRef.current = setTimeout(() => {
+      nonceBumpTimerRef.current = null;
+      setPreviewNonce((n) => n + 1);
+    }, 1200);
+  }
+  useEffect(() => {
+    return () => {
+      if (nonceBumpTimerRef.current) clearTimeout(nonceBumpTimerRef.current);
+    };
+  }, []);
+
   function handleChangeEvent(c: AgentChangeEvent) {
     if (c.page_id) setPreviewPageId(c.page_id);
-    setPreviewNonce((n) => n + 1);
+    bumpPreviewNonceCoalesced();
   }
 
   function handleStatusChange(_status: AiConversation["status"] | null, busy: boolean) {
@@ -833,26 +859,40 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
             <span className="text-xs text-red-600">Couldn't load pages: {pagesError}</span>
           ) : (
             pages.length > 0 && (
-              <select
-                aria-label="Page"
-                value={previewPageId ?? ""}
-                onChange={(e) => setPreviewPageId(e.target.value)}
-                className="h-8 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300"
-              >
-                {pages.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.title}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2">
+                <select
+                  aria-label="Page"
+                  value={previewPageId ?? ""}
+                  onChange={(e) => setPreviewPageId(e.target.value)}
+                  // D311 — a page switch is queued (not applied) mid-edit; the
+                  // switcher would otherwise show a page the frame isn't
+                  // showing. Disable it and say why instead.
+                  disabled={previewEditing}
+                  title={previewEditing ? "Finish editing to switch pages" : undefined}
+                  className="h-8 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {pages.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title}
+                    </option>
+                  ))}
+                </select>
+                {previewEditing && (
+                  <span className="text-xs text-zinc-400">Finish editing to switch pages</span>
+                )}
+              </div>
             )
           )}
 
           <button
             type="button"
             aria-label="Refresh preview"
+            // D311 — a refresh is queued (not applied) mid-edit, so it looks
+            // like it does nothing. Disable it while editing with an honest cue.
+            disabled={previewEditing}
+            title={previewEditing ? "Finish editing to refresh" : "Refresh preview"}
             onClick={() => setPreviewNonce((n) => n + 1)}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
@@ -874,6 +914,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                 // re-fetches nor goes stale.
                 pages={pages}
                 pagesLoading={pagesLoading}
+                onEditingChange={setPreviewEditing}
               />
             </div>
           </div>

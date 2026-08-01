@@ -24,6 +24,22 @@ vi.mock("../lib/agent-api.js", () => ({
   streamAgentEvents: (...args: Parameters<typeof streamAgentEvents>) => streamAgentEvents(...args),
 }));
 
+// The real SitePreviewPanel renders here; stub the inline editor so the
+// D311 test can enter an edit session without the real save-cycle/bridge
+// machinery (that's inline-editor.test.ts's job).
+vi.mock("../lib/inline-editor.js", () => ({
+  createInlineEditor: () => ({
+    token: "tok-edit",
+    attach: vi.fn(),
+    applyField: vi.fn(),
+    applyImage: vi.fn(),
+    readProp: vi.fn(),
+    setReadonly: vi.fn(),
+    flush: vi.fn(async () => {}),
+    destroy: vi.fn(),
+  }),
+}));
+
 const { WorkspacePage } = await import("./WorkspacePage.js");
 
 function json(body: unknown, status = 200) {
@@ -78,6 +94,10 @@ function mockWorkspaceFetch(overrides: FetchOverrides = {}) {
     if (url === "/api/sites") return json({ sites: [SITE] });
     if (url === "/api/sites/s1") return json({ site: SITE });
     if (url === "/api/sites/s1/pages") return json({ pages });
+    // SitePreviewPanel mints a short-lived preview token for the iframe.
+    if (url === "/api/sites/s1/preview-token" && method === "POST") {
+      return json({ token: "pv1.s1.1785000000.sig", expires_at: new Date(Date.now() + 900_000).toISOString() });
+    }
     if (url === "/api/sites/s1/git") return json(git);
     if (url === "/api/sites/s1/publish" && method === "POST") {
       return json(publish.body, publish.status);
@@ -559,6 +579,27 @@ describe("WorkspacePage (Task B2)", () => {
     // Confirm is withdrawn entirely (not just disabled) and the reason shows.
     await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Confirm" })).toBeNull());
     expect(dialog.textContent).toMatch(/agent is still building/i);
+  });
+
+  // D311 — the Refresh button and page switcher queue (don't apply) their
+  // effect mid-edit; disable them with an honest cue rather than looking inert.
+  it("D311: disables Refresh and the page switcher while an inline edit session is live", async () => {
+    mockWorkspaceFetch();
+    renderAt("/sites/acme");
+    await screen.findByTitle("Draft preview");
+
+    const refresh = screen.getByRole("button", { name: "Refresh preview" }) as HTMLButtonElement;
+    const select = screen.getByLabelText("Page") as HTMLSelectElement;
+    expect(refresh.disabled).toBe(false);
+    expect(select.disabled).toBe(false);
+
+    // The preview panel's own "Edit" toggle enters an edit session.
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    await waitFor(() => expect(refresh.disabled).toBe(true));
+    expect(refresh.title).toBe("Finish editing to refresh");
+    expect((screen.getByLabelText("Page") as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText("Finish editing to switch pages")).toBeTruthy();
   });
 
   it("links Manage to the tab-based shell", async () => {
