@@ -6,6 +6,7 @@ import { adminSitesRouter } from "../../src/server/routes/admin-sites.js";
 import { adminPagesRouter } from "../../src/server/routes/admin-pages.js";
 import { adminAiAgentRouter } from "../../src/server/routes/admin-ai-agent.js";
 import { runAgentTurn } from "../../src/server/ai/agent/loop.js";
+import { appendMessage } from "../../src/server/ai/agent/repo.js";
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 const d = TEST_DB_URL ? describe : describe.skip;
@@ -87,12 +88,17 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
     const siteId = siteRes.body.site.id as string;
     createdSiteIds.push(siteId);
 
-    // 2. Conversation via the API — no run, message persisted only.
-    const convRes = await auth(request(app).post(`/api/sites/${siteId}/agent/conversations`)).send({
-      message: "Build a dental site",
-    });
+    // 2. Conversation via the API (empty), then persist the user message
+    // directly. D1115 — the seed-message route now enqueues an AGENT_TURN
+    // (no dead-letter), which would 503 here without a running boss; this
+    // test drives the turn directly in stub mode below, so it just needs the
+    // message persisted, not queued.
+    const convRes = await auth(request(app).post(`/api/sites/${siteId}/agent/conversations`)).send({});
     expect(convRes.status).toBe(201);
     const conversationId = convRes.body.conversation.id as string;
+    await appendMessage(db.getPool(), conversationId, "user", [
+      { type: "text", text: "Build a dental site" },
+    ]);
 
     // 3. Run the turn directly (stub mode — no ANTHROPIC_API_KEY).
     const turnResult = await runAgentTurn({ pool: db.getPool(), conversationId, siteId });
@@ -147,12 +153,15 @@ d("agent build (integration, end-to-end stub-mode, Task 13)", () => {
     // 5. A second create POST on the SAME site converges on THE site's
     // conversation (D302 get-or-create: 200 + same id, never a twin), and a
     // second runAgentTurn on the now non-empty site makes no changes.
-    const convRes2 = await auth(request(app).post(`/api/sites/${siteId}/agent/conversations`)).send({
-      message: "Add another page",
-    });
+    // (Create empty to observe the get-or-create status; D1115 means a
+    // seed-message create would instead return runJobTurn's 202/503.)
+    const convRes2 = await auth(request(app).post(`/api/sites/${siteId}/agent/conversations`)).send({});
     expect(convRes2.status).toBe(200);
     const conversationId2 = convRes2.body.conversation.id as string;
     expect(conversationId2).toBe(conversationId);
+    await appendMessage(db.getPool(), conversationId2, "user", [
+      { type: "text", text: "Add another page" },
+    ]);
 
     const turnResult2 = await runAgentTurn({ pool: db.getPool(), conversationId: conversationId2, siteId });
     expect(turnResult2.endReason).toBe("completed");

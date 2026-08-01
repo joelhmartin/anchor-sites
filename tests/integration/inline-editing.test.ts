@@ -242,7 +242,9 @@ d("inline editing end-to-end gate (Inline Editing Task 12)", () => {
       request(pagesApp).get(`/api/sites/${site.id}/pages/${page.id}/preview`),
     );
     expect(plainRes.status).toBe(200);
-    expect(plainRes.headers["content-security-policy"]).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+';/);
+    // D1200/D306 — plain-preview script-src is hash-only: carousel island +
+    // page-nav notifier (two sha256 sources), no nonce.
+    expect(plainRes.headers["content-security-policy"]).toMatch(/script-src ('sha256-[A-Za-z0-9+/=]+' ?){2};/);
     expect(plainRes.headers["content-security-policy"]).not.toContain("'nonce-");
     expect(plainRes.text).not.toContain("data-block-id");
     expect(plainRes.text).not.toContain("window.__AC_EDIT_BOOT__");
