@@ -179,7 +179,7 @@ export async function resolveTemplateCover(
 
 export async function seedTemplates(
   pool: Pool = defaultPool,
-): Promise<{ templates: number; pages: number }> {
+): Promise<{ templates: number; pages: number; deregistered: number }> {
   // Validate every authored block up front (fail loudly on a typo). This is
   // the gate tasks C5-C14 rely on — every registered template must pass it.
   await validateAllTemplates(allTemplates);
@@ -234,7 +234,31 @@ export async function seedTemplates(
     }
   }
 
-  return { templates: allTemplates.length, pages: pageCount };
+  // D725 (W2-TERM) — dereg reconcile. The seed only ever UPSERTs the CURRENTLY
+  // registered slugs; a built-in template removed from the registry
+  // (db/templates/index.ts) otherwise keeps its DB row active + gallery-
+  // visible forever with no code backing it. Archive any active BUILT-IN
+  // template — `source_site_id IS NULL`, which uniquely marks seed rows
+  // (operator save-as-template always stamps a source_site_id) — whose slug is
+  // no longer registered. Archive, not delete: sites already materialized from
+  // it keep working, and re-registering the slug (or D109 restore) revives it.
+  const registeredSlugs = allTemplates.map((t) => t.slug);
+  const dereg = await pool.query<{ slug: string }>(
+    `UPDATE templates SET status = 'archived'
+      WHERE source_site_id IS NULL
+        AND status = 'active'
+        AND slug <> ALL($1::text[])
+     RETURNING slug`,
+    [registeredSlugs],
+  );
+  if ((dereg.rowCount ?? 0) > 0) {
+    console.log(
+      `[seed-templates] archived ${dereg.rowCount} deregistered built-in template(s):`,
+      dereg.rows.map((r) => r.slug),
+    );
+  }
+
+  return { templates: allTemplates.length, pages: pageCount, deregistered: dereg.rowCount ?? 0 };
 }
 
 // CLI entry — `npm run db:seed-templates`

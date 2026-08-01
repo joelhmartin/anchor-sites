@@ -77,6 +77,47 @@ d("seed-templates (integration, P7-T7.7)", () => {
     expect(starter.cover_image_url).toBeNull();
   });
 
+  it("D725: archives a deregistered built-in template, leaves operator templates + registered built-ins alone", async () => {
+    await seedTemplates(pool);
+
+    // Simulate a built-in template that WAS seeded from the registry but has
+    // since been removed from it (source_site_id IS NULL marks it built-in).
+    const deregSlug = `dereg-builtin-${Date.now()}`;
+    await pool.query(
+      `INSERT INTO templates (slug, name, kind, status, source_site_id)
+       VALUES ($1, 'Removed Builtin', 'site', 'active', NULL)`,
+      [deregSlug],
+    );
+    // An operator-created template (source_site_id set) with an unregistered
+    // slug must NOT be swept.
+    const site = await pool.query<{ id: string }>(
+      `INSERT INTO sites (slug, display_name) VALUES ($1, 'Op') RETURNING id`,
+      [`dereg-op-site-${Date.now()}`],
+    );
+    const opSlug = `op-template-${Date.now()}`;
+    await pool.query(
+      `INSERT INTO templates (slug, name, kind, status, source_site_id)
+       VALUES ($1, 'Operator Template', 'site', 'active', $2)`,
+      [opSlug, site.rows[0].id],
+    );
+
+    const res = await seedTemplates(pool);
+    expect(res.deregistered).toBeGreaterThanOrEqual(1);
+
+    const dereg = await pool.query<{ status: string }>(`SELECT status FROM templates WHERE slug = $1`, [deregSlug]);
+    expect(dereg.rows[0].status).toBe("archived");
+
+    const op = await pool.query<{ status: string }>(`SELECT status FROM templates WHERE slug = $1`, [opSlug]);
+    expect(op.rows[0].status).toBe("active");
+
+    // A registered built-in (starter) stays active.
+    const starter = await pool.query<{ status: string }>(`SELECT status FROM templates WHERE slug = 'starter'`);
+    expect(starter.rows[0].status).toBe("active");
+
+    await pool.query(`DELETE FROM templates WHERE slug = ANY($1)`, [[deregSlug, opSlug]]).catch(() => undefined);
+    await pool.query(`DELETE FROM sites WHERE id = $1`, [site.rows[0].id]).catch(() => undefined);
+  });
+
   // Task C4 fix round 1: `ensureSystemTemplatesSite` find-or-creates the
   // reserved site that owns template cover media — this must be idempotent
   // against real re-seeding, not just against a mocked pool.
