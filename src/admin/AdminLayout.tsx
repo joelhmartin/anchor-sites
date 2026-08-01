@@ -29,7 +29,7 @@ export function AdminLayout() {
         <div className="px-5 py-4">
           <StudioWordmark />
         </div>
-        <nav className="flex-1 px-2">
+        <nav className="flex-1 space-y-1 px-2">
           <NavLink
             to="/"
             end
@@ -41,6 +41,19 @@ export function AdminLayout() {
             }
           >
             Sites
+          </NavLink>
+          {/* D606/D1009: job-queue health — worker liveness, failed jobs, and
+              backlog visible from the product, not only from Cloud Logging. */}
+          <NavLink
+            to="/jobs"
+            className={({ isActive }) =>
+              cn(
+                "block rounded-md px-3 py-2 text-sm font-medium",
+                isActive ? "bg-indigo-50 text-indigo-700" : "text-zinc-600 hover:bg-zinc-100",
+              )
+            }
+          >
+            Job queues
           </NavLink>
         </nav>
         <div className="border-t border-zinc-200 p-2">
