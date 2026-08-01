@@ -60,15 +60,22 @@ d("ai agent repo", () => {
     expect(getTodayUsage(fresh!, "2026-07-28")).toEqual({ input: 0, output: 0 });
   });
 
-  it("sets status and lists newest-first", async () => {
+  it("sets status; hides archived by default; lists newest-first with includeArchived (D517)", async () => {
     const c1 = await createConversation(db.getPool(), siteId, "one");
     // D302: archive c1 to free the site's live-conversation slot before
     // creating c2 (the index allows any number of archived rows).
     await setConversationStatus(db.getPool(), c1.id, "archived");
     const c2 = await createConversation(db.getPool(), siteId, "two");
-    const list = await listConversations(db.getPool(), siteId);
-    expect(list.findIndex((c) => c.id === c2.id)).toBeLessThan(list.findIndex((c) => c.id === c1.id));
-    expect(list.find((c) => c.id === c1.id)!.status).toBe("archived");
+
+    // D517: archived hidden from the default listing.
+    const defaultList = await listConversations(db.getPool(), siteId);
+    expect(defaultList.find((c) => c.id === c1.id)).toBeUndefined();
+    expect(defaultList.find((c) => c.id === c2.id)).toBeDefined();
+
+    // includeArchived shows both, newest-first, with c1 archived.
+    const full = await listConversations(db.getPool(), siteId, { includeArchived: true });
+    expect(full.findIndex((c) => c.id === c2.id)).toBeLessThan(full.findIndex((c) => c.id === c1.id));
+    expect(full.find((c) => c.id === c1.id)!.status).toBe("archived");
   });
 
   // ── W2-CONC / D302: one live conversation per site ──
