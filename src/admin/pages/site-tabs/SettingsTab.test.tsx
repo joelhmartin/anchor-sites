@@ -91,7 +91,7 @@ describe("SettingsTab (P4-T4.15)", () => {
   });
 
   it("disarms Save after a successful save — no forever re-send (D422)", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input) === "/api/sites/s1/git") return json(GIT_UNCONFIGURED);
       return json({ site: { ...SITE, display_name: "Renamed" } });
     });

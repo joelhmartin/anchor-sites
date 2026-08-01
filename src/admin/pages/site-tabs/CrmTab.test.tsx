@@ -56,7 +56,7 @@ describe("CrmTab (P11-T11.8)", () => {
   });
 
   it("posts to the CRM provision route when retry is clicked (D425)", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
       isGit(input) ? json(GIT_UNCONFIGURED) : json({ crm_site_id: "crm-new" }, 200),
     );
     global.fetch = fetchMock as unknown as typeof fetch;

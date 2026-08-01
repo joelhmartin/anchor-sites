@@ -140,7 +140,12 @@ describe("AdminApp routing (P4-T4.9; P8-T8.5)", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Acme Dental" })).toBeTruthy());
     expect(screen.getByRole("tab", { name: "Pages" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Settings" })).toBeTruthy();
-    // The workspace's chat panel/Publish button must NOT be mounted here.
-    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    // The workspace itself must NOT be mounted here. Its distinctive chrome is
+    // the "Manage" escape-hatch link (to /manage); the manage shell instead
+    // offers an "Open workspace" link (D411) and per-page Publish row actions
+    // (D436), so asserting the absence of the workspace's Manage link — not a
+    // button literally named "Publish" — is the workspace-not-mounted check.
+    expect(screen.queryByRole("link", { name: "Manage" })).toBeNull();
+    expect(screen.getByRole("link", { name: /Open workspace/ })).toBeTruthy();
   });
 });
