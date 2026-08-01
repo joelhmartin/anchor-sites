@@ -9,6 +9,7 @@ import { WorkspacePage } from "./pages/WorkspacePage.js";
 import { PostEditorPage } from "./pages/PostEditorPage.js";
 import { EventEditorPage } from "./pages/EventEditorPage.js";
 import { JobsHealthPage } from "./pages/JobsHealthPage.js";
+import { TemplatesPage } from "./pages/TemplatesPage.js";
 import { NotFound } from "./pages/NotFound.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 
@@ -48,6 +49,7 @@ export function AdminApp() {
         <Route element={<AdminLayout />}>
           <Route path="/" element={<SitesListPage />} />
           <Route path="/jobs" element={<JobsHealthPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/sites/new" element={<NewSitePage />} />
           <Route path="/sites/:slug/manage" element={<SiteDetailPage />} />
           <Route path="/sites/:slug/pages/:pageId" element={<PageEditRedirect />} />

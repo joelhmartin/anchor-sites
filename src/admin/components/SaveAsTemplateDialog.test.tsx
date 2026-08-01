@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { SaveAsTemplateDialog } from "./SaveAsTemplateDialog.js";
 import { setAdminToken, clearAdminToken } from "../lib/adminToken.js";
 
@@ -36,7 +37,11 @@ describe("SaveAsTemplateDialog (P7-T7.8)", () => {
   });
 
   function open() {
-    render(<SaveAsTemplateDialog siteId="s1" siteName="Acme Co" />);
+    render(
+      <MemoryRouter>
+        <SaveAsTemplateDialog siteId="s1" siteName="Acme Co" />
+      </MemoryRouter>,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save as template" }));
   }
 
@@ -58,6 +63,9 @@ describe("SaveAsTemplateDialog (P7-T7.8)", () => {
     expect(body.name).toBe("Acme Base");
     expect(body.page_ids).toBeUndefined(); // all selected → omitted
     await waitFor(() => expect(screen.getByText(/Saved .*Acme Base.* as a template/)).toBeTruthy());
+    // D429 — a forward path to the templates management surface.
+    const manage = screen.getByRole("link", { name: /Manage templates/ });
+    expect(manage.getAttribute("href")).toBe("/templates");
   });
 
   it("sends explicit page_ids when a subset is selected", async () => {

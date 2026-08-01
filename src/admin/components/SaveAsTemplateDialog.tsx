@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Dialog, DialogContent, DialogDescription } from "../ui/dialog.js";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
@@ -100,6 +101,15 @@ export function SaveAsTemplateDialog({ siteId, siteName }: { siteId: string; sit
           {savedName ? (
             <div className="mt-4 flex flex-col gap-4">
               <p className="text-sm text-green-700">Saved “{savedName}” as a template.</p>
+              {/* D429 — a "where did it go" forward path: link to the templates
+                  management surface to view/archive it. */}
+              <Link
+                to="/templates"
+                className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                onClick={() => setOpen(false)}
+              >
+                Manage templates →
+              </Link>
               <div className="flex justify-end">
                 <Button onClick={() => onOpenChange(false)}>Done</Button>
               </div>
