@@ -45,17 +45,21 @@ export function BlockBodyEditor({
   // honest label driven by that status, so "Publish" appears only when the
   // save actually publishes.
   saveLabel = "Save",
+  // D420 — fired when the body content changes, so the parent's unsaved-work
+  // guard covers body edits (which otherwise live only inside TipTap).
+  onDirty,
 }: {
   /** Site slug — used to link out to the workspace in the AI-managed state. */
   slug: string;
   value: Block[];
   onSave: (blocks: Block[]) => void;
   saveLabel?: string;
+  onDirty?: () => void;
 }) {
   if (value.length > 0 && !isSingleRichText(value)) {
     return <AiManagedPanel slug={slug} />;
   }
-  return <RichTextBody value={value} onSave={onSave} saveLabel={saveLabel} />;
+  return <RichTextBody value={value} onSave={onSave} saveLabel={saveLabel} onDirty={onDirty} />;
 }
 
 function AiManagedPanel({ slug }: { slug: string }) {
@@ -78,10 +82,12 @@ function RichTextBody({
   value,
   onSave,
   saveLabel,
+  onDirty,
 }: {
   value: Block[];
   onSave: (blocks: Block[]) => void;
   saveLabel: string;
+  onDirty?: () => void;
 }) {
   const existing = isSingleRichText(value) ? value[0] : null;
   const [blockId] = useState(() => existing?.id ?? nanoid());
@@ -110,6 +116,7 @@ function RichTextBody({
     ],
     content: initialHtml,
     editorProps: { attributes: { class: "ac-tiptap__content" } },
+    onUpdate: () => onDirty?.(),
   });
 
   function save() {

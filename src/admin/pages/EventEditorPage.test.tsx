@@ -66,11 +66,18 @@ function mockApi(opts: { savePut?: () => Response } = {}) {
   }) as unknown as typeof fetch;
 }
 
+import { useLocation } from "react-router-dom";
+function ManageStub() {
+  const loc = useLocation();
+  return <div>manage {loc.search}</div>;
+}
+
 function renderAt(path = "/sites/acme/events/e1") {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/sites/:slug" element={<div>site detail</div>} />
+        <Route path="/sites/:slug/manage" element={<ManageStub />} />
         <Route path="/sites/:slug/events/:eventId" element={<EventEditorPage />} />
       </Routes>
     </MemoryRouter>,
@@ -119,6 +126,37 @@ describe("EventEditorPage (P8-T8.13)", () => {
     await screen.findByTestId("body-value");
     fireEvent.click(screen.getByRole("button", { name: "Stub publish" }));
     await screen.findByText("boom");
+  });
+
+  it("refuses to save when Starts is cleared, instead of silently keeping the old value (D421)", async () => {
+    mockApi();
+    renderAt();
+    await screen.findByTestId("body-value");
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Stub publish" }));
+    await screen.findByText(/Start date and time is required/i);
+    expect(lastPut).toBeNull(); // no PUT was sent
+  });
+
+  it("Back link returns to the Events tab (D430)", async () => {
+    mockApi();
+    renderAt();
+    await screen.findByTestId("body-value");
+    fireEvent.click(screen.getByRole("link", { name: /Back to acme/ }));
+    await screen.findByText(/manage \?tab=events/);
+  });
+
+  it("confirms before discarding unsaved changes on Back (D420)", async () => {
+    mockApi();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderAt();
+    await screen.findByTestId("body-value");
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Changed" } });
+    fireEvent.click(screen.getByRole("link", { name: /Back to acme/ }));
+    expect(confirmSpy).toHaveBeenCalled();
+    // Cancelled → still on the editor, not the manage stub.
+    expect(screen.queryByText(/manage \?tab=events/)).toBeNull();
+    expect(screen.getByTestId("body-value")).toBeTruthy();
   });
 
   it("shows a not-found card when the slug has no matching site", async () => {

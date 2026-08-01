@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { BlockBodyEditor } from "../components/BlockBodyEditor.js";
+import { useUnsavedGuard } from "../lib/useUnsavedGuard.js";
 import type { Block } from "../../blocks/types.js";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
 import { useApi } from "../lib/useApi.js";
@@ -55,6 +56,7 @@ export function PostEditorPage() {
 
 function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const { postId } = useParams();
+  const navigate = useNavigate();
   const { data, loading, error } = useApi<{ post: PostDetail }>(
     `/api/sites/${siteId}/posts/${postId}`,
   );
@@ -67,6 +69,16 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // D420 — unsaved-work flag; set by any metadata/body change, cleared on save.
+  const [dirty, setDirty] = useState(false);
+  const { confirmLeave } = useUnsavedGuard(dirty);
+
+  // D430 — return to the Blog tab we came from, not always Pages.
+  const backTo = `/sites/${slug}/manage?tab=blog`;
+  function goBack(e: React.MouseEvent) {
+    e.preventDefault();
+    if (confirmLeave()) navigate(backTo);
+  }
 
   // Seed the metadata form once the post loads.
   useEffect(() => {
@@ -93,6 +105,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         },
       });
       setSavedAt(new Date().toISOString());
+      setDirty(false);
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : "Couldn’t save this post.");
     } finally {
@@ -108,7 +121,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <Link to={`/sites/${slug}/manage`} className="text-sm text-zinc-500 hover:text-zinc-700">
+          <Link to={backTo} onClick={goBack} className="text-sm text-zinc-500 hover:text-zinc-700">
             ← Back to {slug}
           </Link>
           <h1 className="text-lg font-semibold">{title || post.title}</h1>
@@ -129,14 +142,24 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         <CardContent className="flex flex-col gap-3 pt-5 sm:flex-row sm:items-end">
           <div className="flex flex-1 flex-col gap-1">
             <Label htmlFor="post-title">Title</Label>
-            <Input id="post-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Input
+              id="post-title"
+              value={title}
+              onChange={(e) => {
+                setDirty(true);
+                setTitle(e.target.value);
+              }}
+            />
           </div>
           <div className="flex flex-1 flex-col gap-1">
             <Label htmlFor="post-excerpt">Excerpt</Label>
             <Input
               id="post-excerpt"
               value={excerpt}
-              onChange={(e) => setExcerpt(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setExcerpt(e.target.value);
+              }}
               placeholder="Short summary (optional)"
             />
           </div>
@@ -145,7 +168,10 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
             <select
               id="post-status"
               value={status}
-              onChange={(e) => setStatus(e.target.value as "draft" | "published")}
+              onChange={(e) => {
+                setDirty(true);
+                setStatus(e.target.value as "draft" | "published");
+              }}
               className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm"
             >
               <option value="draft">draft</option>
@@ -155,7 +181,14 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         </CardContent>
       </Card>
 
-      <SeoPanel siteId={siteId} value={seo} onChange={setSeo} />
+      <SeoPanel
+        siteId={siteId}
+        value={seo}
+        onChange={(v) => {
+          setDirty(true);
+          setSeo(v);
+        }}
+      />
 
       <p className="text-xs text-zinc-500">
         Edit the post body below, then use the <strong>{status === "published" ? "Publish" : "Save draft"}</strong>{" "}
@@ -168,6 +201,7 @@ function PostEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         value={post.body ?? []}
         onSave={save}
         saveLabel={status === "published" ? "Publish" : "Save draft"}
+        onDirty={() => setDirty(true)}
       />
     </div>
   );

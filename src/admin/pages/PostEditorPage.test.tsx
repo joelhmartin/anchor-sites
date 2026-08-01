@@ -26,8 +26,14 @@ vi.mock("../components/BlockBodyEditor.js", () => ({
   ),
 }));
 
+import { useLocation } from "react-router-dom";
 import { PostEditorPage } from "./PostEditorPage.js";
 import { clearAdminToken, setAdminToken } from "../lib/adminToken.js";
+
+function ManageStub() {
+  const loc = useLocation();
+  return <div>manage {loc.search}</div>;
+}
 
 const SITE = { id: "s1", slug: "acme", display_name: "Acme", status: "active", created_at: "2026-05-18T00:00:00Z", pages_count: 1 };
 const BODY = [{ id: "b1", type: "rich-text", props: { html: "<p>hi</p>", max_width: "medium" } }];
@@ -61,6 +67,7 @@ function renderAt(path = "/sites/acme/posts/b1") {
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/sites/:slug" element={<div>site detail</div>} />
+        <Route path="/sites/:slug/manage" element={<ManageStub />} />
         <Route path="/sites/:slug/posts/:postId" element={<PostEditorPage />} />
       </Routes>
     </MemoryRouter>,
@@ -110,16 +117,35 @@ describe("PostEditorPage (P8-T8.13)", () => {
     await screen.findByText("boom");
   });
 
+  it("Back link returns to the Blog tab (D430)", async () => {
+    mockApi();
+    renderAt();
+    await screen.findByTestId("body-value");
+    fireEvent.click(screen.getByRole("link", { name: /Back to acme/ }));
+    await screen.findByText(/manage \?tab=blog/);
+  });
+
+  it("confirms before discarding unsaved changes on Back (D420)", async () => {
+    mockApi();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderAt();
+    await screen.findByTestId("body-value");
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Changed" } });
+    fireEvent.click(screen.getByRole("link", { name: /Back to acme/ }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(screen.queryByText(/manage \?tab=blog/)).toBeNull();
+  });
+
   it("shows a not-found card when the slug has no matching site", async () => {
     mockApi();
     renderAt("/sites/ghost/posts/b1");
     await screen.findByText(/No site found for/);
   });
 
-  it("links Back-to-site at the site detail", async () => {
+  it("links Back-to-site at the Blog tab (D430)", async () => {
     mockApi();
     renderAt();
     const link = await screen.findByRole("link", { name: /Back to acme/ });
-    expect(link.getAttribute("href")).toBe("/sites/acme/manage");
+    expect(link.getAttribute("href")).toBe("/sites/acme/manage?tab=blog");
   });
 });

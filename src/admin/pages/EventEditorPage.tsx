@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { BlockBodyEditor } from "../components/BlockBodyEditor.js";
+import { useUnsavedGuard } from "../lib/useUnsavedGuard.js";
 import type { Block } from "../../blocks/types.js";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
 import { useApi } from "../lib/useApi.js";
@@ -72,6 +73,7 @@ export function EventEditorPage() {
 
 function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const { eventId } = useParams();
+  const navigate = useNavigate();
   const { data, loading, error } = useApi<{ event: EventDetail }>(
     `/api/sites/${siteId}/events/${eventId}`,
   );
@@ -86,6 +88,19 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // D421 — Starts is required; clearing it must refuse visibly, not silently
+  // keep the old value (the `?? undefined` drop this replaces).
+  const [startsError, setStartsError] = useState<string | null>(null);
+  // D420 — unsaved-work flag; set by any metadata/body change, cleared on save.
+  const [dirty, setDirty] = useState(false);
+  const { confirmLeave } = useUnsavedGuard(dirty);
+
+  // D430 — return to the Events tab we came from, not always Pages.
+  const backTo = `/sites/${slug}/manage?tab=events`;
+  function goBack(e: React.MouseEvent) {
+    e.preventDefault();
+    if (confirmLeave()) navigate(backTo);
+  }
 
   useEffect(() => {
     if (event) {
@@ -99,6 +114,13 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
   }, [event]);
 
   async function save(blocks: Block[]) {
+    // D421 — a required Starts value, validated before the round-trip.
+    const startsIso = fromLocalInput(startsAt);
+    if (!startsIso) {
+      setStartsError("Start date and time is required.");
+      return;
+    }
+    setStartsError(null);
     setSaving(true);
     setSaveError(null);
     try {
@@ -106,7 +128,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         method: "PUT",
         body: {
           title: title.trim(),
-          starts_at: fromLocalInput(startsAt) ?? undefined,
+          starts_at: startsIso,
           ends_at: fromLocalInput(endsAt),
           location: location.trim() || undefined,
           status,
@@ -115,6 +137,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         },
       });
       setSavedAt(new Date().toISOString());
+      setDirty(false);
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : "Couldn’t save this event.");
     } finally {
@@ -130,7 +153,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <Link to={`/sites/${slug}/manage`} className="text-sm text-zinc-500 hover:text-zinc-700">
+          <Link to={backTo} onClick={goBack} className="text-sm text-zinc-500 hover:text-zinc-700">
             ← Back to {slug}
           </Link>
           <h1 className="text-lg font-semibold">{title || event.title}</h1>
@@ -151,16 +174,30 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         <CardContent className="grid grid-cols-1 gap-3 pt-5 sm:grid-cols-2">
           <div className="flex flex-col gap-1 sm:col-span-2">
             <Label htmlFor="event-title">Title</Label>
-            <Input id="event-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Input
+              id="event-title"
+              value={title}
+              onChange={(e) => {
+                setDirty(true);
+                setTitle(e.target.value);
+              }}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="event-starts">Starts</Label>
             <Input
               id="event-starts"
               type="datetime-local"
+              required
+              aria-invalid={startsError ? true : undefined}
               value={startsAt}
-              onChange={(e) => setStartsAt(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setStartsError(null);
+                setStartsAt(e.target.value);
+              }}
             />
+            {startsError && <p className="text-xs text-red-600">{startsError}</p>}
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="event-ends">Ends (optional)</Label>
@@ -168,19 +205,32 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
               id="event-ends"
               type="datetime-local"
               value={endsAt}
-              onChange={(e) => setEndsAt(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setEndsAt(e.target.value);
+              }}
             />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="event-location">Location (optional)</Label>
-            <Input id="event-location" value={location} onChange={(e) => setLocation(e.target.value)} />
+            <Input
+              id="event-location"
+              value={location}
+              onChange={(e) => {
+                setDirty(true);
+                setLocation(e.target.value);
+              }}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="event-status">Status</Label>
             <select
               id="event-status"
               value={status}
-              onChange={(e) => setStatus(e.target.value as "draft" | "published")}
+              onChange={(e) => {
+                setDirty(true);
+                setStatus(e.target.value as "draft" | "published");
+              }}
               className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm"
             >
               <option value="draft">draft</option>
@@ -190,7 +240,14 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         </CardContent>
       </Card>
 
-      <SeoPanel siteId={siteId} value={seo} onChange={setSeo} />
+      <SeoPanel
+        siteId={siteId}
+        value={seo}
+        onChange={(v) => {
+          setDirty(true);
+          setSeo(v);
+        }}
+      />
 
       <p className="text-xs text-zinc-500">
         Edit the event description below, then use the{" "}
@@ -204,6 +261,7 @@ function EventEditorView({ siteId, slug }: { siteId: string; slug: string }) {
         value={event.description ?? []}
         onSave={save}
         saveLabel={status === "published" ? "Publish" : "Save draft"}
+        onDirty={() => setDirty(true)}
       />
     </div>
   );
