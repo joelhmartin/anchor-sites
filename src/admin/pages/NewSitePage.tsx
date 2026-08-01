@@ -211,17 +211,30 @@ export function NewSitePage() {
   }
 
   /** Poll site detail until materialization created at least one page.
-   * Returns true when pages landed, false on timeout (caller decides). */
-  async function waitForPages(siteId: string, timeoutMs: number): Promise<boolean> {
+   * Returns {landed:true} when pages appear; {landed:false} on timeout; or
+   * {landed:false, failedError} the moment the server records a materialize
+   * failure (D620 — no longer an indefinite blind poll toward a dead end). */
+  async function waitForPages(
+    siteId: string,
+    timeoutMs: number,
+  ): Promise<{ landed: boolean; failedError?: string }> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       try {
-        const d = await apiFetch<{ site: { pages_count: number } }>(`/api/sites/${siteId}`);
-        if (d.site.pages_count > 0) return true;
+        const d = await apiFetch<{
+          site: { pages_count: number; materialize_status?: string | null; materialize_error?: string | null };
+        }>(`/api/sites/${siteId}`);
+        if (d.site.pages_count > 0) return { landed: true };
+        // D620: a recorded 'failed' outcome ends the wait immediately with the
+        // real reason, instead of burning the whole timeout on a site that
+        // will never populate.
+        if (d.site.materialize_status === "failed") {
+          return { landed: false, failedError: d.site.materialize_error ?? undefined };
+        }
       } catch {
         // transient — keep polling until the deadline
       }
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) return { landed: false };
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
   }
@@ -263,12 +276,16 @@ export function NewSitePage() {
     }
     // Compose: the agent must not race materialization (D1107).
     setMaterializing(true);
-    const landed = await waitForPages(siteId, COMPOSE_POLL_TIMEOUT_MS);
+    const result = await waitForPages(siteId, COMPOSE_POLL_TIMEOUT_MS);
     setMaterializing(false);
-    if (!landed) {
+    if (!result.landed) {
       setSlowSite({ slug: siteSlug, templateName, pagesCount });
       setError(
-        `"${templateName}" is taking longer than expected to apply. The site was created — you can open it and start the AI once its pages are in.`,
+        result.failedError
+          ? // D620: the server recorded WHY it failed — show it, not a vague
+            // "taking longer than expected".
+            `"${templateName}" couldn't be applied: ${result.failedError}. The site was created — retry the import from its Manage tab.`
+          : `"${templateName}" is taking longer than expected to apply. The site was created — you can open it and start the AI once its pages are in.`,
       );
       return;
     }

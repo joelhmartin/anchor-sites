@@ -446,8 +446,19 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
         try {
           const r = await enqueueMaterialize({ siteId, templateId: template_id });
           job = { queued: true, id: r.id };
+          // D620: the site now has a recorded 'pending' outcome — the handler
+          // flips it to 'ready'/'failed'. The UI reads a definite state.
+          await pool
+            .query(`UPDATE sites SET materialize_status = 'pending', materialize_error = NULL WHERE id = $1`, [siteId])
+            .catch(() => undefined);
         } catch (e) {
-          job = { queued: false, error: e instanceof Error ? e.message : String(e) };
+          const error = e instanceof Error ? e.message : String(e);
+          job = { queued: false, error };
+          // D620: an enqueue that never happened is a recorded 'failed'
+          // outcome too — not a 0-page site with no state.
+          await pool
+            .query(`UPDATE sites SET materialize_status = 'failed', materialize_error = $2 WHERE id = $1`, [siteId, error.slice(0, 500)])
+            .catch(() => undefined);
         }
 
         res.status(201).json({
@@ -674,8 +685,16 @@ export function templatesRouter(opts: TemplatesRouterOptions = {}): Router {
         try {
           const r = await enqueueMaterialize({ siteId, templateId: template_id });
           job = { queued: true, id: r.id };
+          // D620: reset to 'pending' so a re-drive clears a prior 'failed'.
+          await pool
+            .query(`UPDATE sites SET materialize_status = 'pending', materialize_error = NULL WHERE id = $1`, [siteId])
+            .catch(() => undefined);
         } catch (e) {
-          job = { queued: false, error: e instanceof Error ? e.message : String(e) };
+          const error = e instanceof Error ? e.message : String(e);
+          job = { queued: false, error };
+          await pool
+            .query(`UPDATE sites SET materialize_status = 'failed', materialize_error = $2 WHERE id = $1`, [siteId, error.slice(0, 500)])
+            .catch(() => undefined);
         }
         res.status(job.queued ? 202 : 503).json({ job });
       } catch (err) {

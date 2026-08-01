@@ -175,6 +175,7 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           `SELECT s.id, s.slug, s.display_name, s.status,
                   s.default_brand_tokens, s.seo_defaults, s.ctm_account_id, s.crm_site_id,
                   s.analytics_disabled, s.created_at,
+                  s.materialize_status, s.materialize_error,
                   (SELECT COUNT(*)::int FROM pages WHERE site_id = s.id) AS pages_count,
                   (SELECT COUNT(*)::int FROM media_assets WHERE site_id = s.id) AS media_count
              FROM sites s

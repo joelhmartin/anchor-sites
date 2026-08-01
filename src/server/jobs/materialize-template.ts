@@ -50,6 +50,9 @@ export async function handleMaterializeTemplate(
   const { siteId, templateId } = data;
   const pool = deps.pool;
 
+  // D620: wrap the WHOLE handler (incl. the pre-transaction site/template
+  // checks) so any failure records an outcome the UI can read.
+  try {
   const siteRes = await pool.query<{ default_brand_tokens: Record<string, string> }>(
     `SELECT default_brand_tokens FROM sites WHERE id = $1`,
     [siteId],
@@ -122,6 +125,14 @@ export async function handleMaterializeTemplate(
 
     await client.query("COMMIT");
 
+    // D620: record the SUCCESS outcome on the site so the UI reads a definite
+    // 'ready' instead of inferring completion from a page count. Clears any
+    // prior failure detail from an earlier attempt.
+    await pool.query(
+      `UPDATE sites SET materialize_status = 'ready', materialize_error = NULL WHERE id = $1`,
+      [siteId],
+    );
+
     // Evict the resolver cache so the renderer sees the new pages + tokens.
     const hosts = await pool.query<{ hostname: string }>(
       `SELECT hostname FROM site_domains WHERE site_id = $1`,
@@ -141,5 +152,21 @@ export async function handleMaterializeTemplate(
     throw err;
   } finally {
     client.release();
+  }
+  } catch (err) {
+    // D620: record the FAILURE outcome — covering the whole handler, incl.
+    // the pre-transaction site/template checks. Written on EVERY failed
+    // attempt (overwritten by a later retry's success), so after retries
+    // exhaust the last error is what the UI sees — a site with 0 pages is no
+    // longer a silent dead end. Best-effort: never mask the original error
+    // (a site-not-found throw simply UPDATEs 0 rows).
+    const message = err instanceof Error ? err.message : String(err);
+    await pool
+      .query(
+        `UPDATE sites SET materialize_status = 'failed', materialize_error = $2 WHERE id = $1`,
+        [siteId, message.slice(0, 500)],
+      )
+      .catch(() => undefined);
+    throw err;
   }
 }

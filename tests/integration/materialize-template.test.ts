@@ -181,4 +181,29 @@ d("materialize-template job (integration, P7-T7.5)", () => {
     await expect(handleMaterializeTemplate({ siteId: ghost, templateId }, { pool })).rejects.toThrow(/site not found/);
     await expect(handleMaterializeTemplate({ siteId, templateId: ghost }, { pool })).rejects.toThrow(/template not found/);
   });
+
+  it("D620: records materialize_status='ready' on a successful materialization", async () => {
+    const siteId = await newSite(pool, "mat-outcome-ok");
+    await handleMaterializeTemplate({ siteId, templateId }, { pool });
+    const site = await pool.query<{ materialize_status: string | null; materialize_error: string | null }>(
+      `SELECT materialize_status, materialize_error FROM sites WHERE id = $1`,
+      [siteId],
+    );
+    expect(site.rows[0].materialize_status).toBe("ready");
+    expect(site.rows[0].materialize_error).toBeNull();
+  });
+
+  it("D620: records materialize_status='failed' + the error when the handler throws (unknown template)", async () => {
+    const ghostTemplate = "00000000-0000-0000-0000-000000000000";
+    const siteId = await newSite(pool, "mat-outcome-fail");
+    await expect(
+      handleMaterializeTemplate({ siteId, templateId: ghostTemplate }, { pool }),
+    ).rejects.toThrow(/template not found/);
+    const site = await pool.query<{ materialize_status: string | null; materialize_error: string | null }>(
+      `SELECT materialize_status, materialize_error FROM sites WHERE id = $1`,
+      [siteId],
+    );
+    expect(site.rows[0].materialize_status).toBe("failed");
+    expect(site.rows[0].materialize_error).toContain("template not found");
+  });
 });
