@@ -45,6 +45,25 @@ export function BlogTab({ siteId, slug }: { siteId: string; slug: string }) {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // D406 — per-row delete (confirm-gated). The DELETE route already exists
+  // (admin-tenant.ts); it just had no UI. Keyed by id so rows spinner alone.
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function deletePost(p: PostRow) {
+    if (!window.confirm(`Delete the post “${p.title}”? This can’t be undone.`)) return;
+    setDeleteBusy(p.id);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/posts/${p.id}`, { method: "DELETE" });
+      reload();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Couldn’t delete the post.");
+    } finally {
+      setDeleteBusy(null);
+    }
+  }
+
   const slugValid = SLUG_RE.test(postSlug);
   const canSubmit = title.trim().length > 0 && slugValid && !busy;
 
@@ -134,6 +153,8 @@ export function BlogTab({ siteId, slug }: { siteId: string; slug: string }) {
         </Card>
       )}
 
+      {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+
       {!loading && !error && posts.length === 0 && (
         <Card>
           <CardContent className="pt-5 text-sm text-zinc-600">
@@ -165,13 +186,24 @@ export function BlogTab({ siteId, slug }: { siteId: string; slug: string }) {
                     </TD>
                     <TD>{formatDateTime(p.updated_at)}</TD>
                     <TD>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => navigate(`/sites/${slug}/posts/${p.id}`)}
-                      >
-                        Edit
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => navigate(`/sites/${slug}/posts/${p.id}`)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50"
+                          disabled={deleteBusy === p.id}
+                          onClick={() => deletePost(p)}
+                        >
+                          {deleteBusy === p.id ? <Spinner /> : "Delete"}
+                        </Button>
+                      </div>
                     </TD>
                   </TR>
                 ))}

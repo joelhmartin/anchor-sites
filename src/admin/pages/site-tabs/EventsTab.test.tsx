@@ -109,4 +109,27 @@ describe("EventsTab (P8-T8.13)", () => {
 
     await waitFor(() => expect(screen.getByText(/already exists/)).toBeTruthy());
   });
+
+  it("D407: deletes an event (confirm-gated) via DELETE and refreshes", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/events/e1" && method === "DELETE") return json({ ok: true });
+      getCount += 1;
+      return json({ events: getCount === 1 ? [EVENT_A, EVENT_B] : [EVENT_B] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Open House")).toBeTruthy());
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/events/e1" && (c[1] as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(del).toBeTruthy();
+    });
+    await waitFor(() => expect(screen.queryByText("Open House")).toBeNull());
+  });
 });

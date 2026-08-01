@@ -97,4 +97,27 @@ describe("BlogTab (P8-T8.13)", () => {
     renderTab();
     await waitFor(() => expect(screen.getByText(/No posts yet/)).toBeTruthy());
   });
+
+  it("D406: deletes a post (confirm-gated) via DELETE and refreshes", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/posts/b1" && method === "DELETE") return json({ ok: true });
+      getCount += 1;
+      return json({ posts: getCount === 1 ? [POST_A, POST_B] : [POST_B] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Welcome")).toBeTruthy());
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/posts/b1" && (c[1] as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(del).toBeTruthy();
+    });
+    await waitFor(() => expect(screen.queryByText("Welcome")).toBeNull());
+  });
 });

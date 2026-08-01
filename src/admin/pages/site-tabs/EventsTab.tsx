@@ -32,11 +32,30 @@ function statusTone(status: string): BadgeProps["tone"] {
  * Edit affordance routing to the Puck-backed event editor. Mirrors BlogTab.
  */
 export function EventsTab({ siteId, slug }: { siteId: string; slug: string }) {
-  const { data, loading, error } = useApi<{ events: EventRow[] }>(
+  const { data, loading, error, reload } = useApi<{ events: EventRow[] }>(
     `/api/sites/${siteId}/events`,
   );
   const navigate = useNavigate();
   const events = data?.events ?? [];
+
+  // D407 — per-row delete (confirm-gated). DELETE route exists in
+  // admin-tenant.ts; it just had no UI.
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function deleteEvent(ev: EventRow) {
+    if (!window.confirm(`Delete the event “${ev.title}”? This can’t be undone.`)) return;
+    setDeleteBusy(ev.id);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/events/${ev.id}`, { method: "DELETE" });
+      reload();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Couldn’t delete the event.");
+    } finally {
+      setDeleteBusy(null);
+    }
+  }
 
   const [showForm, setShowForm] = useState(false);
   const [eventSlug, setEventSlug] = useState("");
@@ -143,6 +162,8 @@ export function EventsTab({ siteId, slug }: { siteId: string; slug: string }) {
         </Card>
       )}
 
+      {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+
       {!loading && !error && events.length === 0 && (
         <Card>
           <CardContent className="pt-5 text-sm text-zinc-600">
@@ -174,13 +195,24 @@ export function EventsTab({ siteId, slug }: { siteId: string; slug: string }) {
                     </TD>
                     <TD>{new Date(ev.starts_at).toLocaleString()}</TD>
                     <TD>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => navigate(`/sites/${slug}/events/${ev.id}`)}
-                      >
-                        Edit
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => navigate(`/sites/${slug}/events/${ev.id}`)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50"
+                          disabled={deleteBusy === ev.id}
+                          onClick={() => deleteEvent(ev)}
+                        >
+                          {deleteBusy === ev.id ? <Spinner /> : "Delete"}
+                        </Button>
+                      </div>
                     </TD>
                   </TR>
                 ))}
