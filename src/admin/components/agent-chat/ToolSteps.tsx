@@ -71,7 +71,7 @@ export function TypingPulse() {
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="h-1.5 w-1.5 animate-bounce rounded-full bg-indigo-500 opacity-70 motion-reduce:animate-none motion-reduce:opacity-50"
+          className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 opacity-80 motion-reduce:animate-none motion-reduce:opacity-50"
           style={{ animationDelay: `${i * 0.15}s`, animationDuration: "1s" }}
         />
       ))}

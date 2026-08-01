@@ -131,7 +131,7 @@ export function WorkspacePage() {
         <Card>
           <CardContent className="flex flex-col items-start gap-3 pt-5">
             <p className="text-sm text-zinc-600">No site found for "{slug}".</p>
-            <Link to="/" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+            <Link to="/" className="text-sm font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600">
               ← Back to sites
             </Link>
           </CardContent>

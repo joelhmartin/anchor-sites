@@ -44,14 +44,14 @@ export function ChangeCard({
   }
 
   return (
-    <Card className="border-indigo-200 bg-indigo-50/40">
+    <Card className="border-zinc-200 bg-zinc-50/60">
       <CardContent className="flex flex-col gap-2 p-3 pt-3 text-sm">
         <p className="text-zinc-700">{change.summary}</p>
         <div className="flex items-center gap-3">
           {change.page_id && (
             <Link
               to={`/sites/${slug}/pages/${change.page_id}`}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+              className="text-xs font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600"
             >
               Open page
             </Link>

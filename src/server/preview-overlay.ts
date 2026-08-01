@@ -64,7 +64,8 @@ export function makeNonce(): string {
  *   - `rich-text.ts`: `ac-edit-rt-toolbar`(`--visible`),
  *     `ac-edit-rt-link-row`(`--visible`), and its button/input classes.
  *
- *   - `[data-field]` hover: dashed indigo outline, discoverability only.
+ *   - `[data-field]` hover: dashed zinc outline, discoverability only (D331 —
+ *     the shell is black/zinc; the overlay accent follows it, not indigo).
  *   - `.ac-edit-active`: solid outline while a field is being edited.
  *   - `.ac-edit-readonly`: dims the hover affordance once Studio has flipped
  *     the page to read-only (e.g. another operator holds the save lock).
@@ -72,7 +73,7 @@ export function makeNonce(): string {
  *   - `.ac-edit-image-chip` / `.ac-edit-link-chip`: small pill buttons the
  *     JS positions with inline `style.top`/`style.right` (`absolute`,
  *     relative to a wrapper the JS also flips to `position: relative`) —
- *     this CSS supplies the VISUAL styling (indigo pill, white text) and
+ *     this CSS supplies the VISUAL styling (zinc-900 pill, white text) and
  *     the show/hide toggle only; it must not set `position`/`top`/`left`/
  *     `right` itself or it would fight those inline styles. Hidden by
  *     default (opacity + pointer-events, not `display:none`, so the
@@ -90,8 +91,8 @@ export function makeNonce(): string {
  */
 export const OVERLAY_CSS = `
 [data-field] { outline: 1.5px dashed transparent; outline-offset: 1px; cursor: text; transition: outline-color 120ms ease; }
-[data-field]:hover { outline-color: rgba(99, 102, 241, 0.6); }
-[data-field].ac-edit-active { outline: 1.5px solid #6366f1; outline-offset: 1px; }
+[data-field]:hover { outline-color: rgba(24, 24, 27, 0.5); }
+[data-field].ac-edit-active { outline: 1.5px solid #18181b; outline-offset: 1px; }
 [data-field].ac-edit-readonly { cursor: default; outline-color: transparent !important; }
 .ac-edit-readonly-banner {
   position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
@@ -103,7 +104,7 @@ export const OVERLAY_CSS = `
 .ac-edit-image-chip, .ac-edit-link-chip {
   z-index: 2147483000;
   border: none; border-radius: 999px; cursor: pointer;
-  background: #4f46e5; color: #fff;
+  background: #18181b; color: #fff;
   font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   padding: 5px 10px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
@@ -113,7 +114,7 @@ export const OVERLAY_CSS = `
 .ac-edit-image-chip--visible, .ac-edit-link-chip--visible {
   opacity: 1; pointer-events: auto;
 }
-.ac-edit-image-chip:hover, .ac-edit-link-chip:hover { background: #4338ca; }
+.ac-edit-image-chip:hover, .ac-edit-link-chip:hover { background: #3f3f46; }
 
 .ac-edit-rt-toolbar {
   z-index: 2147483000;
@@ -145,8 +146,8 @@ export const OVERLAY_CSS = `
   width: 160px; color: #1f2937;
 }
 .ac-edit-rt-link-apply {
-  background: #4f46e5 !important; color: #fff !important;
+  background: #18181b !important; color: #fff !important;
   padding: 0 8px !important; width: auto !important;
 }
-.ac-edit-rt-link-apply:hover { background: #4338ca !important; }
+.ac-edit-rt-link-apply:hover { background: #3f3f46 !important; }
 `;

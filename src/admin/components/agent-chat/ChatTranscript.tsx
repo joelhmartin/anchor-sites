@@ -58,7 +58,9 @@ function AssistantMessage({ item }: { item: Extract<DisplayItem, { kind: "assist
   return (
     <div className="agent-chat-enter max-w-[92%]">
       <div className="flex items-start gap-2">
-        <SparkleIcon className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+        {/* D331 — the shell is black/zinc ("no blue"); the AI sparkle uses
+            the shell's ink, not the app's default indigo. */}
+        <SparkleIcon className="mt-0.5 h-4 w-4 shrink-0 text-zinc-900" />
         {/* D320 — the ANSWER is what a screen reader should announce. The
             live region is scoped here (and on SystemLine) rather than on the
             whole scroll container, so the dozens of tool-step appends and
