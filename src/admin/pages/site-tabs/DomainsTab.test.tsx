@@ -114,7 +114,7 @@ describe("DomainsTab (P10-10.7, W2-DOM)", () => {
     render(<DomainsTab siteId={SITE_ID} />);
     await waitFor(() => screen.getByText("acme.sites.anchorcorps.com"));
 
-    const input = screen.getByPlaceholderText(/hostname/i) as HTMLInputElement;
+    const input = screen.getByLabelText("Add custom domain") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "acme.example.com" } });
     fireEvent.click(screen.getByRole("button", { name: /add domain/i }));
 
@@ -125,6 +125,33 @@ describe("DomainsTab (P10-10.7, W2-DOM)", () => {
       );
       expect(posts.length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it("labels the hostname input and validates before the round-trip (D428)", async () => {
+    const fetchMock = vi.fn(async (url: unknown) => {
+      if (String(url).includes("/domains")) return json({ domains: [MANAGED_DOMAIN] });
+      return json({});
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<DomainsTab siteId={SITE_ID} />);
+    await waitFor(() => screen.getByText("acme.sites.anchorcorps.com"));
+
+    const input = screen.getByLabelText("Add custom domain") as HTMLInputElement;
+    const addBtn = () => screen.getByRole("button", { name: /add domain/i }) as HTMLButtonElement;
+
+    // An obviously invalid hostname (no dot) is rejected client-side.
+    fireEvent.change(input, { target: { value: "notahost" } });
+    expect(addBtn().disabled).toBe(true);
+    expect(screen.getByText(/full hostname like/i)).toBeTruthy();
+    fireEvent.click(addBtn());
+    const posts = fetchMock.mock.calls.filter(
+      ([, o]: [unknown, RequestInit?]) => o?.method === "POST",
+    );
+    expect(posts).toHaveLength(0); // no round-trip for an invalid value
+
+    // A valid hostname enables the button.
+    fireEvent.change(input, { target: { value: "www.example.com" } });
+    expect(addBtn().disabled).toBe(false);
   });
 
   it("Provision button appears for all domains (including primary) and calls provision endpoint", async () => {

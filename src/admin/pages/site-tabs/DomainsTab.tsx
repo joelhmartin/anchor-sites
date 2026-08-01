@@ -5,7 +5,13 @@ import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
 import { Dialog, DialogContent, DialogDescription } from "../../ui/dialog.js";
 import { Input } from "../../ui/input.js";
+import { Label } from "../../ui/label.js";
 import { Spinner } from "../../ui/spinner.js";
+
+// D428 — client-side hostname validation before the round-trip: at least one
+// dot, valid DNS labels, an alphabetic TLD. Matches the inline-validation
+// pattern the slug fields elsewhere already use.
+const HOSTNAME_RE = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
 
 /**
  * Domains tab (P10-10.7; W2-DOM of the 2026-07-30 product audit).
@@ -161,6 +167,8 @@ function DomainsHelp() {
 export function DomainsTab({ siteId }: { siteId: string }) {
   const domains = useApi<{ domains: DomainRow[] }>(`/api/sites/${siteId}/domains`);
   const [hostname, setHostname] = useState("");
+  const hostnameTouched = hostname.trim().length > 0;
+  const hostnameValid = HOSTNAME_RE.test(hostname.trim().toLowerCase());
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [provisionResults, setProvisionResults] = useState<Record<string, ProvisionResult>>({});
@@ -192,7 +200,7 @@ export function DomainsTab({ siteId }: { siteId: string }) {
 
   async function addDomain(e: React.FormEvent) {
     e.preventDefault();
-    if (!hostname.trim()) return;
+    if (!HOSTNAME_RE.test(hostname.trim().toLowerCase())) return;
     setAddBusy(true);
     setAddError(null);
     try {
@@ -337,21 +345,31 @@ export function DomainsTab({ siteId }: { siteId: string }) {
       <Card>
         <CardContent className="pt-5">
           <form onSubmit={addDomain} className="flex flex-col gap-3">
-            <p className="text-sm font-medium">Add custom domain</p>
-            <div className="flex gap-2">
-              <Input
-                placeholder="hostname (e.g. www.example.com)"
-                value={hostname}
-                onChange={(e) => {
-                  setAddError(null);
-                  setHostname(e.target.value);
-                }}
-                className="flex-1"
-              />
-              <Button type="submit" disabled={addBusy || !hostname.trim()}>
-                {addBusy ? <Spinner /> : "Add domain"}
-              </Button>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="add-domain-hostname">Add custom domain</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="add-domain-hostname"
+                  placeholder="www.example.com"
+                  value={hostname}
+                  aria-invalid={hostnameTouched && !hostnameValid ? true : undefined}
+                  onChange={(e) => {
+                    setAddError(null);
+                    setHostname(e.target.value);
+                  }}
+                  className="flex-1"
+                />
+                <Button type="submit" disabled={addBusy || !hostnameValid}>
+                  {addBusy ? <Spinner /> : "Add domain"}
+                </Button>
+              </div>
             </div>
+            {hostnameTouched && !hostnameValid && (
+              <p className="text-xs text-red-600">
+                Enter a full hostname like <span className="font-mono">www.example.com</span> — a
+                domain with at least one dot and a valid extension.
+              </p>
+            )}
             {addError && <p className="text-sm text-red-600">{addError}</p>}
           </form>
         </CardContent>
