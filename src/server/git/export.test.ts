@@ -156,7 +156,7 @@ d("exportSite", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_export_sha).toBe(result.sha);
-    expect(state?.last_error).toBeNull();
+    expect(state?.last_export_error).toBeNull();
 
     // Every serialized file + the generated docs got a blob.
     expect(client.createBlobCalls.length).toBe(result.files);
@@ -206,7 +206,7 @@ d("exportSite", () => {
     );
 
     const state = await getGitState(db.getPool(), siteId);
-    expect(state?.last_error).toContain("simulated github outage");
+    expect(state?.last_export_error).toContain("simulated github outage");
   });
 
   // Fix round 1 (Critical): a repo with zero commits 409s on getRefSha
@@ -232,7 +232,7 @@ d("exportSite", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_export_sha).toBe(result.sha);
-    expect(state?.last_error).toBeNull();
+    expect(state?.last_export_error).toBeNull();
 
     // The now-bootstrapped repo takes the normal path on the next export:
     // getRefSha succeeds, and since nothing changed, it's a no-op — no

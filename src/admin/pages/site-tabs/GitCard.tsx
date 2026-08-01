@@ -13,7 +13,10 @@ type SiteGitState = {
   last_export_sha: string | null;
   last_import_sha: string | null;
   last_synced_at: string | null;
+  /** @deprecated D616 — legacy shared slot; read the per-direction ones below. */
   last_error: string | null;
+  last_export_error: string | null;
+  last_import_error: string | null;
   updated_at: string;
 };
 
@@ -71,6 +74,22 @@ export function GitCard({ siteId, slug }: { siteId: string; slug: string }) {
       reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't export.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // D416/D603: re-drive the site's most recent import (the one a transient
+  // GitHub blip likely dead-lettered). The server re-enqueues the last import
+  // payload; the handler is idempotent, so this is safe to click repeatedly.
+  async function reimportNow() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/git/import`, { method: "POST", body: {} });
+      reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't re-run import.");
     } finally {
       setBusy(false);
     }
@@ -162,7 +181,35 @@ export function GitCard({ siteId, slug }: { siteId: string; slug: string }) {
           )}
           {state?.last_export_sha && <p>Exported {shortSha(state.last_export_sha)}</p>}
           {state?.last_import_sha && <p>Imported {shortSha(state.last_import_sha)}</p>}
-          {state?.last_error && <p className="text-red-600">{state.last_error}</p>}
+          {/*
+           * D616/D415: each pipeline's failure gets its OWN labeled line —
+           * a successful export no longer erases an unresolved import error
+           * (they're separate columns now), and the label + timestamp tell
+           * the operator WHICH direction failed and WHEN, instead of a bare
+           * red string that could have come from either pipeline.
+           */}
+          {state?.last_export_error && (
+            <p className="text-red-600">
+              Export failed{state.updated_at ? ` (${relativeTime(state.updated_at)})` : ""}: {state.last_export_error}
+            </p>
+          )}
+          {state?.last_import_error && (
+            <div className="flex flex-col gap-1">
+              <p className="text-red-600">
+                Import failed{state.updated_at ? ` (${relativeTime(state.updated_at)})` : ""}: {state.last_import_error}
+              </p>
+              {/* D416/D603: manual re-drive of the last import for this site. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="self-start"
+                disabled={busy}
+                onClick={reimportNow}
+              >
+                Re-run import
+              </Button>
+            </div>
+          )}
         </div>
 
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}

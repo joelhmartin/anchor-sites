@@ -116,7 +116,7 @@ export async function exportSite(
     return { skipped: false, sha: commitSha, files: files.size };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await recordGitError(pool, siteId, message).catch(() => undefined);
+    await recordGitError(pool, siteId, "export", message).catch(() => undefined);
     throw err;
   }
 }

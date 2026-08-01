@@ -33,40 +33,61 @@ d("site_git_state repo", () => {
     expect(fetched).toMatchObject({ site_id: siteId, enabled: false });
   });
 
-  it("recordExport sets sha + last_synced_at and clears a previously recorded error", async () => {
+  it("recordExport sets sha + last_synced_at and clears ONLY the export error slot", async () => {
     const siteId2 = (await db.seedSite("git-state-repo-b")).id;
     await setGitEnabled(db.getPool(), siteId2, true);
-    await recordGitError(db.getPool(), siteId2, "boom");
+    await recordGitError(db.getPool(), siteId2, "export", "boom");
     let state = await getGitState(db.getPool(), siteId2);
-    expect(state!.last_error).toBe("boom");
+    expect(state!.last_export_error).toBe("boom");
 
     await recordExport(db.getPool(), siteId2, "abc123");
     state = await getGitState(db.getPool(), siteId2);
     expect(state!.last_export_sha).toBe("abc123");
     expect(state!.last_synced_at).not.toBeNull();
-    expect(state!.last_error).toBeNull();
+    expect(state!.last_export_error).toBeNull();
   });
 
-  it("recordImport sets last_import_sha + last_synced_at and clears a previously recorded error", async () => {
+  it("recordImport sets last_import_sha + last_synced_at and clears ONLY the import error slot", async () => {
     const siteId3 = (await db.seedSite("git-state-repo-c")).id;
     await setGitEnabled(db.getPool(), siteId3, true);
-    await recordGitError(db.getPool(), siteId3, "kaboom");
+    await recordGitError(db.getPool(), siteId3, "import", "kaboom");
 
     await recordImport(db.getPool(), siteId3, "def456");
     const state = await getGitState(db.getPool(), siteId3);
     expect(state!.last_import_sha).toBe("def456");
     expect(state!.last_synced_at).not.toBeNull();
-    expect(state!.last_error).toBeNull();
+    expect(state!.last_import_error).toBeNull();
   });
 
-  it("recordGitError truncates a 600-char message to 500 chars", async () => {
+  // D616: the whole point — one direction's success must not erase the other
+  // direction's unresolved error.
+  it("D616: a successful export does NOT erase an unresolved import error (and vice versa)", async () => {
+    const siteId = (await db.seedSite("git-state-repo-split")).id;
+    await setGitEnabled(db.getPool(), siteId, true);
+    await recordGitError(db.getPool(), siteId, "import", "import validation failed");
+
+    // A successful export lands — the import error must survive.
+    await recordExport(db.getPool(), siteId, "expsha1");
+    let state = await getGitState(db.getPool(), siteId);
+    expect(state!.last_import_error).toBe("import validation failed");
+    expect(state!.last_export_error).toBeNull();
+
+    // Now an export failure + a successful import: the export error survives.
+    await recordGitError(db.getPool(), siteId, "export", "non-fast-forward");
+    await recordImport(db.getPool(), siteId, "impsha1");
+    state = await getGitState(db.getPool(), siteId);
+    expect(state!.last_export_error).toBe("non-fast-forward");
+    expect(state!.last_import_error).toBeNull();
+  });
+
+  it("recordGitError truncates a 600-char message to 500 chars in the direction's slot", async () => {
     const siteId4 = (await db.seedSite("git-state-repo-d")).id;
     await setGitEnabled(db.getPool(), siteId4, true);
     const longMessage = "x".repeat(600);
-    await recordGitError(db.getPool(), siteId4, longMessage);
+    await recordGitError(db.getPool(), siteId4, "export", longMessage);
     const state = await getGitState(db.getPool(), siteId4);
-    expect(state!.last_error).toHaveLength(500);
-    expect(state!.last_error).toBe("x".repeat(500));
+    expect(state!.last_export_error).toHaveLength(500);
+    expect(state!.last_export_error).toBe("x".repeat(500));
   });
 
   it("cascade deletes the git state row when the site is deleted", async () => {

@@ -183,7 +183,7 @@ d("handleGitImport — validated apply + reporting", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_import_sha).toBe("abc1234567890");
-    expect(state?.last_error).toBeNull();
+    expect(state?.last_import_error).toBeNull();
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(client.commitComments).toHaveLength(0);
   });
@@ -210,7 +210,7 @@ d("handleGitImport — validated apply + reporting", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_import_sha).toBe("bad0000001");
-    expect(state?.last_error).toContain(path);
+    expect(state?.last_import_error).toContain(path);
 
     expect(client.commitComments).toHaveLength(1);
     expect(client.commitComments[0].body).toContain(path);
@@ -484,8 +484,8 @@ d("handleGitImport — validated apply + reporting", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_import_sha).toBe("cmt0000001");
-    expect(state?.last_error).toContain(path);
-    expect(state?.last_error).not.toContain("422");
+    expect(state?.last_import_error).toContain(path);
+    expect(state?.last_import_error).not.toContain("422");
     expect(warnSpy).toHaveBeenCalled();
 
     warnSpy.mockRestore();
@@ -528,7 +528,7 @@ d("handleGitImport — validated apply + reporting", () => {
 
     const state = await getGitState(db.getPool(), siteId);
     expect(state?.last_import_sha).toBe("mixed00001");
-    expect(state?.last_error).toContain(invalidPath);
+    expect(state?.last_import_error).toContain(invalidPath);
 
     expect(client.commitComments).toHaveLength(1);
     expect(client.commitComments[0].body).toContain(invalidPath);
@@ -552,6 +552,6 @@ d("handleGitImport — validated apply + reporting", () => {
     const state = await getGitState(db.getPool(), siteId);
     // The job threw before recordImport ran — the sha never advanced.
     expect(state?.last_import_sha).not.toBe("fetcherr001");
-    expect(state?.last_error).toContain("fixture missing content");
+    expect(state?.last_import_error).toContain("fixture missing content");
   });
 });

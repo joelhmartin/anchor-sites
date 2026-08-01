@@ -380,7 +380,7 @@ d("GitHub sync E2E gate (Task 8)", () => {
 
     const stateAfterImport = await getGitState(pool, siteId);
     expect(stateAfterImport?.last_import_sha).toBe(editCommitSha);
-    expect(stateAfterImport?.last_error).toBeNull();
+    expect(stateAfterImport?.last_import_error).toBeNull();
 
     // --- Restore round-trip: restoring the pre-import ("manual") revision returns the pre-import blocks. ---
     const restoreRes = await request(pagesApp)
@@ -443,7 +443,7 @@ d("GitHub sync E2E gate (Task 8)", () => {
     // file in it failed validation — matches git-import.test.ts's
     // "partially applied" contract.
     expect(stateAfterInvalid?.last_import_sha).toBe(invalidCommitSha);
-    expect(stateAfterInvalid?.last_error).toContain(`sites/${slug}/pages/home.json`);
+    expect(stateAfterInvalid?.last_import_error).toContain(`sites/${slug}/pages/home.json`);
 
     // --- Export-trailer push: loop prevention — webhook 204s, nothing enqueued. ---
     const trailerPayloadRaw = JSON.stringify(

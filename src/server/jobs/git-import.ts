@@ -63,11 +63,12 @@ import "../../blocks/index.js";
  *
  * `recordImport` runs whenever the loop completes without throwing — even
  * when some files failed validation, since the sha as a whole WAS
- * processed (the plan's "partially applied" case); `recordGitError` is
- * called AFTER `recordImport` in that case specifically so its
- * `last_error` write is the one left standing (`recordImport` itself always
- * clears `last_error`, so calling it second would erase the failure summary
- * `recordGitError` just wrote).
+ * processed (the plan's "partially applied" case); `recordGitError(...,
+ * "import", ...)` is called AFTER `recordImport` in that case specifically so
+ * its `last_import_error` write is the one left standing (`recordImport`
+ * clears `last_import_error`, so calling it second would erase the failure
+ * summary `recordGitError` just wrote). D616: these now touch the IMPORT
+ * error slot only, so an export failure's error is never disturbed here.
  *
  * Fix round 1 (Important 2): the commit-comment body is bounded (at most
  * `MAX_ITEMS_PER_SECTION` bulleted items per section, "…and N more"
@@ -396,12 +397,12 @@ export async function handleGitImport(data: GitImportInput, deps: GitImportDeps)
     // when some files failed validation (the "partially applied" case):
     // the sha as a whole was processed, and the comment carries what
     // didn't land. recordGitError (below) runs AFTER this specifically
-    // because recordImport always clears last_error; calling it second
+    // because recordImport clears last_import_error; calling it second
     // would erase the failure summary just written.
     await recordImport(pool, data.siteId, data.headSha);
 
     if (failures.length > 0) {
-      await recordGitError(pool, data.siteId, summarizeFailures(failures));
+      await recordGitError(pool, data.siteId, "import", summarizeFailures(failures));
     }
 
     if (failures.length > 0 || removed.length > 0 || ignored.length > 0) {
@@ -421,13 +422,13 @@ export async function handleGitImport(data: GitImportInput, deps: GitImportDeps)
           `[git.import] createCommitComment failed for site ${data.siteId} @ ${data.headSha}: ${message}`,
         );
         if (failures.length > 0) {
-          await recordGitError(pool, data.siteId, summarizeFailures(failures)).catch(() => undefined);
+          await recordGitError(pool, data.siteId, "import", summarizeFailures(failures)).catch(() => undefined);
         }
       }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await recordGitError(pool, data.siteId, message).catch(() => undefined);
+    await recordGitError(pool, data.siteId, "import", message).catch(() => undefined);
     throw err;
   }
 }

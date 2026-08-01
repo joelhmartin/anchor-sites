@@ -17,6 +17,8 @@ const ENABLED_STATE = {
   last_import_sha: "1234567abcdef000",
   last_synced_at: new Date().toISOString(),
   last_error: null,
+  last_export_error: null,
+  last_import_error: null,
   updated_at: new Date().toISOString(),
 };
 
@@ -80,16 +82,47 @@ describe("GitCard (GitHub sync Task 7)", () => {
     expect(screen.queryByText(/Exported/)).toBeNull();
   });
 
-  it("shows a last_error line in red when present", async () => {
+  it("D616/D415: labels an export failure on its own red line", async () => {
     global.fetch = vi.fn(async () =>
       json({
         ...CONFIGURED_ENABLED,
-        state: { ...ENABLED_STATE, last_error: "github export failed: 500" },
+        state: { ...ENABLED_STATE, last_export_error: "non-fast-forward" },
       }),
     ) as unknown as typeof fetch;
     render(<GitCard siteId="s1" slug="acme" />);
-    await waitFor(() => expect(screen.getByText("github export failed: 500")).toBeTruthy());
-    expect(screen.getByText("github export failed: 500").className).toContain("text-red-600");
+    const line = await screen.findByText(/Export failed/);
+    expect(line.textContent).toContain("non-fast-forward");
+    expect(line.className).toContain("text-red-600");
+  });
+
+  it("D616/D416: an import failure is labeled AND offers a re-run import trigger", async () => {
+    global.fetch = vi.fn(async () =>
+      json({
+        ...CONFIGURED_ENABLED,
+        state: { ...ENABLED_STATE, last_import_error: "home.json: unknown block type" },
+      }),
+    ) as unknown as typeof fetch;
+    render(<GitCard siteId="s1" slug="acme" />);
+    const line = await screen.findByText(/Import failed/);
+    expect(line.textContent).toContain("unknown block type");
+    expect(screen.getByRole("button", { name: "Re-run import" })).toBeTruthy();
+  });
+
+  it("D616: a successful export shown alongside an unresolved import error renders BOTH", async () => {
+    global.fetch = vi.fn(async () =>
+      json({
+        ...CONFIGURED_ENABLED,
+        state: {
+          ...ENABLED_STATE,
+          last_export_error: null,
+          last_import_error: "home.json: bad blocks",
+        },
+      }),
+    ) as unknown as typeof fetch;
+    render(<GitCard siteId="s1" slug="acme" />);
+    // Export sha still renders (success), and the import error is NOT erased.
+    await waitFor(() => expect(screen.getByText(/Exported abcdef1/)).toBeTruthy());
+    expect(screen.getByText(/Import failed/)).toBeTruthy();
   });
 
   it("Export now fires a POST to the export endpoint", async () => {
