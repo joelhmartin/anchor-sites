@@ -109,8 +109,69 @@ export type JobBoot = {
   stop: () => Promise<void>;
 };
 
+/**
+ * D1026 (W2-JOBS) — jobs-runner liveness, queryable from health surfaces.
+ *
+ * Before this, `bootJobs` failure logged "continuing without job runner"
+ * exactly once, then every subsequent enqueue silently returned `null`
+ * through scattered try/catch while `/healthz` still reported `ok`. The
+ * runner state is now module state that `/healthz` (app.ts) and the
+ * jobs-health endpoint (routes/admin-jobs.ts) both read:
+ *   - "up"       — bootJobs completed and handlers registered.
+ *   - "down"     — a boot attempt threw (the failure detail rides in
+ *                  `error`), or pg-boss reported a fatal error. This is the
+ *                  ONLY state that degrades /healthz's `ok`.
+ *   - "disabled" — no active runner and not a failure: JOBS_ENABLED=false /
+ *                  opts.disable, OR simply "boot not attempted in this
+ *                  process" (e.g. an integration test's createApp() that
+ *                  never calls bootJobs). Benign — /healthz stays ok.
+ */
+export type JobsRunnerStatus = "up" | "down" | "disabled";
+export type JobsRunnerState = {
+  status: JobsRunnerStatus;
+  error: string | null;
+  /** When the current state was entered (ISO). */
+  since: string;
+};
+
+/**
+ * D622 (W2-JOBS) — last pg-boss supervisor-loop error, queryable from the
+ * jobs-health endpoint. `boss.on("error")` fires when pg-boss's own
+ * maintenance loop (the thing that runs retries + expirations) hiccups; a
+ * bare console.error made a dying maintenance loop indistinguishable from a
+ * quiet day except by reading Cloud Logging.
+ */
+export type BossErrorRecord = { message: string; at: string };
+
 let bootPromise: Promise<JobBoot> | null = null;
 let bossInstance: PgBoss | null = null;
+let runnerState: JobsRunnerState = { status: "disabled", error: null, since: new Date().toISOString() };
+let lastBossError: BossErrorRecord | null = null;
+
+function setRunnerState(status: JobsRunnerStatus, error: string | null = null): void {
+  runnerState = { status, error, since: new Date().toISOString() };
+}
+
+/** D1026: current jobs-runner liveness (read by /healthz + jobs-health). */
+export function getJobsRunnerState(): JobsRunnerState {
+  return runnerState;
+}
+
+/**
+ * D1026: record that the job runner failed to start. Called by index.ts's
+ * boot try/catch — bootJobs itself resolves a no-op handle on `disable`, but
+ * a genuine start() throw propagates to the caller, which must mark the
+ * runner down so health surfaces stop lying.
+ */
+export function markJobsRunnerFailed(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  setRunnerState("down", message);
+}
+
+/** D622: most recent pg-boss supervisor-loop error, or null. */
+export function getLastBossError(): BossErrorRecord | null {
+  return lastBossError;
+}
 
 export type BootJobsOptions = {
   /**
@@ -135,6 +196,10 @@ export async function bootJobs(
   opts: BootJobsOptions = {},
 ): Promise<JobBoot> {
   if (opts.disable || process.env.JOBS_ENABLED === "false") {
+    // D1026: a deliberate no-op boot is "disabled", not "down" — health
+    // surfaces distinguish "we chose not to run jobs here" from "the runner
+    // fell over".
+    setRunnerState("disabled");
     // Construct a no-op handle so callers don't have to branch.
     const noop: JobBoot = {
       boss: undefined as unknown as PgBoss,
@@ -153,8 +218,14 @@ export async function bootJobs(
 
     const boss = new PgBoss({ connectionString });
     boss.on("error", (err) => {
-      // Avoid crashing the process on transient errors. Real handlers
-      // will surface failures via their own retry/dead-letter logic.
+      // D622: persist the supervisor-loop error so it's queryable from the
+      // jobs-health endpoint, not only from Cloud Logging. Still avoid
+      // crashing the process on transient errors — real handlers surface
+      // their own failures via retry/dead-letter logic.
+      lastBossError = {
+        message: err instanceof Error ? err.message : String(err),
+        at: new Date().toISOString(),
+      };
       // eslint-disable-next-line no-console
       console.error("[pg-boss] error", err);
     });
@@ -165,6 +236,9 @@ export async function bootJobs(
     if (opts.extraHandlers) {
       await opts.extraHandlers(boss);
     }
+
+    // D1026: handlers registered — the runner is live.
+    setRunnerState("up");
 
     const stop = async (): Promise<void> => {
       if (!bossInstance) return;
@@ -365,4 +439,6 @@ export async function registerHandlers(boss: PgBoss): Promise<void> {
 export function __resetJobsForTests(): void {
   bossInstance = null;
   bootPromise = null;
+  runnerState = { status: "disabled", error: null, since: new Date().toISOString() };
+  lastBossError = null;
 }

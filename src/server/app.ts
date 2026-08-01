@@ -96,7 +96,15 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   app.get("/healthz", async (_req: Request, res: Response) => {
     const db = await ping();
-    res.status(200).json({ ok: true, db });
+    // D1026: report the jobs-runner state here too. bootJobs failure used to
+    // log once then let every enqueue silently return null while /healthz
+    // still said ok — a down runner is now visible from the liveness probe.
+    // The overall `ok` stays true when jobs are deliberately "disabled"
+    // (JOBS_ENABLED=false); only a genuine "down" degrades it, so a config
+    // that intentionally runs no worker isn't reported as unhealthy.
+    const { getJobsRunnerState } = await import("./jobs/index.js");
+    const jobs = getJobsRunnerState();
+    res.status(200).json({ ok: db && jobs.status !== "down", db, jobs });
   });
 
   // Admin-only block preview harness. Gated to non-production envs only —

@@ -4,7 +4,7 @@ import express from "express";
 import { createApp } from "./app.js";
 import { mountViteDev } from "./vite-dev.js";
 import { pool } from "./db.js";
-import { bootJobs, stopJobs } from "./jobs/index.js";
+import { bootJobs, stopJobs, markJobsRunnerFailed } from "./jobs/index.js";
 import { verifyPluginMigrations } from "./plugins/loader.js";
 import { registerBuiltinPlugins } from "./plugins/builtin.js";
 
@@ -47,6 +47,10 @@ async function main() {
   try {
     await bootJobs(pool);
   } catch (err) {
+    // D1026: record the failure in queryable runner state so /healthz and
+    // the jobs-health endpoint report "down" instead of silently letting
+    // every enqueue return null while /healthz still says ok.
+    markJobsRunnerFailed(err);
     console.error("[server] pg-boss failed to start; continuing without job runner", err);
   }
 

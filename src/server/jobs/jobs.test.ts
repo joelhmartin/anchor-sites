@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../db.js";
-import { bootJobs, getBoss, stopJobs, __resetJobsForTests } from "./index.js";
+import {
+  bootJobs,
+  getBoss,
+  stopJobs,
+  __resetJobsForTests,
+  getJobsRunnerState,
+  getLastBossError,
+  markJobsRunnerFailed,
+} from "./index.js";
 
 const skip = !process.env.TEST_DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -78,4 +86,35 @@ d("pg-boss bootstrap (P3-T3.8 / D-030)", () => {
     await stopJobs();
     await expect(stopJobs()).resolves.toBeUndefined();
   }, 15_000);
+
+  // D1026 (W2-JOBS): the jobs-runner up/down/disabled state must be
+  // queryable so /healthz and the jobs-health endpoint can report it —
+  // before this, a bootJobs failure logged once and then every enqueue
+  // silently returned null while /healthz still said "ok".
+  it("D1026: runner state is 'disabled' before any boot, 'up' after a successful boot", async () => {
+    // Default/reset = "disabled" (benign — no boot attempted), NOT "down"
+    // (which is reserved for a recorded failure and degrades /healthz).
+    expect(getJobsRunnerState().status).toBe("disabled");
+    await bootJobs(pool, { connectionString: process.env.TEST_DATABASE_URL });
+    expect(getJobsRunnerState().status).toBe("up");
+  }, 15_000);
+
+  it("D1026: JOBS_ENABLED=false reports runner state 'disabled', not a failure", async () => {
+    process.env.JOBS_ENABLED = "false";
+    await bootJobs(pool);
+    expect(getJobsRunnerState().status).toBe("disabled");
+  });
+
+  it("D1026: markJobsRunnerFailed records a 'down' state with the error detail", () => {
+    markJobsRunnerFailed(new Error("boot blew up"));
+    const state = getJobsRunnerState();
+    expect(state.status).toBe("down");
+    expect(state.error).toContain("boot blew up");
+  });
+
+  // D622 (W2-JOBS): boss.on("error") used to be a bare console.error — a
+  // dying pg-boss maintenance loop was indistinguishable from a quiet day.
+  it("D622: getLastBossError is null until a boss error is recorded", () => {
+    expect(getLastBossError()).toBeNull();
+  });
 });
