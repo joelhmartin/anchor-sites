@@ -368,3 +368,72 @@ d("PATCH /api/sites/:siteId/media/:assetId (D417 — alt edit)", () => {
     expect(r.status).toBe(400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DELETE /api/sites/:siteId/media/:assetId (D106/D408/D511) — soft archive.
+// ---------------------------------------------------------------------------
+d("DELETE /api/sites/:siteId/media/:assetId (D106/D408/D511)", () => {
+  let pool: Pool;
+  let app: express.Express;
+  let siteId: string;
+  const sign = vi.fn(async (args: { gcsKey: string; contentType: string }) => ({
+    upload_url: "https://example/x",
+    expires_at: new Date().toISOString(),
+    headers: { "Content-Type": args.contentType },
+  }));
+
+  beforeAll(async () => {
+    await runMigrate("up", Infinity);
+    pool = new Pool({ connectionString: TEST_DB_URL });
+    await seed(pool);
+    const r = await pool.query<{ id: string }>(`SELECT id FROM sites WHERE slug = 'muldoon-dental'`);
+    siteId = r.rows[0].id;
+    app = buildApp(pool, sign);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.end().catch(() => undefined);
+  });
+
+  async function makeAsset() {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO media_assets (site_id, gcs_key, content_type, alt)
+       VALUES ($1, $2, 'image/jpeg', 'x') RETURNING id`,
+      [siteId, `originals/${siteId}/${crypto.randomUUID()}.jpg`],
+    );
+    return r.rows[0].id;
+  }
+
+  it("401 without token", async () => {
+    const r = await request(app).delete(`/api/sites/${siteId}/media/${crypto.randomUUID()}`);
+    expect(r.status).toBe(401);
+  });
+
+  it("404 for an unknown asset", async () => {
+    const r = await request(app)
+      .delete(`/api/sites/${siteId}/media/${crypto.randomUUID()}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(404);
+  });
+
+  it("archives an asset (sets archived_at) and drops it from the listing", async () => {
+    const assetId = await makeAsset();
+    const del = await request(app)
+      .delete(`/api/sites/${siteId}/media/${assetId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(del.status).toBe(200);
+    expect(del.body.archived.id).toBe(assetId);
+
+    const row = await pool.query<{ archived_at: string | null }>(
+      `SELECT archived_at FROM media_assets WHERE id = $1`,
+      [assetId],
+    );
+    expect(row.rows[0].archived_at).not.toBeNull();
+
+    // Second delete is a 404 — it's already gone from the library.
+    const again = await request(app)
+      .delete(`/api/sites/${siteId}/media/${assetId}`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(again.status).toBe(404);
+  });
+});

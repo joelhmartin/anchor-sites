@@ -469,15 +469,18 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
           res.status(404).json({ error: "site not found" });
           return;
         }
+        // D511 (W2-TERM): archived assets are the media terminal state — they
+        // leave the library the moment they're removed. Both the count and
+        // the page exclude `archived_at IS NOT NULL`.
         const totalRes = await pool.query<{ count: string }>(
-          `SELECT COUNT(*) FROM media_assets WHERE site_id = $1`,
+          `SELECT COUNT(*) FROM media_assets WHERE site_id = $1 AND archived_at IS NULL`,
           [siteId],
         );
         const result = await pool.query(
           `SELECT id, alt, content_type, focal_point, variants_status,
                   variants, width, height, created_at
              FROM media_assets
-            WHERE site_id = $1
+            WHERE site_id = $1 AND archived_at IS NULL
             ORDER BY created_at DESC
             LIMIT $2 OFFSET $3`,
           [siteId, limit, offset],

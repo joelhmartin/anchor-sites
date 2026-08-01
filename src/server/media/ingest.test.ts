@@ -498,4 +498,32 @@ d("ingestImageFromUrl bounded download (item 3)", () => {
     expect(second.deduped).toBeUndefined();
     expect(second.asset_id).not.toBe(first.asset_id);
   });
+
+  it("D1015: a failed storage.save marks the row 'failed', not stuck 'pending'", async () => {
+    const url = `https://images.example.com/save-fail-${Date.now()}.png`;
+    const storage = {
+      bucket: () => ({
+        file: () => ({
+          save: async () => {
+            throw new Error("GCS 503 backend error");
+          },
+        }),
+      }),
+    } as unknown as Storage;
+
+    await expect(
+      ingestImageFromUrl(
+        db.getPool(),
+        { siteId, url, alt: "will fail to save" },
+        { fetchFn: fakeFetch(200, "image/png", PNG_BUF), storage, enqueue: async () => "job-1" },
+      ),
+    ).rejects.toThrow(/GCS 503/);
+
+    const row = await db.getPool().query<{ variants_status: string; last_error: string | null }>(
+      `SELECT variants_status, last_error FROM media_assets WHERE site_id = $1 AND source_url = $2`,
+      [siteId, url],
+    );
+    expect(row.rows[0].variants_status).toBe("failed");
+    expect(row.rows[0].last_error).toMatch(/GCS 503/);
+  });
 });

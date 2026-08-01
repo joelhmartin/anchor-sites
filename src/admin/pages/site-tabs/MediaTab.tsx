@@ -41,10 +41,12 @@ function MediaTile({
   siteId,
   asset,
   onSaved,
+  onRemoved,
 }: {
   siteId: string;
   asset: MediaAsset;
   onSaved: () => void;
+  onRemoved: () => void;
 }) {
   const thumb = pickThumb(asset.variants);
   const ready = asset.variants_status === "ready" && thumb;
@@ -52,6 +54,7 @@ function MediaTile({
   const [alt, setAlt] = useState(asset.alt ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   async function saveAlt() {
     setBusy(true);
@@ -67,6 +70,27 @@ function MediaTile({
       setError(err instanceof Error ? err.message : "Couldn’t save alt text.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  // D106/D408/D511 — remove (archive) the asset from the library, confirm-gated.
+  async function remove() {
+    if (
+      !window.confirm(
+        "Remove this image from the library? Pages already using it keep working; " +
+          "it just won’t appear here anymore.",
+      )
+    ) {
+      return;
+    }
+    setRemoving(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/media/${asset.id}`, { method: "DELETE" });
+      onRemoved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t remove the image.");
+      setRemoving(false);
     }
   }
 
@@ -112,14 +136,25 @@ function MediaTile({
           </div>
         </div>
       ) : (
-        <button
-          type="button"
-          className="self-start text-xs text-indigo-600 hover:text-indigo-700"
-          onClick={() => setEditing(true)}
-        >
-          {asset.alt ? "Edit alt text" : "Add alt text"}
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            className="text-xs text-indigo-600 hover:text-indigo-700"
+            onClick={() => setEditing(true)}
+          >
+            {asset.alt ? "Edit alt text" : "Add alt text"}
+          </button>
+          <button
+            type="button"
+            className="text-xs text-red-600 hover:text-red-700 disabled:opacity-50"
+            onClick={remove}
+            disabled={removing}
+          >
+            {removing ? "Removing…" : "Remove"}
+          </button>
+        </div>
       )}
+      {!editing && error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   );
 }
@@ -239,7 +274,7 @@ export function MediaTab({ siteId }: { siteId: string }) {
             </div>
           )}
           {media.map((asset) => (
-            <MediaTile key={asset.id} siteId={siteId} asset={asset} onSaved={reload} />
+            <MediaTile key={asset.id} siteId={siteId} asset={asset} onSaved={reload} onRemoved={reload} />
           ))}
         </div>
       )}

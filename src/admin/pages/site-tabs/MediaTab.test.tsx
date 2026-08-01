@@ -132,6 +132,34 @@ describe("MediaTab (P4-T4.14)", () => {
     expect(getCount).toBeGreaterThan(1); // reloaded after save
   });
 
+  it("removes an asset via DELETE (confirm-gated) and refreshes (D106/D408/D511)", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/media/m1" && method === "DELETE") {
+        return json({ archived: { id: "m1", archived_at: "2026-07-31T00:00:00Z" } });
+      }
+      getCount += 1;
+      return json({ media: getCount === 1 ? [READY] : [] });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<MediaTab siteId="s1" />);
+    await waitFor(() => expect(screen.getByAltText("A logo")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(confirmSpy).toHaveBeenCalled();
+
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(
+        (c) => String(c[0]) === "/api/sites/s1/media/m1" && (c[1] as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(del).toBeTruthy();
+    });
+    await waitFor(() => expect(screen.queryByAltText("A logo")).toBeNull());
+  });
+
   it("makes tiles keyboard-focusable (D431)", async () => {
     global.fetch = vi.fn(async () => json({ media: [READY] })) as unknown as typeof fetch;
     render(<MediaTab siteId="s1" />);

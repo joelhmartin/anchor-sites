@@ -267,14 +267,31 @@ export async function ingestImageFromUrl(
     [assetId, input.siteId, gcsKey, contentType, input.alt, input.url, input.credit ?? null],
   );
 
+  // D1015 (W2-TERM): the row is committed BEFORE the object exists (D509
+  // requires the app-side uuid up front). If storage.save throws, the row
+  // would otherwise be stuck 'pending' forever with a gcs_key naming no
+  // object — invisible, unretried, un-GC'd. Mark it 'failed' (mirrors
+  // media-process-upload's failure branch) so it's a recognizable terminal
+  // state the orphan/pending sweeps can reclaim, then rethrow.
   const storage = deps.storage ?? getStorage();
-  await storage
-    .bucket(MEDIA_BUCKET)
-    .file(gcsKey)
-    .save(buf, {
-      metadata: { contentType, cacheControl: "public, max-age=31536000, immutable" },
-      resumable: false,
-    });
+  try {
+    await storage
+      .bucket(MEDIA_BUCKET)
+      .file(gcsKey)
+      .save(buf, {
+        metadata: { contentType, cacheControl: "public, max-age=31536000, immutable" },
+        resumable: false,
+      });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await pool
+      .query(`UPDATE media_assets SET variants_status = 'failed', last_error = $1 WHERE id = $2`, [
+        msg.slice(0, 500),
+        assetId,
+      ])
+      .catch(() => undefined);
+    throw err;
+  }
 
   const enqueue =
     deps.enqueue ??

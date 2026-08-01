@@ -277,6 +277,45 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
   );
 
   // -------------------------------------------------------------------------
+  // DELETE /api/sites/:siteId/media/:assetId — D106/D408/D511: the operator's
+  // media terminal state. No delete/archive existed on any surface, so every
+  // upload (including abandoned-pending and failed-variant rows) accreted
+  // forever, and the `archived_at` column was dead.
+  //
+  // This is a SOFT archive (sets archived_at, drops the asset from library
+  // listings) — deliberately NOT an immediate hard delete of the GCS bytes.
+  // An asset can still be referenced by a published page's snapshot; deleting
+  // its objects out from under the live site is exactly the kind of
+  // destructive surprise a one-click tile remove must not cause. Byte
+  // reclamation is the orphan-GC sweep's job (D513): it hard-deletes the GCS
+  // objects + row for an asset that is BOTH archived AND unreferenced, past a
+  // grace period. Idempotent: re-archiving an already-archived asset 404s
+  // (it's gone from the library either way).
+  // -------------------------------------------------------------------------
+  router.delete(
+    "/sites/:siteId/media/:assetId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId, assetId } = req.params;
+      try {
+        const upd = await pool.query<{ id: string; archived_at: string }>(
+          `UPDATE media_assets SET archived_at = now()
+            WHERE id = $1 AND site_id = $2 AND archived_at IS NULL
+            RETURNING id, archived_at`,
+          [assetId, siteId],
+        );
+        if (upd.rowCount === 0) {
+          res.status(404).json({ error: "media asset not found for this site" });
+          return;
+        }
+        res.json({ archived: upd.rows[0] });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // POST /api/sites/:siteId/media/stock-search — Task 8 (inline editing)
   //
   // Thin wrapper around searchPixabay for the operator media picker. Hit
