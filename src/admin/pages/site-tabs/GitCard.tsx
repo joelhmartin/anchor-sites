@@ -48,10 +48,23 @@ function relativeTime(iso: string): string {
  * manual "Export now" trigger (`POST .../git/export`, only meaningful —
  * and only enabled — once sync is turned on for this site).
  */
-export function GitCard({ siteId, slug }: { siteId: string; slug: string }) {
+export function GitCard({
+  siteId,
+  slug,
+  // D415: bounded post-export poll window. Defaults are production-sized;
+  // tests inject small values so the poll resolves instantly.
+  exportPollIntervalMs = 2000,
+  exportPollMaxTries = 8,
+}: {
+  siteId: string;
+  slug: string;
+  exportPollIntervalMs?: number;
+  exportPollMaxTries?: number;
+}) {
   const { data, loading, error, reload } = useApi<GitStatus>(`/api/sites/${siteId}/git`);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   async function toggleEnabled(next: boolean) {
     setBusy(true);
@@ -69,10 +82,30 @@ export function GitCard({ siteId, slug }: { siteId: string; slug: string }) {
   async function exportNow() {
     setBusy(true);
     setActionError(null);
+    setExportStatus(null);
     try {
       await apiFetch(`/api/sites/${siteId}/git/export`, { method: "POST", body: {} });
+      // D415: the export runs asynchronously in a job — a bare reload() here
+      // races the worker and re-renders the PRE-export state. Show "Export
+      // queued…" and poll the git endpoint for a bounded window until the
+      // job's OUTCOME lands (export sha advances or an export error appears),
+      // so the card reflects what actually happened.
+      setExportStatus("Export queued…");
+      const before = data?.state?.last_export_sha ?? null;
+      for (let i = 0; i < exportPollMaxTries; i++) {
+        await new Promise((r) => setTimeout(r, exportPollIntervalMs));
+        const fresh = await apiFetch<GitStatus>(`/api/sites/${siteId}/git`).catch(() => null);
+        if (
+          fresh?.state &&
+          (fresh.state.last_export_sha !== before || fresh.state.last_export_error)
+        ) {
+          break;
+        }
+      }
+      setExportStatus(null);
       reload();
     } catch (err) {
+      setExportStatus(null);
       setActionError(err instanceof Error ? err.message : "Couldn't export.");
     } finally {
       setBusy(false);
@@ -212,6 +245,7 @@ export function GitCard({ siteId, slug }: { siteId: string; slug: string }) {
           )}
         </div>
 
+        {exportStatus && <p className="text-sm text-zinc-500">{exportStatus}</p>}
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
       </CardContent>
     </Card>

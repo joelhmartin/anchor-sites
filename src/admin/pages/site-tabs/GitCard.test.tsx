@@ -136,7 +136,7 @@ describe("GitCard (GitHub sync Task 7)", () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    render(<GitCard siteId="s1" slug="acme" />);
+    render(<GitCard siteId="s1" slug="acme" exportPollIntervalMs={5} exportPollMaxTries={2} />);
     await waitFor(() => expect(screen.getByText(/Exported abcdef1/)).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: "Export now" }));
@@ -147,6 +147,34 @@ describe("GitCard (GitHub sync Task 7)", () => {
       );
       expect(postCall).toBeTruthy();
     });
+  });
+
+  it("D415: after export, polls the git endpoint and reflects the job outcome (new export sha)", async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/git/export" && method === "POST") {
+        return json({ queued: true }, 202);
+      }
+      // First GET = pre-export state; subsequent GETs = the job has landed a
+      // NEW export sha, which the bounded poll must pick up.
+      getCount += 1;
+      return json(
+        getCount === 1
+          ? CONFIGURED_ENABLED
+          : { ...CONFIGURED_ENABLED, state: { ...ENABLED_STATE, last_export_sha: "newsha99999999" } },
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<GitCard siteId="s1" slug="acme" exportPollIntervalMs={5} exportPollMaxTries={5} />);
+    await waitFor(() => expect(screen.getByText(/Exported abcdef1/)).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Export now" }));
+
+    // The poll picks up the new sha and the card re-renders with it.
+    await waitFor(() => expect(screen.getByText(/Exported newsha9/)).toBeTruthy());
   });
 
   it("Enable/Disable toggle fires a POST with the flipped enabled value", async () => {
