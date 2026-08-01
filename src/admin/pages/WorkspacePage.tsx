@@ -903,6 +903,8 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                 pages={pages}
                 pagesLoading={pagesLoading}
                 onEditingChange={setPreviewEditing}
+                // D306 — the frame browsed to a sibling page; sync the switcher.
+                onPreviewNavigated={setPreviewPageId}
               />
             </div>
           </div>

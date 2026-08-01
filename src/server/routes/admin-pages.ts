@@ -19,7 +19,7 @@ import type { ResolvedSite } from "../../middleware/resolveSite.js";
 import { loadAssetsForBlocks } from "../render-hydration.js";
 import { mintPreviewToken, prefersHtml, previewQueryAuth, sendPreviewHtmlError } from "../preview-token.js";
 import { getOverlayJs, makeNonce } from "../preview-overlay.js";
-import { CAROUSEL_ISLAND_CSP_HASH } from "../csp.js";
+import { CAROUSEL_ISLAND_CSP_HASH, PREVIEW_NAV_NOTIFIER_CSP_HASH, PREVIEW_NAV_NOTIFIER_JS } from "../csp.js";
 // Item 6 (final review) — preview-only site-relative link rewriting.
 import { buildPreviewHrefResolver } from "../preview-links.js";
 import { buildEditableFieldMap, buildUrlValues } from "../../blocks/editable-fields.js";
@@ -647,7 +647,10 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
             "Content-Security-Policy",
             "sandbox allow-scripts; default-src 'self' https: data:; " +
               "style-src 'unsafe-inline' https: data:; img-src https: data:; " +
-              `script-src ${CAROUSEL_ISLAND_CSP_HASH}; frame-ancestors 'self'`,
+              // D306 — the page-nav notifier's hash rides alongside the
+              // carousel island. A hash allows exactly those bytes; nothing
+              // else inline runs.
+              `script-src ${CAROUSEL_ISLAND_CSP_HASH} ${PREVIEW_NAV_NOTIFIER_CSP_HASH}; frame-ancestors 'self'`,
           );
         }
         // Item 9 (CodeRabbit — preview refresh): the client now busts the
@@ -686,7 +689,19 @@ export function adminPagesRouter(opts: AdminPagesOptions = {}): Router {
           query: req.query as Record<string, unknown>,
         });
         const { html } = renderPage(site, page, { assets, path: previewPath, editable, rewriteHref });
-        res.status(200).type("html").send(html);
+        // D306 — inject the page-nav notifier into the PLAIN preview only
+        // (edit mode uses the authenticated bridge). It carries this page's
+        // id in a `data-page-id` attribute (the script BYTES are constant, so
+        // one CSP hash covers every page) and postMessages it to the shell so
+        // the switcher can follow an in-frame link click. The id is a
+        // validated UUID route param; escape the attribute defensively.
+        let out = html;
+        if (!editable) {
+          const safePageId = String(pageId).replace(/"/g, "&quot;");
+          const notifier = `<script data-page-id="${safePageId}">${PREVIEW_NAV_NOTIFIER_JS}</script>`;
+          out = html.includes("</body>") ? html.replace("</body>", `${notifier}</body>`) : html + notifier;
+        }
+        res.status(200).type("html").send(out);
       } catch (err) {
         // D304 — a render/DB failure that reaches an iframe navigation gets a
         // styled in-frame document instead of the global handler's raw JSON

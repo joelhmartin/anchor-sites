@@ -53,6 +53,9 @@ export interface SitePreviewPanelProps {
    * Refresh button and page switcher (whose effects are queued, not applied,
    * during an edit session). */
   onEditingChange?: (editing: boolean) => void;
+  /** D306 — the frame navigated (via an in-frame link) to a sibling page;
+   * the parent syncs its page switcher. Only fires for real, known pages. */
+  onPreviewNavigated?: (pageId: string) => void;
 }
 
 /**
@@ -85,6 +88,7 @@ export function SitePreviewPanel({
   pages,
   pagesLoading,
   onEditingChange,
+  onPreviewNavigated,
 }: SitePreviewPanelProps) {
   // D316 — only self-fetch when the parent doesn't hand us the list. When it
   // does (WorkspacePage), we use its fresh copy and skip the redundant GET.
@@ -299,6 +303,26 @@ export function SitePreviewPanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // D306 — the plain preview posts which page it's showing (a notifier
+  // script the server injects) so the shell's switcher can follow an
+  // in-frame link click instead of going stale. Strictly validated: the
+  // message must come from OUR iframe, carry the expected shape, and name a
+  // page we actually know about. Ignored during edit (the bridge owns
+  // messaging then) and for the page already selected (no redundant churn).
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.source !== iframeRef.current?.contentWindow) return;
+      const d = e.data as { source?: unknown; type?: unknown; pageId?: unknown } | null;
+      if (!d || d.source !== "ac-preview" || d.type !== "nav" || typeof d.pageId !== "string") return;
+      if (edit) return;
+      if (!effectivePages.some((p) => p.id === d.pageId)) return;
+      if (d.pageId === effectivePreviewPageId) return;
+      onPreviewNavigated?.(d.pageId);
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [edit, effectivePages, effectivePreviewPageId, onPreviewNavigated]);
 
   // D311 — tell the parent whether an edit session is live so it can
   // honestly gate the Refresh button and page switcher (whose effects are

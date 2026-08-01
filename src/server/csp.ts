@@ -30,6 +30,25 @@ export const CAROUSEL_ISLAND_CSP_HASH = `'sha256-${createHash("sha256")
   .update(CAROUSEL_ISLAND_JS, "utf8")
   .digest("base64")}'`;
 
+/**
+ * D306 — the plain (non-edit) draft preview injects this tiny notifier so the
+ * workspace shell can learn which page the frame is actually showing after an
+ * in-frame link click (the sandbox is opaque-origin, so the parent can read
+ * neither the frame's URL nor its DOM). It reads the page id from its own
+ * `data-page-id` attribute (constant script BYTES → stable hash) and
+ * postMessages it to the parent once, on load. The Studio side
+ * (`SitePreviewPanel`) validates `event.source`, the shape, and that the id
+ * is a real page before syncing the switcher. Edit mode uses the separate
+ * authenticated bridge instead and does NOT inject this.
+ */
+export const PREVIEW_NAV_NOTIFIER_JS =
+  `(function(){try{var s=document.currentScript;var id=s?s.getAttribute('data-page-id'):null;` +
+  `if(id&&window.parent&&window.parent!==window){window.parent.postMessage({source:'ac-preview',type:'nav',pageId:id},'*');}}catch(e){}})();`;
+
+export const PREVIEW_NAV_NOTIFIER_CSP_HASH = `'sha256-${createHash("sha256")
+  .update(PREVIEW_NAV_NOTIFIER_JS, "utf8")
+  .digest("base64")}'`;
+
 function originFromUrl(url: string | undefined): string | null {
   if (!url) return null;
   try {

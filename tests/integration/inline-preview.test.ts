@@ -84,24 +84,48 @@ d("inline preview (admin-pages.ts, Inline Editing Task 4)", () => {
     expect(csp).not.toContain("'none'");
   });
 
-  it("plain preview (no ?edit=1): script-src allows ONLY the carousel island hash, no markers, no boot script", async () => {
+  it("plain preview (no ?edit=1): script-src allows ONLY hash-sources (carousel island + D306 nav notifier), no markers, no boot script", async () => {
     const site = await db.seedSite("inline-preview-plain");
     const page = await db.seedPage(site.id, "home", heroAndRichText);
 
     const res = await auth(request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview`));
 
     expect(res.status).toBe(200);
-    // D1200 — was `script-src 'none'`; now the single hash-source for the
-    // carousel enhancement island (and nothing else — no 'unsafe-inline',
-    // no nonce, no hosts).
+    // D1200/D306 — script-src is HASH-ONLY: the carousel enhancement island
+    // plus the page-nav notifier (two sha256 sources), and nothing else — no
+    // 'none', no 'unsafe-inline', no nonce, no hosts.
     const csp = res.headers["content-security-policy"];
-    expect(csp).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+';/);
+    const scriptSrc = csp.match(/script-src ([^;]*)/)?.[1] ?? "";
+    expect(scriptSrc).toMatch(/'sha256-[A-Za-z0-9+/=]+'/);
+    expect((scriptSrc.match(/'sha256-/g) ?? []).length).toBe(2);
     expect(csp).not.toContain("script-src 'none'");
-    // script-src is hash-only (style-src legitimately keeps 'unsafe-inline').
-    expect(csp).toMatch(/script-src 'sha256-[^;]*;/);
-    expect(csp.match(/script-src ([^;]*)/)?.[1]).not.toContain("'unsafe-inline'");
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
+    expect(scriptSrc).not.toContain("'nonce-");
     expect(res.text).not.toContain("data-block-id");
     expect(res.text).not.toContain("window.__AC_EDIT_BOOT__");
+  });
+
+  // D306 — the plain preview injects a page-nav notifier that postMessages
+  // this page's id to the shell, so the switcher can follow an in-frame click.
+  it("D306: plain preview injects the page-nav notifier carrying this page's id", async () => {
+    const site = await db.seedSite("preview-navnotifier");
+    const page = await db.seedPage(site.id, "home", heroAndRichText);
+
+    const res = await auth(request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview`));
+    expect(res.status).toBe(200);
+    expect(res.text).toContain(`data-page-id="${page.id}"`);
+    expect(res.text).toContain("postMessage({source:'ac-preview',type:'nav'");
+  });
+
+  it("D306: edit mode does NOT inject the nav notifier (the authenticated bridge owns messaging)", async () => {
+    const site = await db.seedSite("preview-navnotifier-edit");
+    const page = await db.seedPage(site.id, "home", heroAndRichText);
+
+    const res = await auth(
+      request(app).get(`/api/sites/${site.id}/pages/${page.id}/preview?edit=1&bridge=tok_abc123`),
+    );
+    expect(res.status).toBe(200);
+    expect(res.text).not.toContain("source:'ac-preview'");
   });
 
   // ── D304 — styled in-frame error documents (the sandboxed opaque-origin

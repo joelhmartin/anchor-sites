@@ -193,6 +193,59 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     expect(iframe.getAttribute("src")).toBe(`/api/sites/s1/pages/pg1/preview?v=0`);
   });
 
+  // D306 — the frame posts which page it navigated to; the shell syncs. The
+  // listener is strict: only OUR iframe, the expected shape, and a real page.
+  it("D306: reports an in-frame navigation to a known sibling page (and ignores spoofed/unknown/foreign messages)", async () => {
+    mockPagesApi("s1", [
+      { id: "pg1", slug: "home", title: "Home", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+      { id: "pg2", slug: "about", title: "About", status: "draft", updated_at: "2026-06-01T00:00:00Z" },
+    ]);
+    const onPreviewNavigated = vi.fn();
+    render(
+      <SitePreviewPanel
+        siteId="s1"
+        previewPageId="pg1"
+        previewNonce={0}
+        agentBusy={false}
+        pages={[{ id: "pg1" }, { id: "pg2" }]}
+        onPreviewNavigated={onPreviewNavigated}
+      />,
+    );
+    const iframe = (await screen.findByTitle("Draft preview")) as HTMLIFrameElement;
+
+    // A valid message from OUR iframe naming a sibling page → reported.
+    act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "ac-preview", type: "nav", pageId: "pg2" },
+          source: iframe.contentWindow,
+        }),
+      ),
+    );
+    await waitFor(() => expect(onPreviewNavigated).toHaveBeenCalledWith("pg2"));
+
+    // Unknown page id → ignored.
+    onPreviewNavigated.mockClear();
+    act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "ac-preview", type: "nav", pageId: "ghost" },
+          source: iframe.contentWindow,
+        }),
+      ),
+    );
+    // A message from a DIFFERENT source (not our frame) → ignored.
+    act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "ac-preview", type: "nav", pageId: "pg2" },
+          source: window,
+        }),
+      ),
+    );
+    expect(onPreviewNavigated).not.toHaveBeenCalled();
+  });
+
   // A preview token is scoped to ONE site (the server rejects it for any
   // other), so switching sites must re-mint, never reuse.
   it("re-mints for a new siteId instead of reusing the previous site's token", async () => {
