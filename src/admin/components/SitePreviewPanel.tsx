@@ -300,6 +300,27 @@ export function SitePreviewPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // D311 — tell the parent whether an edit session is live so it can
+  // honestly gate the Refresh button and page switcher (whose effects are
+  // queued, not applied, mid-session).
+  useEffect(() => {
+    onEditingChange?.(edit);
+  }, [edit, onEditingChange]);
+
+  // D326 — guard against losing an in-flight edit by closing the tab. While
+  // the session has unsaved (dirty) or still-saving changes, a beforeunload
+  // prompt gives the operator a chance to stay; the inline editor only
+  // flushes on React unmount, which a hard tab close never triggers.
+  useEffect(() => {
+    if (!edit || (saveState !== "dirty" && saveState !== "saving")) return;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [edit, saveState]);
+
   // Agent-busy guard: force readonly while the drawer reports the AI is
   // actively working; re-run on `editToken` so a freshly-created handle
   // immediately picks up the current busy state.
@@ -431,8 +452,16 @@ export function SitePreviewPanel({
     <div data-testid="draft-preview-panel" className="flex h-full w-full flex-col">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2">
         <div className="flex items-center gap-2">
+          {/* D326 — during the ~2s debounce the editor sits in `dirty` with
+              no indication anything was unsaved; surface it (and the
+              beforeunload guard above backs it up). */}
+          {edit && saveState === "dirty" && (
+            <span className="text-xs text-amber-600">Unsaved changes…</span>
+          )}
           {edit && saveState === "saving" && <span className="text-xs text-zinc-500">Saving…</span>}
-          {edit && saveState === "saved" && <span className="text-xs text-zinc-500">Saved · just now</span>}
+          {/* D326 — "Saved · just now" was a static string that stayed "just
+              now" forever; drop the false timestamp. */}
+          {edit && saveState === "saved" && <span className="text-xs text-zinc-500">Saved</span>}
           {edit && saveState === "error" && (
             // Minor (a): match the real behavior — a terminal save failure
             // does NOT keep auto-retrying (inline-editor.ts's

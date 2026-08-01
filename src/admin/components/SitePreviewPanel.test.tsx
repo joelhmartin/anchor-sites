@@ -583,11 +583,16 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     await openPreviewInEditMode();
     const events = inlineEditorCalls[0].events as { onSaveStateChange: (s: string) => void };
 
+    // D326 — the dirty state now has its own indication (was blank before).
+    act(() => events.onSaveStateChange("dirty"));
+    await waitFor(() => expect(screen.getByText("Unsaved changes…")).toBeTruthy());
+
     act(() => events.onSaveStateChange("saving"));
     await waitFor(() => expect(screen.getByText("Saving…")).toBeTruthy());
 
     act(() => events.onSaveStateChange("saved"));
-    await waitFor(() => expect(screen.getByText("Saved · just now")).toBeTruthy());
+    // D326 — no false static "· just now" timestamp anymore.
+    await waitFor(() => expect(screen.getByText("Saved")).toBeTruthy());
 
     act(() => events.onSaveStateChange("error"));
     // Minor (a): match the real retry behavior — runSaveCycle retries
@@ -600,6 +605,26 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     act(() => events.onSaveStateChange("conflict"));
     await waitFor(() =>
       expect(screen.getByText(/Page changed underneath you/)).toBeTruthy(),
+    );
+  });
+
+  // D326 — a beforeunload guard while there are unsaved/saving edits (the
+  // inline editor only flushes on React unmount, which a hard tab close never
+  // triggers).
+  it("registers a beforeunload guard while dirty/saving and removes it once saved", async () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    await openPreviewInEditMode();
+    const events = inlineEditorCalls[0].events as { onSaveStateChange: (s: string) => void };
+
+    act(() => events.onSaveStateChange("dirty"));
+    await waitFor(() =>
+      expect(addSpy.mock.calls.some(([type]) => type === "beforeunload")).toBe(true),
+    );
+
+    act(() => events.onSaveStateChange("saved"));
+    await waitFor(() =>
+      expect(removeSpy.mock.calls.some(([type]) => type === "beforeunload")).toBe(true),
     );
   });
 
