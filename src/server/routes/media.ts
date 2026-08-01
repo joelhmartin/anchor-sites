@@ -170,9 +170,20 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
   // POST /api/sites/:siteId/media/:assetId/complete — P3-T3.11
   //
   // Enqueues media.process-upload after the browser PUTs to GCS.
-  // Idempotent: if the row is already processing or ready, returns 202 with
-  // current state (no re-enqueue). 404 if the asset isn't owned by the site.
+  // Idempotent: if the row is already ready (or freshly processing), returns
+  // 202 with current state (no re-enqueue). 404 if the asset isn't owned by
+  // the site.
+  //
+  // D604 (W2-JOBS): 'processing' is NOT unconditionally terminal here. A
+  // worker that died mid-processing (SIGTERM on scale-in, crash) leaves the
+  // row stuck at 'processing' forever — the handler's catch never ran, so it
+  // never reached 'failed', and this route used to refuse re-enqueue for ANY
+  // 'processing' row. Treat a STALE processing row (never reached
+  // processed_at, and older than the 15-min pg-boss expiry window) as
+  // retryable, exactly like the 'failed' branch — otherwise the asset is
+  // permanently stuck with no operator affordance.
   // -------------------------------------------------------------------------
+  const STALE_PROCESSING_MS = 15 * 60 * 1000;
   router.post(
     "/sites/:siteId/media/:assetId/complete",
     admin,
@@ -180,8 +191,12 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
     async (req: Request, res: Response, next: NextFunction) => {
       const { siteId, assetId } = req.params;
       try {
-        const row = await pool.query<{ variants_status: string }>(
-          `SELECT variants_status FROM media_assets
+        const row = await pool.query<{
+          variants_status: string;
+          processed_at: string | null;
+          created_at: string;
+        }>(
+          `SELECT variants_status, processed_at, created_at FROM media_assets
             WHERE id = $1 AND site_id = $2`,
           [assetId, siteId],
         );
@@ -190,14 +205,30 @@ export function mediaRouter(opts: MediaRouterOptions = {}): Router {
           return;
         }
 
-        const status = row.rows[0].variants_status;
-        if (status === "processing" || status === "ready") {
+        const { variants_status: status, processed_at, created_at } = row.rows[0];
+        const isStaleProcessing =
+          status === "processing" &&
+          processed_at == null &&
+          Date.now() - new Date(created_at).getTime() > STALE_PROCESSING_MS;
+
+        // 'ready' is terminal; a FRESH 'processing' row is genuinely in
+        // flight — neither re-enqueues. Only a stale-processing (D604) or a
+        // pending/failed row falls through to the enqueue below.
+        if (status === "ready" || (status === "processing" && !isStaleProcessing)) {
           res.status(202).json({ asset_id: assetId, variants_status: status, enqueued: false });
           return;
         }
 
         await enqueue(MEDIA_PROCESS_UPLOAD, { asset_id: assetId });
-        res.status(202).json({ asset_id: assetId, variants_status: "pending", enqueued: true });
+        res.status(202).json({
+          asset_id: assetId,
+          // Report the actual current status: a stale-processing re-drive is
+          // still 'processing' (the handler will re-flip + reprocess), a
+          // pending/failed re-enqueue is 'pending'.
+          variants_status: isStaleProcessing ? "processing" : "pending",
+          enqueued: true,
+          ...(isStaleProcessing ? { retried_stale: true } : {}),
+        });
       } catch (err) {
         next(err);
       }

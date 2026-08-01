@@ -254,7 +254,7 @@ d("POST /api/sites/:siteId/media/:assetId/complete (P3-T3.11)", () => {
     expect(call[1]).toEqual({ asset_id: assetId });
   });
 
-  it("idempotent: 'ready' or 'processing' returns 202 without re-enqueue", async () => {
+  it("idempotent: 'ready' or FRESH 'processing' returns 202 without re-enqueue", async () => {
     const r1 = await request(app)
       .post(`/api/sites/${muldoonSiteId}/media/${await makeAsset("ready")}/complete`)
       .set("X-Admin-Token", ADMIN_TOKEN);
@@ -267,6 +267,36 @@ d("POST /api/sites/:siteId/media/:assetId/complete (P3-T3.11)", () => {
     expect(r2.status).toBe(202);
     expect(r2.body.enqueued).toBe(false);
 
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("D604: a STALE 'processing' row (never processed, >15min old) is retryable — re-enqueues", async () => {
+    const assetId = await makeAsset("processing");
+    // Age the row past the 15-min stale window with processed_at still null
+    // (the worker-died-mid-processing signature).
+    await pool.query(
+      `UPDATE media_assets SET created_at = now() - interval '20 minutes', processed_at = NULL WHERE id = $1`,
+      [assetId],
+    );
+    const r = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/media/${assetId}/complete`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(202);
+    expect(r.body).toMatchObject({ enqueued: true, retried_stale: true });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("D604: a 'ready' row aged past 15min is still terminal — never re-enqueues", async () => {
+    const assetId = await makeAsset("ready");
+    await pool.query(
+      `UPDATE media_assets SET created_at = now() - interval '20 minutes', processed_at = now() WHERE id = $1`,
+      [assetId],
+    );
+    const r = await request(app)
+      .post(`/api/sites/${muldoonSiteId}/media/${assetId}/complete`)
+      .set("X-Admin-Token", ADMIN_TOKEN);
+    expect(r.status).toBe(202);
+    expect(r.body.enqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
   });
 });
