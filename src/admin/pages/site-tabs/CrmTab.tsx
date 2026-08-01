@@ -1,5 +1,8 @@
+import { useEffect, useRef, useState } from "react";
+import { apiFetch } from "../../lib/apiFetch.js";
 import { useApi } from "../../lib/useApi.js";
 import type { SiteDetail } from "../../lib/siteTypes.js";
+import { Button } from "../../ui/button.js";
 import { Card, CardContent } from "../../ui/card.js";
 import { Spinner } from "../../ui/spinner.js";
 
@@ -33,6 +36,47 @@ function BlockUsageCard() {
   );
 }
 
+/**
+ * Copy-to-clipboard control (D437). The old inline handler gave zero feedback
+ * on success and swallowed clipboard failure — an operator couldn't tell
+ * whether the number reached the clipboard. This shows a transient "Copied"
+ * (announced via aria-live) on success and a "Copy failed" on rejection.
+ */
+function CopyButton({ value }: { value: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  async function copy() {
+    if (timer.current) clearTimeout(timer.current);
+    try {
+      await navigator.clipboard.writeText(value);
+      setState("copied");
+    } catch {
+      setState("error");
+    }
+    timer.current = setTimeout(() => setState("idle"), 2000);
+  }
+
+  return (
+    <span className="flex items-center gap-2">
+      <span aria-live="polite" className="text-xs text-zinc-500">
+        {state === "copied" ? "Copied" : state === "error" ? "Copy failed" : ""}
+      </span>
+      <button
+        type="button"
+        className="text-xs text-indigo-600 hover:text-indigo-700"
+        onClick={copy}
+      >
+        Copy
+      </button>
+    </span>
+  );
+}
+
 function PhoneNumbersCard({ siteId }: { siteId: string }) {
   const { data, loading, error } = useApi<PhoneNumbersResponse>(
     `/api/sites/${siteId}/crm/phone-numbers`,
@@ -58,13 +102,7 @@ function PhoneNumbersCard({ siteId }: { siteId: string }) {
                     className="flex items-center justify-between gap-4 rounded border border-zinc-200 px-3 py-2"
                   >
                     <span className="font-mono text-sm text-zinc-700">{p.display || p.number}</span>
-                    <button
-                      type="button"
-                      className="text-xs text-indigo-600 hover:text-indigo-700"
-                      onClick={() => navigator.clipboard.writeText(p.number).catch(() => undefined)}
-                    >
-                      Copy
-                    </button>
+                    <CopyButton value={p.number} />
                   </li>
                 ))}
               </ul>
@@ -86,6 +124,50 @@ function PhoneNumbersCard({ siteId }: { siteId: string }) {
  * Shows the site's CRM link, tracking phone numbers, and usage notes
  * for crm_form + PhoneNumber blocks. Read-only proxy via GET /api/sites/:id/crm/phone-numbers.
  */
+function UnprovisionedCrmCard({ siteId }: { siteId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function retry() {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/sites/${siteId}/crm/provision`, { method: "POST", body: {} });
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't provision CRM. Try again shortly.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      {/* D425 — operator-appropriate copy: no infrastructure secret names in a
+          product surface, and a real retry action instead of "recreate the
+          site". */}
+      <p className="text-sm text-zinc-500">
+        This site isn't connected to anchor-hub yet, so tracking numbers and forms aren't
+        available. Connection usually happens automatically when the site is created; if it
+        didn't, retry it here.
+      </p>
+      {done ? (
+        <p className="text-sm text-green-700">
+          Connection requested. Reload this tab in a moment to see the CRM details.
+        </p>
+      ) : (
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={retry} disabled={busy}>
+            {busy ? <Spinner /> : "Retry CRM connection"}
+          </Button>
+          {error && <span className="text-sm text-red-600">{error}</span>}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function CrmTab({ site }: { site: SiteDetail }) {
   const hascrm = Boolean(site.crm_site_id);
 
@@ -107,11 +189,7 @@ export function CrmTab({ site }: { site: SiteDetail }) {
               </p>
             </>
           ) : (
-            <p className="text-sm text-zinc-500">
-              This site has not been provisioned in the CRM yet. Create the site to trigger
-              auto-provisioning, or check the <strong>CRM_BASE_URL</strong> /{" "}
-              <strong>CRM_API_KEY</strong> secrets.
-            </p>
+            <UnprovisionedCrmCard siteId={site.id} />
           )}
         </CardContent>
       </Card>

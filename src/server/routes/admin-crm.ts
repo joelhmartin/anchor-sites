@@ -27,6 +27,58 @@ export function adminCrmRouter(opts: AdminCrmOptions = {}): Router {
   // P12-T12.6: rate-limit the CRM proxy to prevent fan-out abuse.
   const phoneLimiter = rateLimit(opts.phoneRateLimit ?? { max: 30, windowMs: 60_000 });
 
+  // POST /api/sites/:siteId/crm/provision — D425 retry-provision.
+  //
+  // The CRM site is provisioned once as a fire-and-forget step during site
+  // creation (create-site.ts's `provisionCrm` thunk); if anchor-hub was
+  // unreachable then, the site is left with `crm_site_id = NULL` and the
+  // manage UI previously offered no recourse but recreating the site. This
+  // re-runs exactly that provisioning call and persists the returned id. A
+  // client that returns no id (CRM disabled / not configured) yields a 503 so
+  // the UI can say "CRM isn't set up" rather than silently no-op.
+  router.post(
+    "/sites/:siteId/crm/provision",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { siteId } = req.params;
+        const row = await pool.query<{ display_name: string; crm_site_id: string | null }>(
+          `SELECT display_name, crm_site_id FROM sites WHERE id = $1`,
+          [siteId],
+        );
+        if (!row.rowCount) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        // Already provisioned — idempotent success, don't double-create.
+        if (row.rows[0].crm_site_id) {
+          res.json({ crm_site_id: row.rows[0].crm_site_id, already_provisioned: true });
+          return;
+        }
+        const domainRow = await pool.query<{ hostname: string }>(
+          `SELECT hostname FROM site_domains WHERE site_id = $1 AND is_primary = true LIMIT 1`,
+          [siteId],
+        );
+        const primaryDomain = domainRow.rows[0]?.hostname ?? "";
+        const { crmSiteId } = await crmClient.provisionSite(
+          siteId,
+          row.rows[0].display_name,
+          primaryDomain,
+        );
+        if (!crmSiteId) {
+          res.status(503).json({
+            error: "CRM isn't configured for this environment, so there's nothing to provision.",
+          });
+          return;
+        }
+        await pool.query(`UPDATE sites SET crm_site_id = $1 WHERE id = $2`, [crmSiteId, siteId]);
+        res.json({ crm_site_id: crmSiteId });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // GET /api/sites/:siteId/crm/phone-numbers
   router.get(
     "/sites/:siteId/crm/phone-numbers",

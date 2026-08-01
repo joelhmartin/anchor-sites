@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { CrmTab } from "./CrmTab.js";
 import type { SiteDetail } from "../../lib/siteTypes.js";
 import { setAdminToken, clearAdminToken } from "../../lib/adminToken.js";
@@ -35,9 +35,43 @@ describe("CrmTab (P11-T11.8)", () => {
     global.fetch = realFetch;
   });
 
-  it("shows 'not provisioned' when crm_site_id is null", () => {
+  it("shows an operator-appropriate unprovisioned state with a retry action (D425)", () => {
     render(<CrmTab site={BASE_SITE} />);
-    expect(screen.getByText(/not been provisioned/i)).toBeTruthy();
+    expect(screen.getByText(/isn't connected to anchor-hub yet/i)).toBeTruthy();
+    // No infrastructure secret names leak into the product surface.
+    expect(screen.queryByText(/CRM_BASE_URL/)).toBeNull();
+    expect(screen.queryByText(/CRM_API_KEY/)).toBeNull();
+    expect(screen.getByRole("button", { name: /retry crm connection/i })).toBeTruthy();
+  });
+
+  it("posts to the CRM provision route when retry is clicked (D425)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ crm_site_id: "crm-new" }, 200));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<CrmTab site={BASE_SITE} />);
+    fireEvent.click(screen.getByRole("button", { name: /retry crm connection/i }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.find(
+          (c) => String(c[0]) === `/api/sites/${BASE_SITE.id}/crm/provision` &&
+            (c[1] as RequestInit | undefined)?.method === "POST",
+        ),
+      ).toBeTruthy(),
+    );
+    await waitFor(() => expect(screen.getByText(/connection requested/i)).toBeTruthy());
+  });
+
+  it("gives feedback when a tracking number is copied (D437)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const site = { ...BASE_SITE, crm_site_id: "crm-xyz" };
+    global.fetch = vi.fn().mockResolvedValue(
+      json({ phone_numbers: [{ id: "p1", number: "+15550001111", display: "(555) 000-1111" }] }),
+    );
+    render(<CrmTab site={site} />);
+    await waitFor(() => expect(screen.getByText("(555) 000-1111")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(writeText).toHaveBeenCalledWith("+15550001111");
+    await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
   });
 
   it("shows crm_site_id when set", () => {
