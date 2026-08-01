@@ -139,6 +139,27 @@ describe("PagesTab (P4-T4.13)", () => {
     expect(body.slug).toBeUndefined(); // omitted → server defaults to the template's slug
   });
 
+  it("opening one create form closes the other (D432)", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/templates")) {
+        return json({ templates: [{ id: "pt1", name: "Promo block", pages_count: 1 }] });
+      }
+      return json({ pages: [PAGE_A] });
+    }) as unknown as typeof fetch;
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Home")).toBeTruthy());
+
+    // Open "+ New page" → its Title field is present.
+    fireEvent.click(screen.getByRole("button", { name: "+ New page" }));
+    expect(screen.getByLabelText("Title")).toBeTruthy();
+
+    // Open "Add from template" → the new-page Title field is gone (exclusive).
+    fireEvent.click(screen.getByRole("button", { name: "Add from template" }));
+    await waitFor(() => expect(screen.getByLabelText("Page template")).toBeTruthy());
+    expect(screen.queryByLabelText("Title")).toBeNull();
+  });
+
   it("surfaces a duplicate-slug 409 inline", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method ?? "GET";

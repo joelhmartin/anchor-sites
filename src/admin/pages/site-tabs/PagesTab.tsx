@@ -41,7 +41,12 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
   const navigate = useNavigate();
   const pages = data?.pages ?? [];
 
-  const [showForm, setShowForm] = useState(false);
+  // D432 — the "+ New page" and "Add from template" forms are two competing
+  // creation flows; a single `mode` keeps them mutually exclusive on screen
+  // (opening one closes the other) instead of stacking both open at once.
+  const [mode, setMode] = useState<"none" | "new" | "template">("none");
+  const showForm = mode === "new";
+  const showTemplateForm = mode === "template";
   const [pageSlug, setPageSlug] = useState("");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,7 +54,6 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
 
   // "Add from template" (P7-T7.9). Page templates are fetched lazily when the
   // form opens (keeps the tab's mount-time fetch to just the pages list).
-  const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [pageTemplates, setPageTemplates] = useState<{ id: string; name: string; pages_count: number }[]>([]);
   const [tplLoading, setTplLoading] = useState(false);
   const [tplId, setTplId] = useState("");
@@ -64,9 +68,9 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
   const canAddFromTemplate = tplId !== "" && tplSlugValid && !tplBusy;
 
   async function toggleTemplateForm() {
-    const next = !showTemplateForm;
-    setShowTemplateForm(next);
-    if (next) {
+    const opening = mode !== "template";
+    setMode(opening ? "template" : "none");
+    if (opening) {
       setTplError(null);
       setTplId("");
       setTplSlug("");
@@ -95,7 +99,7 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
         method: "POST",
         body: { template_id: tplId, slug: tplSlug.trim() || undefined, title: tplTitle.trim() || undefined },
       });
-      setShowTemplateForm(false);
+      setMode("none");
       reload();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -120,7 +124,7 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
       });
       setPageSlug("");
       setTitle("");
-      setShowForm(false);
+      setMode("none");
       reload();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -141,7 +145,7 @@ export function PagesTab({ siteId, slug }: { siteId: string; slug: string }) {
           <Button size="sm" variant="outline" onClick={toggleTemplateForm}>
             {showTemplateForm ? "Cancel" : "Add from template"}
           </Button>
-          <Button size="sm" onClick={() => setShowForm((v) => !v)}>
+          <Button size="sm" onClick={() => setMode((m) => (m === "new" ? "none" : "new"))}>
             {showForm ? "Cancel" : "+ New page"}
           </Button>
         </div>
