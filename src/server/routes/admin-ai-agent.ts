@@ -8,6 +8,7 @@ import {
   getOrCreateConversation,
   getConversation,
   listConversations,
+  archiveConversation,
   appendMessage,
   listMessages,
   claimConversationTurn,
@@ -358,14 +359,61 @@ export function adminAiAgentRouter(opts: AdminAiAgentOptions = {}): Router {
 
   // -------------------------------------------------------------------------
   // GET /sites/:siteId/agent/conversations — list, most-recently-active first.
+  // D324/D517: archived conversations are hidden by default (the workspace
+  // bootstrap adopts the one live thread); `?include_archived=1` returns the
+  // full history for the workspace's conversation-history surface.
   // -------------------------------------------------------------------------
   router.get(
     "/sites/:siteId/agent/conversations",
     admin,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const conversations = await listConversations(pool, req.params.siteId);
+        const includeArchived =
+          req.query.include_archived === "1" || req.query.include_archived === "true";
+        const conversations = await listConversations(pool, req.params.siteId, { includeArchived });
         res.status(200).json({ conversations });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // PATCH /sites/:siteId/agent/conversations/:conversationId — D108/D517/D1104:
+  // archive a conversation (the ONLY mutable transition here). Without this,
+  // each site's single non-archived conversation (D302's one-per-site index)
+  // was immortal: no route or tool ever set 'archived', so a site was stuck
+  // with one everlasting thread. Archiving frees the one-per-site slot, so the
+  // next message get-or-creates a FRESH conversation — "New conversation".
+  //
+  // Goes through `archiveConversation` (repo.ts), which refuses while a turn
+  // is `running` (archiving mid-build is undefined territory) — that refusal
+  // surfaces as 409 here, distinct from a 404 for an unknown/cross-tenant id.
+  // -------------------------------------------------------------------------
+  const patchConversationPayload = z.object({ status: z.literal("archived") });
+  router.patch(
+    "/sites/:siteId/agent/conversations/:conversationId",
+    admin,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const parsed = patchConversationPayload.safeParse(req.body);
+      if (!parsed.success) {
+        invalidPayload(res, parsed.error);
+        return;
+      }
+      const { siteId, conversationId } = req.params;
+      try {
+        const conversation = await getConversation(pool, conversationId, siteId);
+        if (!conversation) {
+          res.status(404).json({ error: "conversation not found" });
+          return;
+        }
+        const archived = await archiveConversation(pool, conversationId);
+        if (!archived) {
+          // archiveConversation only refuses while status='running'.
+          res.status(409).json({ error: "can’t archive a conversation while its build is running" });
+          return;
+        }
+        res.status(200).json({ conversation: { ...conversation, status: "archived" } });
       } catch (err) {
         next(err);
       }

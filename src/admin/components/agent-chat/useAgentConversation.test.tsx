@@ -428,3 +428,57 @@ describe("useAgentConversation — inter-round settle debounce (final review, it
     expect(result.current.usageText).toBe("150 tokens today · +150 this turn");
   });
 });
+
+describe("useAgentConversation — D1104/D108 new conversation (archive + reset)", () => {
+  const realFetch = global.fetch;
+  beforeEach(() => {
+    setAdminToken("tok");
+    emitters = {};
+    streamAgentEvents.mockClear();
+  });
+  afterEach(() => {
+    cleanup();
+    clearAdminToken();
+    global.fetch = realFetch;
+  });
+
+  it("PATCHes status=archived and resets to a blank conversation", async () => {
+    const conversation = { id: "c1", site_id: "s1", title: "T", status: "active", token_usage: {} };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/agent/conversations" && method === "GET") {
+        return json({ conversations: [conversation] });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1" && method === "GET") {
+        return json({ conversation, messages: [] });
+      }
+      if (url === "/api/sites/s1/agent/conversations/c1" && method === "PATCH") {
+        return json({ conversation: { ...conversation, status: "archived" } });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useAgentConversation({ siteId: "s1", active: true, onSiteChanged: () => undefined }),
+    );
+    await flush();
+    expect(result.current.conversation?.id).toBe("c1");
+
+    await act(async () => {
+      await result.current.newConversation();
+    });
+
+    const patch = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        String(input) === "/api/sites/s1/agent/conversations/c1" &&
+        (init as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(patch).toBeTruthy();
+    expect(JSON.parse((patch![1] as RequestInit).body as string)).toEqual({ status: "archived" });
+    // Reset to a clean slate.
+    expect(result.current.conversation).toBeNull();
+    expect(result.current.items).toEqual([]);
+  });
+});

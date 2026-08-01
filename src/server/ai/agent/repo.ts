@@ -108,15 +108,24 @@ export async function getConversation(
   return r.rows[0] ?? null;
 }
 
-export async function listConversations(pool: Pool, siteId: string): Promise<AiConversation[]> {
+export async function listConversations(
+  pool: Pool, siteId: string, opts: { includeArchived?: boolean } = {},
+): Promise<AiConversation[]> {
   // NOTE: ORDER BY must reference the qualified table column, not the bare
   // "updated_at" name — CONV_COLS aliases that name to a to_char'd (ms-
   // truncated) string, and Postgres's ORDER BY prefers a matching SELECT-list
   // output alias over the real column for a bare identifier. Sorting on the
   // truncated string instead of the real timestamptz made ordering flaky
   // whenever two rows landed in the same millisecond.
+  //
+  // D517/D324 (W2-TERM): archived conversations are hidden by default — the
+  // workspace bootstrap and default listing show only the ONE live
+  // conversation (D302's one-per-site invariant). The history surface passes
+  // `includeArchived` to see retired threads.
   const r = await pool.query<AiConversation>(
-    `SELECT ${CONV_COLS} FROM ai_conversations WHERE site_id = $1 ORDER BY ai_conversations.updated_at DESC`,
+    `SELECT ${CONV_COLS} FROM ai_conversations
+      WHERE site_id = $1 ${opts.includeArchived ? "" : "AND status <> 'archived'"}
+      ORDER BY ai_conversations.updated_at DESC`,
     [siteId],
   );
   return r.rows;

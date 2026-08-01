@@ -385,6 +385,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
 
   const {
     items, draft, setDraft, sending, busy, reconnecting, conversation, error, usageText, send, stop,
+    newConversation,
   } = useAgentConversation({
     siteId,
     active: true,
@@ -438,8 +439,26 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
         {/* Task B6 — the wordmark replaces AdminLayout's sidebar (now
             skipped entirely for this route) as the way back to the sites
             list, and takes the place of the old "Studio chat" label. */}
-        <div className="shrink-0 px-4 pb-2 pt-4">
+        <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-4">
           <StudioWordmark className="text-sm" />
+          {/* D1104/D324 — retire the current thread and start fresh, so a site
+              is never stuck with one immortal conversation. Hidden until
+              there's a conversation to close; disabled mid-build. */}
+          {conversation && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm("Start a new conversation? This archives the current one — its history is kept.")) {
+                  void newConversation();
+                }
+              }}
+              disabled={busy}
+              className="text-xs font-medium text-zinc-500 hover:text-zinc-800 disabled:opacity-40"
+              title="Archive this conversation and start a new one"
+            >
+              New conversation
+            </button>
+          )}
         </div>
 
         {aiError && (

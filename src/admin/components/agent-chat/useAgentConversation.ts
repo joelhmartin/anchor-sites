@@ -60,6 +60,9 @@ export type UseAgentConversationResult = {
   usageText: string;
   send: (overrideText?: string) => Promise<void>;
   stop: () => void;
+  /** D1104/D108 — archive the current conversation and reset to a fresh one
+   * ("New conversation"). The next `send()` get-or-creates a new thread. */
+  newConversation: () => Promise<void>;
 };
 
 function todayKey(): string {
@@ -578,6 +581,39 @@ export function useAgentConversation({
     }
   }
 
+  /**
+   * D1104/D108 — retire the current conversation and start fresh. Archiving
+   * frees the one-per-site slot (D302's unique index), so the next `send()`
+   * get-or-creates a brand-new thread instead of forever resuming the same
+   * immortal one. Refuses while a build is running (the server's
+   * archiveConversation refuses too → 409); a failed archive leaves the slot
+   * taken, so we DON'T reset local state in that case.
+   */
+  async function newConversation() {
+    if (conversation?.status === "running" || sending) return;
+    const cid = conversationId;
+    if (cid) {
+      try {
+        await apiFetch(`/api/sites/${siteId}/agent/conversations/${cid}`, {
+          method: "PATCH",
+          body: { status: "archived" },
+        });
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Couldn't archive this conversation.");
+        return;
+      }
+    }
+    tailAbortRef.current?.abort();
+    clearSettleTimer();
+    setConversationId(null);
+    setConversation(null);
+    setItems([]);
+    setDraft("");
+    setError(null);
+    lastMessageIdRef.current = null;
+    seenMessageIdsRef.current = new Set();
+  }
+
   const usage = conversation?.token_usage?.[todayKey()] ?? { input: 0, output: 0 };
   const totalToday = usage.input + usage.output;
   const deltaTotal = lastTurnDelta ? lastTurnDelta.input + lastTurnDelta.output : null;
@@ -597,5 +633,6 @@ export function useAgentConversation({
     usageText,
     send,
     stop,
+    newConversation,
   };
 }

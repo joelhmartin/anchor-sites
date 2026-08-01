@@ -227,6 +227,62 @@ d("agent HTTP API (integration, Task 10)", () => {
     expect(detail.body.messages).toEqual([]);
   });
 
+  // ── W2-TERM / D108/D517/D1104/D324: conversation archive + history ──
+
+  it("D108/D517: PATCH status=archived archives the conversation; it's hidden by default, visible with include_archived", async () => {
+    const site = await db.seedSite("agent-routes-archive");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+
+    const patched = await auth(
+      request(app).patch(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    ).send({ status: "archived" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.conversation.status).toBe("archived");
+
+    // Hidden from the default listing.
+    const listed = await auth(request(app).get(`/api/sites/${site.id}/agent/conversations`));
+    expect(listed.body.conversations.map((c: { id: string }) => c.id)).not.toContain(conversationId);
+
+    // Visible in the history surface.
+    const history = await auth(
+      request(app).get(`/api/sites/${site.id}/agent/conversations?include_archived=1`),
+    );
+    expect(history.body.conversations.map((c: { id: string }) => c.id)).toContain(conversationId);
+  });
+
+  it("D1104: archiving frees the one-per-site slot — the next create is a fresh conversation", async () => {
+    const site = await db.seedSite("agent-routes-archive-frees");
+    const first = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const firstId = first.body.conversation.id;
+    await auth(request(app).patch(`/api/sites/${site.id}/agent/conversations/${firstId}`)).send({
+      status: "archived",
+    });
+    const second = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    expect(second.status).toBe(201); // brand-new, not the archived one
+    expect(second.body.conversation.id).not.toBe(firstId);
+  });
+
+  it("D517: PATCH refuses (409) while a turn is running, 404 for an unknown id", async () => {
+    const site = await db.seedSite("agent-routes-archive-guards");
+    const created = await auth(request(app).post(`/api/sites/${site.id}/agent/conversations`)).send({});
+    const conversationId = created.body.conversation.id;
+    await db.getPool().query(`UPDATE ai_conversations SET status = 'running' WHERE id = $1`, [
+      conversationId,
+    ]);
+    const running = await auth(
+      request(app).patch(`/api/sites/${site.id}/agent/conversations/${conversationId}`),
+    ).send({ status: "archived" });
+    expect(running.status).toBe(409);
+
+    const unknown = await auth(
+      request(app).patch(
+        `/api/sites/${site.id}/agent/conversations/00000000-0000-0000-0000-000000000000`,
+      ),
+    ).send({ status: "archived" });
+    expect(unknown.status).toBe(404);
+  });
+
   // ── W2-CONC / D302: one conversation per site — POST is get-or-create ──
 
   it("D302: a second create POST returns the SAME conversation with 200, not a twin", async () => {
