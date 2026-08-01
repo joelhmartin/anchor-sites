@@ -12,7 +12,6 @@ import { resolveCrmClient } from "../crm/resolve.js";
 import type { CrmClient } from "../crm/client.js";
 import { getBoss, CRM_SYNC_JOB } from "../jobs/index.js";
 import type { CrmSyncInput } from "../crm/sync-job.js";
-import { SYSTEM_TEMPLATES_SITE_SLUG } from "../templates/system-site.js";
 import { PAGE_HAS_UNPUBLISHED_CHANGES_SQL } from "../publish-snapshot.js";
 
 /**
@@ -80,18 +79,19 @@ export function adminSitesRouter(opts: AdminSitesOptions = {}): Router {
     admin,
     async (_req: Request, res: Response, next: NextFunction) => {
       try {
-        // Excludes the reserved system site that owns template gallery
-        // cover images (Task C4 fix round 1) — it's not a real site and
-        // has nothing an operator would ever manage here.
+        // D502: exclude reserved SYSTEM sites (the template-gallery covers
+        // bucket) by their `is_system` flag — not by a magic slug string.
+        // A real operator-archived USER site (status='archived',
+        // is_system=false) is deliberately NOT excluded: it shows up badged
+        // "archived" so the operator can see and restore it.
         const result = await pool.query(
           `SELECT s.id, s.slug, s.display_name, s.status, s.created_at,
                   COUNT(p.id)::int AS pages_count
              FROM sites s
              LEFT JOIN pages p ON p.site_id = s.id
-            WHERE s.slug != $1
+            WHERE NOT s.is_system
             GROUP BY s.id
             ORDER BY s.created_at DESC`,
-          [SYSTEM_TEMPLATES_SITE_SLUG],
         );
         res.json({ sites: result.rows });
       } catch (err) {

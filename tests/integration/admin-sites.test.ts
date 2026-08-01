@@ -97,6 +97,24 @@ d("admin sites API — GET /api/sites (P4-T4.2)", () => {
     const slugs = r.body.sites.map((s: { slug: string }) => s.slug);
     expect(slugs).not.toContain(SYSTEM_TEMPLATES_SITE_SLUG);
   });
+
+  it("D502: excludes system sites by is_system, NOT by status — an archived USER site still lists", async () => {
+    await ensureSystemTemplatesSite(pool);
+    // A real operator-archived user site: same status='archived' as the
+    // covers site, but is_system=false. It must appear (badged) so the
+    // operator can find and restore it.
+    await pool.query(
+      `INSERT INTO sites (slug, display_name, status, is_system) VALUES ($1, $2, 'archived', false)`,
+      ["d502-archived-user-site", "Archived User Site"],
+    );
+    const r = await request(app).get("/api/sites").set("X-Admin-Token", ADMIN_TOKEN);
+    const rows = r.body.sites as { slug: string; status: string }[];
+    const archived = rows.find((s) => s.slug === "d502-archived-user-site");
+    expect(archived).toBeDefined();
+    expect(archived?.status).toBe("archived");
+    // The system covers site (also 'archived') stays hidden.
+    expect(rows.map((s) => s.slug)).not.toContain(SYSTEM_TEMPLATES_SITE_SLUG);
+  });
 });
 
 d("admin sites API — detail + pages (P4-T4.3)", () => {
