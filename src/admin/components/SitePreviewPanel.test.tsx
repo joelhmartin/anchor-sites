@@ -693,7 +693,7 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     await waitFor(() => expect(screen.queryByText("Edit link")).toBeNull());
   });
 
-  it("rejects a non-http(s) URL in the link popover without calling applyField", async () => {
+  it("rejects an unsafe-scheme URL in the link popover without calling applyField (D330)", async () => {
     await openPreviewInEditMode();
     const events = inlineEditorCalls[0].events as {
       onLinkEditRequest: (b: string, f: string, v: string) => void;
@@ -701,11 +701,13 @@ describe("SitePreviewPanel (extracted from SiteDetailPage's DraftPreview, Task B
     act(() => events.onLinkEditRequest("blk3", "href", ""));
 
     await waitFor(() => expect(screen.getByText("Edit link")).toBeTruthy());
+    // javascript: is still rejected (D330 widened validation to relative /
+    // mailto / tel / #anchor, NOT arbitrary schemes).
     fireEvent.change(screen.getByLabelText("URL"), { target: { value: "javascript:alert(1)" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(inlineEditorHandle.applyField).not.toHaveBeenCalled();
-    expect(screen.getByText(/valid http/)).toBeTruthy();
+    expect(screen.getByText(/Enter a URL/)).toBeTruthy();
   });
 
   it("suppresses the preview reload while an edit session is dirty", async () => {

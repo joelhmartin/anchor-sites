@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useApi } from "../lib/useApi.js";
 import { ApiError, apiFetch } from "../lib/apiFetch.js";
 import { getAdminToken } from "../lib/adminToken.js";
 import { isSessionExpired } from "../lib/sessionExpiry.js";
@@ -37,6 +36,23 @@ export interface SitePreviewPanelProps {
   previewPageId: string | null;
   previewNonce: number;
   agentBusy: boolean;
+  /**
+   * D316 — the pages list the PARENT already holds (WorkspacePage fetches it
+   * and reloads it on every agent change event). When provided, the panel
+   * uses it for its first-page fallback instead of re-fetching the identical
+   * `GET /api/sites/:id/pages` — which was not only redundant but went STALE
+   * (the panel never reloaded it), so its `firstPageId` fallback could point
+   * at a page the agent had since deleted. Optional so the panel still works
+   * standalone (its own tests, any direct mount): it self-fetches once only
+   * when the parent doesn't supply a list.
+   */
+  pages?: { id: string }[];
+  /** Parent's loading flag for the passed-down `pages` (drives the skeleton). */
+  pagesLoading?: boolean;
+  /** D311 — report edit-session on/off so the parent can honestly gate the
+   * Refresh button and page switcher (whose effects are queued, not applied,
+   * during an edit session). */
+  onEditingChange?: (editing: boolean) => void;
 }
 
 /**
@@ -66,11 +82,36 @@ export function SitePreviewPanel({
   previewPageId,
   previewNonce,
   agentBusy,
+  pages,
+  pagesLoading,
+  onEditingChange,
 }: SitePreviewPanelProps) {
-  const { data: pagesData, loading: pagesLoading } = useApi<{ pages: { id: string }[] }>(
-    `/api/sites/${siteId}/pages`,
-  );
-  const firstPageId = pagesData?.pages[0]?.id ?? null;
+  // D316 — only self-fetch when the parent doesn't hand us the list. When it
+  // does (WorkspacePage), we use its fresh copy and skip the redundant GET.
+  const [fetchedPages, setFetchedPages] = useState<{ id: string }[] | null>(null);
+  const [selfLoading, setSelfLoading] = useState(pages === undefined);
+  const parentProvidesPages = pages !== undefined;
+  useEffect(() => {
+    if (parentProvidesPages) return;
+    let cancelled = false;
+    setSelfLoading(true);
+    apiFetch<{ pages: { id: string }[] }>(`/api/sites/${siteId}/pages`)
+      .then((d) => {
+        if (!cancelled) setFetchedPages(d.pages);
+      })
+      .catch(() => {
+        // best-effort fallback source; a failure just leaves firstPageId null
+      })
+      .finally(() => {
+        if (!cancelled) setSelfLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [siteId, parentProvidesPages]);
+  const effectivePages = pages ?? fetchedPages ?? [];
+  const pagesLoadingEffective = parentProvidesPages ? (pagesLoading ?? false) : selfLoading;
+  const firstPageId = effectivePages[0]?.id ?? null;
   const effectivePreviewPageId = previewPageId ?? firstPageId;
 
   // Legacy fallback ONLY (see the preview-token block below): the paste-token
@@ -356,7 +397,7 @@ export function SitePreviewPanel({
         data-testid="draft-preview-panel"
         className="flex h-full w-full flex-col items-center justify-center gap-2 bg-zinc-50/60 text-center"
       >
-        {pagesLoading ? (
+        {pagesLoadingEffective ? (
           <>
             <Spinner />
             <p className="text-sm text-zinc-400">Loading preview…</p>

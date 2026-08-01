@@ -840,7 +840,10 @@ describe("WorkspacePage (Task B2)", () => {
     await waitFor(() => expect(screen.queryByTestId("materializing-banner")).toBeNull(), {
       timeout: 5000,
     });
-    expect(pagesCalls).toBeGreaterThanOrEqual(3);
+    // D316 — SitePreviewPanel no longer double-fetches this list (the parent
+    // hands it down), so the mount does one GET, not two; at least the mount
+    // fetch plus one poll refetch that lands the pages.
+    expect(pagesCalls).toBeGreaterThanOrEqual(2);
   }, 10_000);
 
   it("W1.1/D213 — no banner (and no polling) without the query param, even for a pageless site", async () => {

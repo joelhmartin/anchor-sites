@@ -266,6 +266,7 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
   const {
     data: pagesData,
     error: pagesError,
+    loading: pagesLoading,
     reload: reloadPages,
   } = useApi<{ pages: PageOption[] }>(`/api/sites/${siteId}/pages`);
   const pages = pagesData?.pages ?? [];
@@ -868,6 +869,11 @@ function WorkspaceView({ siteId, slug }: { siteId: string; slug: string }) {
                 previewPageId={previewPageId}
                 previewNonce={previewNonce}
                 agentBusy={agentBusy}
+                // D316 — hand the panel the pages list this page already
+                // holds (and reloads on agent change events) so it neither
+                // re-fetches nor goes stale.
+                pages={pages}
+                pagesLoading={pagesLoading}
               />
             </div>
           </div>
