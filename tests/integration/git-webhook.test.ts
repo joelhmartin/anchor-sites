@@ -87,6 +87,9 @@ function buildApp(
   // own spy.
   enqueueImport?: (input: GitImportInput) => Promise<string | null>,
   env: NodeJS.ProcessEnv = ENABLED_ENV,
+  // D602/D116: injected so the null-return disambiguation (dedupe vs. genuine
+  // failure) is deterministic without a live pgboss schema.
+  hasLiveImportJob?: (siteId: string, headSha: string) => Promise<boolean>,
 ) {
   const app = express();
   // Mirrors the app.ts verify hook (Global Constraints, raw-body rule).
@@ -98,7 +101,15 @@ function buildApp(
       },
     }),
   );
-  app.use("/api", gitWebhookRouter({ pool, ...(enqueueImport ? { enqueueImport } : {}), env }));
+  app.use(
+    "/api",
+    gitWebhookRouter({
+      pool,
+      ...(enqueueImport ? { enqueueImport } : {}),
+      ...(hasLiveImportJob ? { hasLiveImportJob } : {}),
+      env,
+    }),
+  );
   return app;
 }
 
@@ -324,6 +335,48 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
     });
   });
 
+  it("D602/D116: 503s (GitHub redelivers) when the import enqueue returns null and no live job exists — never acks lost work with 202", async () => {
+    const site = await db.seedSite("gitwh-enqueue-null");
+    await setGitEnabled(db.getPool(), site.id, true);
+    // Enqueue returns null (queue outage), and there's NO live job for this
+    // sha → genuine failure, not a dedupe.
+    const nullApp = buildApp(
+      db.getPool(),
+      async () => null,
+      ENABLED_ENV,
+      async () => false,
+    );
+    const raw = JSON.stringify(pushPayload({ slug: site.slug, after: "lostsha01" }));
+    const res = await request(nullApp)
+      .post("/api/git/webhook")
+      .set("Content-Type", "application/json")
+      .set("X-GitHub-Event", "push")
+      .set("X-Hub-Signature-256", sign(raw))
+      .send(raw);
+    expect(res.status).toBe(503);
+    expect(res.body.failed).toEqual([site.slug]);
+  });
+
+  it("D602/D116: 202s (dedupe, not a failure) when the enqueue returns null but a live import job already exists for this sha", async () => {
+    const site = await db.seedSite("gitwh-enqueue-dedupe");
+    await setGitEnabled(db.getPool(), site.id, true);
+    const dedupeApp = buildApp(
+      db.getPool(),
+      async () => null, // stately dedupe: same push already queued/active
+      ENABLED_ENV,
+      async () => true, // a live job for this key exists → not a failure
+    );
+    const raw = JSON.stringify(pushPayload({ slug: site.slug, after: "dupesha01" }));
+    const res = await request(dedupeApp)
+      .post("/api/git/webhook")
+      .set("Content-Type", "application/json")
+      .set("X-GitHub-Event", "push")
+      .set("X-Hub-Signature-256", sign(raw))
+      .send(raw);
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ queued: [site.slug] });
+  });
+
   it("prefixes removed paths with REMOVED: and still fans out per site", async () => {
     enqueueSpy.mockClear();
     const site = await db.seedSite("gitwh-removed");
@@ -417,17 +470,19 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
       .send(raw2);
 
     expect(bossSendSpy).toHaveBeenCalledTimes(2);
+    // D603: the send() options now also carry the retry ladder — assert the
+    // singletonKey via objectContaining rather than an exact-equal.
     expect(bossSendSpy).toHaveBeenNthCalledWith(
       1,
       "git.import",
       expect.objectContaining({ siteId: site.id, headSha: "sha-one" }),
-      { singletonKey: `${site.id}:sha-one` },
+      expect.objectContaining({ singletonKey: `${site.id}:sha-one` }),
     );
     expect(bossSendSpy).toHaveBeenNthCalledWith(
       2,
       "git.import",
       expect.objectContaining({ siteId: site.id, headSha: "sha-two" }),
-      { singletonKey: `${site.id}:sha-two` },
+      expect.objectContaining({ singletonKey: `${site.id}:sha-two` }),
     );
   });
 
@@ -449,7 +504,7 @@ d("POST /api/git/webhook (integration, GitHub sync Task 5)", () => {
 
     expect(bossSendSpy).toHaveBeenCalledTimes(2);
     const [firstCall, secondCall] = bossSendSpy.mock.calls;
-    expect(firstCall[2]).toEqual({ singletonKey: `${site.id}:same-sha` });
-    expect(secondCall[2]).toEqual({ singletonKey: `${site.id}:same-sha` });
+    expect(firstCall[2]).toMatchObject({ singletonKey: `${site.id}:same-sha` });
+    expect(secondCall[2]).toMatchObject({ singletonKey: `${site.id}:same-sha` });
   });
 });

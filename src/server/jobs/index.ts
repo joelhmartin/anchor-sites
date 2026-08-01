@@ -104,6 +104,30 @@ export const GIT_EXPORT_RETRY_OPTIONS = {
 export const SITE_PROVISION_LOCAL_CONCURRENCY = 3;
 
 /**
+ * D603 (W2-JOBS) — git.import retry policy. GIT_IMPORT was created with a
+ * policy only and enqueued with NO retry options, so it inherited pg-boss's
+ * defaults: 2 IMMEDIATE retries, zero delay, no backoff — exactly wrong for
+ * the GitHub 5xx / network blips this fetch-heavy job hits (each imported
+ * file is a `getFileAtRef` API call). After exhausting two instant retries a
+ * transient GitHub hiccup dropped the whole push into invisible `failed`
+ * with no re-drive path (recovery was "push a dummy commit"). Give it the
+ * same deliberate backoff shape as GIT_EXPORT (5 retries, 15s base,
+ * exponential, capped at 5 min ≈ ~10 min coverage) — the import handler is
+ * idempotent (last_import_sha gate + per-file revisions), so a retry that
+ * re-runs unchanged content is a harmless no-op.
+ *
+ * Applied BOTH at createQueue AND per-send (the webhook enqueue), since
+ * pg-boss's create_queue is ON CONFLICT DO NOTHING and never updates an
+ * existing deployment's queue row.
+ */
+export const GIT_IMPORT_RETRY_OPTIONS = {
+  retryLimit: 5,
+  retryDelay: 15,
+  retryBackoff: true,
+  retryDelayMax: 300,
+} as const;
+
+/**
  * pg-boss bootstrap (D-030, P3-T3.8).
  *
  * Lifecycle:
@@ -389,7 +413,10 @@ export async function registerHandlers(boss: PgBoss): Promise<void> {
   // GIT_EXPORT wants). Keying GIT_IMPORT on the pair instead keeps the
   // intended dedupe (a redelivered webhook for the SAME push collapses to
   // one job) while letting two DIFFERENT pushes to the same site both queue.
-  await boss.createQueue(GIT_IMPORT, { policy: "stately" });
+  // D603: retry-with-backoff for GitHub 5xx/network blips — see
+  // GIT_IMPORT_RETRY_OPTIONS's doc (also applied per-send at the webhook
+  // enqueue, since createQueue options never reach an existing deployment).
+  await boss.createQueue(GIT_IMPORT, { policy: "stately", ...GIT_IMPORT_RETRY_OPTIONS });
   await boss.work<GitImportInput>(GIT_IMPORT, async ([job]) => {
     await handleGitImport(job.data, { pool: defaultPool });
   });

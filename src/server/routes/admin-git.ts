@@ -6,8 +6,9 @@ import { requireAdmin } from "../../middleware/requireAdmin.js";
 import { rateLimit, type RateLimitOptions } from "../../middleware/rateLimit.js";
 import { resolveGitMode } from "../git/client.js";
 import { getGitState, setGitEnabled } from "../git/state-repo.js";
-import { GIT_EXPORT } from "../jobs/index.js";
+import { GIT_EXPORT, GIT_IMPORT } from "../jobs/index.js";
 import type { GitExportInput } from "../jobs/git-export.js";
+import type { GitImportInput } from "./git-webhook.js";
 
 /**
  * Admin GitHub-sync API (GitHub Sync plan, Task 7). Studio's `GitCard`
@@ -47,6 +48,21 @@ export type AdminGitOptions = {
    * `stately`-policy dedupe when `enqueueExport` returns `null`.
    */
   hasLiveExportJob?: (siteId: string) => Promise<boolean>;
+  /**
+   * D603/D416 — manual import re-drive. Loads the payload of the most recent
+   * GIT_IMPORT job for this site (from pgboss.job's `data`), so the operator
+   * can re-run an import that dead-lettered on a transient GitHub blip
+   * without pushing a dummy commit. Returns null when the site has never had
+   * an import job (nothing to re-drive). Injectable for tests.
+   */
+  loadLastImportPayload?: (siteId: string) => Promise<GitImportInput | null>;
+  /**
+   * D603 — re-enqueue an import payload. Default: lazy `getBoss().send(
+   * GIT_IMPORT, input, { singletonKey, ...retryOptions })`, swallowing
+   * failures to null (disambiguated the same way as export). Injectable for
+   * tests.
+   */
+  enqueueImport?: (input: GitImportInput) => Promise<string | null>;
   env?: NodeJS.ProcessEnv;
   rateLimit?: RateLimitOptions;
 };
@@ -111,6 +127,61 @@ export function adminGitRouter(opts: AdminGitOptions = {}): Router {
         return (r.rowCount ?? 0) > 0;
       } catch {
         return false;
+      }
+    });
+
+  // D603/D416: is there already a live GIT_IMPORT job for this exact
+  // `${siteId}:${headSha}`? Distinguishes a re-drive that collided with an
+  // in-flight import (fine) from a genuine queue outage when enqueueImport
+  // returns null — same precedent as hasLiveExportJob above.
+  const hasLiveImportJob = async (siteId: string, headSha: string): Promise<boolean> => {
+    try {
+      const r = await pool.query(
+        `SELECT 1 FROM pgboss.job
+          WHERE name = $1 AND singleton_key = $2 AND state IN ('created','active','retry')
+          LIMIT 1`,
+        [GIT_IMPORT, `${siteId}:${headSha}`],
+      );
+      return (r.rowCount ?? 0) > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  // D603/D416: the most recent GIT_IMPORT payload for this site, read from
+  // pgboss.job's `data`. Ordered by created_on desc so a re-drive always
+  // re-runs the LAST push's import (the one likely to have failed). Tolerant
+  // of a missing pgboss schema (dev/test without a boot) → null.
+  const loadLastImportPayload: (siteId: string) => Promise<GitImportInput | null> =
+    opts.loadLastImportPayload ??
+    (async (siteId) => {
+      try {
+        const r = await pool.query<{ data: GitImportInput }>(
+          `SELECT data FROM pgboss.job
+            WHERE name = $1 AND data->>'siteId' = $2
+            ORDER BY created_on DESC
+            LIMIT 1`,
+          [GIT_IMPORT, siteId],
+        );
+        return r.rows[0]?.data ?? null;
+      } catch {
+        return null;
+      }
+    });
+
+  const enqueueImport: (input: GitImportInput) => Promise<string | null> =
+    opts.enqueueImport ??
+    (async (input) => {
+      try {
+        const { getBoss, GIT_IMPORT_RETRY_OPTIONS } = await import("../jobs/index.js");
+        return await getBoss().send(GIT_IMPORT, input, {
+          singletonKey: `${input.siteId}:${input.headSha}`,
+          ...GIT_IMPORT_RETRY_OPTIONS,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[git] pg-boss import enqueue failed", err);
+        return null;
       }
     });
 
@@ -237,6 +308,61 @@ export function adminGitRouter(opts: AdminGitOptions = {}): Router {
 
         // eslint-disable-next-line no-console
         console.error("[git] export enqueue returned no id — reporting 503", { siteId });
+        res.status(503).json({ error: "job queue unavailable" });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------
+  // POST /sites/:siteId/git/import — D603/D416 manual import re-drive.
+  // Re-enqueues the most recent import payload for the site (the one a
+  // transient GitHub blip likely dead-lettered). The import handler is
+  // idempotent (last_import_sha gate + per-file revisions), so re-driving an
+  // already-applied sha is a harmless no-op; re-driving a failed one re-runs
+  // it. GitCard's import re-drive button (D416) is the consumer.
+  // ---------------------------------------------------------------------
+  router.post(
+    "/sites/:siteId/git/import",
+    admin,
+    limiter,
+    async (req: Request, res: Response, next: NextFunction) => {
+      const { siteId } = req.params;
+      try {
+        if (!(await siteExists(siteId))) {
+          res.status(404).json({ error: "site not found" });
+          return;
+        }
+        const state = await getGitState(pool, siteId);
+        if (!state?.enabled) {
+          res.status(409).json({ error: "git not enabled" });
+          return;
+        }
+
+        const payload = await loadLastImportPayload(siteId);
+        if (!payload) {
+          res.status(404).json({ error: "no import to re-drive for this site" });
+          return;
+        }
+
+        const jobId = await enqueueImport(payload);
+        if (jobId) {
+          res.status(202).json({ queued: true, headSha: payload.headSha });
+          return;
+        }
+
+        // null under stately = already queued/active for this exact sha (a
+        // re-drive that collided with an in-flight import) OR a genuine
+        // outage. A live job for the same key means the re-drive is already
+        // happening — report success; otherwise the queue is unavailable.
+        const deduped = await hasLiveImportJob(siteId, payload.headSha);
+        if (deduped) {
+          res.status(202).json({ queued: true, deduped: true, headSha: payload.headSha });
+          return;
+        }
+        // eslint-disable-next-line no-console
+        console.error("[git] import re-drive enqueue returned no id — reporting 503", { siteId });
         res.status(503).json({ error: "job queue unavailable" });
       } catch (err) {
         next(err);

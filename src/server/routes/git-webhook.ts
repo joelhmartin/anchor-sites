@@ -56,6 +56,19 @@ export type GitWebhookOptions = {
    * while letting two distinct pushes to the same site both queue.
    */
   enqueueImport?: (input: GitImportInput) => Promise<string | null>;
+  /**
+   * D602/D116: disambiguates a `null` `enqueueImport` return. Under
+   * GIT_IMPORT's `stately` policy, `send()` returns `null` for TWO different
+   * reasons — "a job for this `${siteId}:${headSha}` is already queued/active"
+   * (a redelivered webhook for the same push, which is fine) vs. "the queue is
+   * genuinely down" (work is being LOST). The webhook must not ack the second
+   * case with `202 {queued}` — GitHub would never redeliver. Default: a direct
+   * `pgboss.job` existence check keyed on the same `${siteId}:${headSha}`
+   * singleton (admin-git.ts's `hasLiveExportJob` precedent). Returns false when
+   * the pgboss schema doesn't exist yet (nothing to find → not a dedupe → the
+   * caller treats the null as a genuine failure and 5xx's).
+   */
+  hasLiveImportJob?: (siteId: string, headSha: string) => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -108,12 +121,33 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
     opts.enqueueImport ??
     (async (input: GitImportInput) => {
       try {
-        const { getBoss } = await import("../jobs/index.js");
+        const { getBoss, GIT_IMPORT_RETRY_OPTIONS } = await import("../jobs/index.js");
+        // D603: deliberate retry+backoff per-send (createQueue options never
+        // reach an existing deployment — same reason GIT_EXPORT applies its
+        // ladder at every send site).
         return await getBoss().send(GIT_IMPORT, input, {
           singletonKey: `${input.siteId}:${input.headSha}`,
+          ...GIT_IMPORT_RETRY_OPTIONS,
         });
       } catch {
         return null;
+      }
+    });
+
+  // D602/D116: default disambiguator for a null enqueue — see the option's doc.
+  const hasLiveImportJob: (siteId: string, headSha: string) => Promise<boolean> =
+    opts.hasLiveImportJob ??
+    (async (siteId, headSha) => {
+      try {
+        const r = await pool.query(
+          `SELECT 1 FROM pgboss.job
+            WHERE name = $1 AND singleton_key = $2 AND state IN ('created','active','retry')
+            LIMIT 1`,
+          [GIT_IMPORT, `${siteId}:${headSha}`],
+        );
+        return (r.rowCount ?? 0) > 0;
+      } catch {
+        return false;
       }
     });
 
@@ -221,6 +255,7 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
         }
 
         const queued: string[] = [];
+        const failed: string[] = [];
         for (const [slug, group] of bySlug) {
           const siteRes = await pool.query<{ id: string }>(
             `SELECT id FROM sites WHERE slug = $1`,
@@ -237,13 +272,39 @@ export function gitWebhookRouter(opts: GitWebhookOptions = {}): Router {
             ...[...group.removed].map((p) => `REMOVED:${p}`),
           ];
 
+          // D602/D116: check the enqueue RESULT, don't ack blindly. A thrown
+          // error or a `null` return both mean "no id came back" — the default
+          // enqueueImport swallows pg-boss failures to null. Under GIT_IMPORT's
+          // stately policy, null is ambiguous: a genuine queue outage (work is
+          // being LOST) vs. a dedupe of a redelivered webhook for the same
+          // `${siteId}:${headSha}` (fine). Disambiguate via hasLiveImportJob
+          // before deciding — only a genuine failure lands in `failed`.
+          let jobId: string | null = null;
           try {
-            await enqueueImport({ siteId, headSha: payload.after, paths });
-            queued.push(slug);
+            jobId = await enqueueImport({ siteId, headSha: payload.after, paths });
           } catch {
-            // Per-site fan-out is best-effort — one site's enqueue failure
-            // must never sink the response for every other site in this push.
+            jobId = null;
           }
+          if (jobId) {
+            queued.push(slug);
+            continue;
+          }
+          const deduped = await hasLiveImportJob(siteId, payload.after);
+          if (deduped) {
+            queued.push(slug);
+          } else {
+            failed.push(slug);
+          }
+        }
+
+        // D602/D116: never ack lost work with 202. If ANY site's import
+        // genuinely failed to queue, return 5xx so GitHub's delivery log shows
+        // the delivery failed and REDELIVERS it — the import is idempotent
+        // (last_import_sha gate), and any site that DID queue dedupes on
+        // redelivery, so re-driving the whole push is safe.
+        if (failed.length > 0) {
+          res.status(503).json({ error: "import enqueue failed", queued, failed });
+          return;
         }
 
         if (queued.length === 0) {

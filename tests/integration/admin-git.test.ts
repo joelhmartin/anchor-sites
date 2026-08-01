@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { setupAgentDb } from "../helpers/agent-db.js";
-import { adminGitRouter } from "../../src/server/routes/admin-git.js";
+import { adminGitRouter, type AdminGitOptions } from "../../src/server/routes/admin-git.js";
 import { setGitEnabled } from "../../src/server/git/state-repo.js";
 import type { GitExportInput } from "../../src/server/jobs/git-export.js";
 
@@ -19,6 +19,9 @@ function buildApp(
   enqueueExport: (input: GitExportInput) => Promise<string | null>,
   env: NodeJS.ProcessEnv = {},
   hasLiveExportJob?: (siteId: string) => Promise<boolean>,
+  // D603/D416: import re-drive deps, injectable so tests don't need a live
+  // pgboss schema.
+  extra?: Pick<AdminGitOptions, "loadLastImportPayload" | "enqueueImport">,
 ) {
   const app = express();
   app.use(express.json());
@@ -30,6 +33,7 @@ function buildApp(
       env,
       hasLiveExportJob,
       rateLimit: { max: 200, windowMs: 60_000 },
+      ...extra,
     }),
   );
   return app;
@@ -221,6 +225,41 @@ d("admin git endpoints (integration, GitHub sync Task 7)", () => {
       // siteA's enabled state.
       const res = await auth(request(app).post(`/api/sites/${siteB.id}/git/export`).send({}));
       expect(res.status).toBe(409);
+    });
+  });
+
+  // D603/D416: manual import re-drive.
+  describe("POST /sites/:siteId/git/import", () => {
+    it("409s when git sync is not enabled for the site", async () => {
+      const site = await db.seedSite("git-import-disabled");
+      const res = await auth(request(app).post(`/api/sites/${site.id}/git/import`).send({}));
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: "git not enabled" });
+    });
+
+    it("404s when the site has never had an import job to re-drive", async () => {
+      const site = await db.seedSite("git-import-none");
+      await setGitEnabled(db.getPool(), site.id, true);
+      const reApp = buildApp(db.getPool(), enqueueSpy, {}, undefined, {
+        loadLastImportPayload: async () => null,
+      });
+      const res = await auth(request(reApp).post(`/api/sites/${site.id}/git/import`).send({}));
+      expect(res.status).toBe(404);
+    });
+
+    it("202s and re-enqueues the most recent import payload for the site", async () => {
+      const site = await db.seedSite("git-import-redrive");
+      await setGitEnabled(db.getPool(), site.id, true);
+      const payload = { siteId: site.id, headSha: "failedsha1", paths: ["sites/x/pages/home.json"] };
+      const enqueueImport = vi.fn(async () => "reimport-job-1");
+      const reApp = buildApp(db.getPool(), enqueueSpy, {}, undefined, {
+        loadLastImportPayload: async () => payload,
+        enqueueImport,
+      });
+      const res = await auth(request(reApp).post(`/api/sites/${site.id}/git/import`).send({}));
+      expect(res.status).toBe(202);
+      expect(res.body).toMatchObject({ queued: true, headSha: "failedsha1" });
+      expect(enqueueImport).toHaveBeenCalledWith(payload);
     });
   });
 });
