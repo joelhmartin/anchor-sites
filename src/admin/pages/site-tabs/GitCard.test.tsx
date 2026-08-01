@@ -217,4 +217,23 @@ describe("GitCard (GitHub sync Task 7)", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Enable" })).toBeTruthy());
     expect((screen.getByRole("button", { name: "Export now" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("announces that enabling runs a first export, before and after (D435)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === "/api/sites/s1/git/enable" && method === "POST") {
+        return json({ state: { ...ENABLED_STATE, enabled: true }, queued: true });
+      }
+      // Start disabled so the Enable button + pre-note render.
+      return json({ configured: true, repo: "acme/content", state: { ...ENABLED_STATE, enabled: false } });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<GitCard siteId="s1" slug="acme" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Enable" })).toBeTruthy());
+    // Pre-note tells the operator the side effect before they click.
+    expect(screen.getByText(/Enabling also runs a first export/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+    await waitFor(() => expect(screen.getByText(/a first export to the repo was queued/)).toBeTruthy());
+  });
 });

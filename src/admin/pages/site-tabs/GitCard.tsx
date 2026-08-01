@@ -62,25 +62,35 @@ export function GitCard({
   exportPollMaxTries?: number;
 }) {
   const { data, loading, error, reload } = useApi<GitStatus>(`/api/sites/${siteId}/git`);
-  const [busy, setBusy] = useState(false);
+  // D435 — per-action busy state: the single shared `busy` flag spinnered the
+  // Enable button while an export ran, conflating two independent actions.
+  const [toggleBusy, setToggleBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  // D435 — enabling sync ALSO enqueues an initial full export (admin-git.ts);
+  // announce that outcome so the operator knows a commit is about to land.
+  const [enableNotice, setEnableNotice] = useState<string | null>(null);
 
   async function toggleEnabled(next: boolean) {
-    setBusy(true);
+    setToggleBusy(true);
     setActionError(null);
+    setEnableNotice(null);
     try {
       await apiFetch(`/api/sites/${siteId}/git/enable`, { method: "POST", body: { enabled: next } });
+      // D435 — surface the enable side effect (an initial export is queued).
+      if (next) setEnableNotice("Sync enabled — a first export to the repo was queued.");
       reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't update GitHub sync.");
     } finally {
-      setBusy(false);
+      setToggleBusy(false);
     }
   }
 
   async function exportNow() {
-    setBusy(true);
+    setExportBusy(true);
     setActionError(null);
     setExportStatus(null);
     try {
@@ -108,7 +118,7 @@ export function GitCard({
       setExportStatus(null);
       setActionError(err instanceof Error ? err.message : "Couldn't export.");
     } finally {
-      setBusy(false);
+      setExportBusy(false);
     }
   }
 
@@ -116,7 +126,7 @@ export function GitCard({
   // GitHub blip likely dead-lettered). The server re-enqueues the last import
   // payload; the handler is idempotent, so this is safe to click repeatedly.
   async function reimportNow() {
-    setBusy(true);
+    setImportBusy(true);
     setActionError(null);
     try {
       await apiFetch(`/api/sites/${siteId}/git/import`, { method: "POST", body: {} });
@@ -124,7 +134,7 @@ export function GitCard({
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't re-run import.");
     } finally {
-      setBusy(false);
+      setImportBusy(false);
     }
   }
 
@@ -189,15 +199,20 @@ export function GitCard({
           <Button
             size="sm"
             variant={enabled ? "outline" : "primary"}
-            disabled={busy}
+            disabled={toggleBusy}
             onClick={() => toggleEnabled(!enabled)}
           >
-            {busy ? <Spinner /> : enabled ? "Disable" : "Enable"}
+            {toggleBusy ? <Spinner /> : enabled ? "Disable" : "Enable"}
           </Button>
-          <Button size="sm" variant="outline" disabled={busy || !enabled} onClick={exportNow}>
-            Export now
+          <Button size="sm" variant="outline" disabled={exportBusy || !enabled} onClick={exportNow}>
+            {exportBusy ? <Spinner /> : "Export now"}
           </Button>
         </div>
+        {/* D435 — announce the enable side effect at the button. */}
+        {!enabled && (
+          <p className="text-xs text-zinc-400">Enabling also runs a first export to the repo.</p>
+        )}
+        {enableNotice && <p className="text-sm text-green-600">{enableNotice}</p>}
 
         <div className="flex flex-col gap-1 text-sm text-zinc-600">
           {/*
@@ -236,10 +251,10 @@ export function GitCard({
                 size="sm"
                 variant="outline"
                 className="self-start"
-                disabled={busy}
+                disabled={importBusy}
                 onClick={reimportNow}
               >
-                Re-run import
+                {importBusy ? <Spinner /> : "Re-run import"}
               </Button>
             </div>
           )}
