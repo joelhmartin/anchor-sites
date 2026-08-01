@@ -18,6 +18,7 @@ import {
   AGENT_TURN,
   GIT_EXPORT_RETRY_OPTIONS,
   SITE_PROVISION_LOCAL_CONCURRENCY,
+  ALL_QUEUE_NAMES,
 } from "../../src/server/jobs/index.js";
 
 type Captured = { name: string; options?: Record<string, unknown> };
@@ -76,5 +77,17 @@ describe("registerHandlers options (D617/D618)", () => {
     await registerHandlers(boss);
     const agentTurn = createQueueCalls.find((c) => c.name === AGENT_TURN);
     expect(agentTurn!.options).toMatchObject({ policy: "stately" });
+  });
+
+  // D606/D114/D1009: the jobs-health endpoint drives its per-queue report off
+  // ALL_QUEUE_NAMES. If a new queue is registered without adding it to that
+  // list, the health endpoint goes blind to it — exactly the bug the old
+  // hard-coded 4-of-7 list was (site.provision, git.export, git.import
+  // invisible). Pin the two against each other so they can't drift.
+  it("D606: ALL_QUEUE_NAMES matches exactly the queues registerHandlers creates", async () => {
+    const { boss, createQueueCalls } = makeStubBoss();
+    await registerHandlers(boss);
+    const registered = createQueueCalls.map((c) => c.name).sort();
+    expect([...ALL_QUEUE_NAMES].sort()).toEqual(registered);
   });
 });

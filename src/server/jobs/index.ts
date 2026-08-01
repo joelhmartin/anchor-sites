@@ -43,6 +43,28 @@ export { CRM_SYNC_JOB };
 export { DOMAIN_VERIFY_SWEEP };
 
 /**
+ * D606/D114/D1009 (W2-JOBS) — the canonical list of every queue this worker
+ * registers, in one place. The jobs-health endpoint (routes/admin-jobs.ts)
+ * imports THIS instead of hard-coding its own subset: the old endpoint listed
+ * 4 of 7 work queues (GIT_EXPORT, GIT_IMPORT, SITE_PROVISION were invisible —
+ * and site.provision is the queue whose backlog most directly breaks the
+ * new-site flow). Keep this in lockstep with `registerHandlers` below: every
+ * `createQueue` call there has an entry here (the jobs-registration test pins
+ * that they don't drift). Ordered by product prominence, not alphabetically.
+ */
+export const ALL_QUEUE_NAMES = [
+  SITE_PROVISION,
+  TEMPLATE_MATERIALIZE,
+  AGENT_TURN,
+  GIT_EXPORT,
+  GIT_IMPORT,
+  MEDIA_PROCESS_UPLOAD,
+  CRM_SYNC_JOB,
+  AUTH_PRUNE,
+  DOMAIN_VERIFY_SWEEP,
+] as const;
+
+/**
  * W2-CONC / D618 — git-export contention backoff. Exports for DIFFERENT
  * sites all contend on ONE branch ref (`updateRef` on the shared content
  * repo); the loser of a concurrent update fails as non-fast-forward and used
