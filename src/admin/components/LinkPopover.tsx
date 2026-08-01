@@ -11,12 +11,33 @@ export type LinkPopoverProps = {
   onSave: (url: string) => void;
 };
 
-const URL_PATTERN = /^https?:\/\/.+/i;
+/**
+ * D330 — the link kinds the product itself authors, mirroring the classes
+ * `preview-links.ts` recognizes when rewriting rendered hrefs:
+ *  - absolute `http(s)://…`
+ *  - protocol-relative `//host/…`
+ *  - site-relative `/about`, `/services/dental`
+ *  - `mailto:` / `tel:`
+ *  - in-page `#anchor`
+ * The old `/^https?:\/\/.+/i` rejected everything except the first — so an
+ * operator could not inline-edit a button to point at their own About page,
+ * even though templates and the agent do exactly that constantly.
+ */
+function isAcceptableLinkTarget(value: string): boolean {
+  if (!value) return false;
+  if (/^https?:\/\/.+/i.test(value)) return true; // absolute
+  if (/^\/\/.+/.test(value)) return true; // protocol-relative //host
+  if (/^\/[^/]?/.test(value) || value === "/") return true; // site-relative /path
+  if (/^mailto:.+@.+/i.test(value)) return true;
+  if (/^tel:.+/i.test(value)) return true;
+  if (/^#.+/.test(value)) return true; // in-page anchor
+  return false;
+}
 
 /**
  * Tiny link-edit dialog (Task 11), opened from the inline editor's
- * `onLinkEditRequest`. A single URL field with Save/Cancel and basic
- * `https?://` validation before handing the value off to `handle.applyField`.
+ * `onLinkEditRequest`. A single URL field with Save/Cancel; validation
+ * accepts every link class the product authors (D330).
  */
 export function LinkPopover({ open, initialValue, onClose, onSave }: LinkPopoverProps) {
   const [value, setValue] = useState(initialValue ?? "");
@@ -33,8 +54,8 @@ export function LinkPopover({ open, initialValue, onClose, onSave }: LinkPopover
 
   function submit() {
     const trimmed = value.trim();
-    if (!URL_PATTERN.test(trimmed)) {
-      setError("Enter a valid http:// or https:// URL.");
+    if (!isAcceptableLinkTarget(trimmed)) {
+      setError("Enter a URL (https://…), a page path (/about), an anchor (#section), or mailto:/tel:.");
       return;
     }
     onSave(trimmed);
@@ -54,7 +75,7 @@ export function LinkPopover({ open, initialValue, onClose, onSave }: LinkPopover
               setValue(e.target.value);
               setError(null);
             }}
-            placeholder="https://example.com"
+            placeholder="https://example.com, /about, #section, or mailto:hi@…"
             autoFocus
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
